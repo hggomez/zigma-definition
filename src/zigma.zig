@@ -137,8 +137,9 @@ pub fn RecordInstanceType(comptime type_defs: anytype, comptime rec: anytype) ty
         names[i] = name;
         types[i] = @field(type_defs, @field(rec, name).type).Type;
     }
+    const frozen_names = names;
     const frozen = types;
-    return @Struct(.auto, null, names, &frozen, &@splat(.{}));
+    return @Struct(.auto, null, &frozen_names, &frozen, &@splat(.{}));
 }
 
 /// The Info type corresponding to a record Def type: same field names, every
@@ -454,8 +455,9 @@ fn CompletedFksType(comptime fks: anytype) type {
     inline for (fk_names, 0..) |fk_name, i| {
         types[i] = FkInfoOf(@field(fks, fk_name));
     }
+    const frozen_names = fk_names;
     const frozen = types;
-    return @Struct(.auto, null, fk_names, &frozen, &@splat(.{}));
+    return @Struct(.auto, null, &frozen_names, &frozen, &@splat(.{}));
 }
 
 fn completeFks(comptime fks: anytype) CompletedFksType(fks) {
