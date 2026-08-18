@@ -86,25 +86,25 @@ fn checkField(comptime type_defs: anytype, comptime field_def: anytype, comptime
         @compileError("field '" ++ field_name ++ "': a field definition must be a struct like .{ .type = \"text\" }");
     if (!@hasField(FieldDefType, "type"))
         @compileError("field '" ++ field_name ++ "': missing 'type'");
-    inline for (info.@"struct".field_names) |prop| {
-        const value = @field(field_def, prop);
+    inline for (info.@"struct".field_names) |prop_name| {
+        const value = @field(field_def, prop_name);
         const PropType = @TypeOf(value);
-        if (eql(prop, "type")) {
+        if (eql(prop_name, "type")) {
             if (!isStringType(PropType))
                 @compileError("field '" ++ field_name ++ "': 'type' must be the name of a domain type");
             if (!@hasField(@TypeOf(type_defs), value))
                 @compileError("field '" ++ field_name ++ "': unknown type '" ++ value ++ "'");
-        } else if (eql(prop, "is_name")) {
+        } else if (eql(prop_name, "is_name")) {
             if (PropType != bool or value != true)
                 @compileError("field '" ++ field_name ++ "': is_name only admits true in a definition (false is the default)");
-        } else if (eql(prop, "nullable")) {
+        } else if (eql(prop_name, "nullable")) {
             if (PropType != bool)
                 @compileError("field '" ++ field_name ++ "': 'nullable' must be a bool");
-        } else if (eql(prop, "label") or eql(prop, "description")) {
+        } else if (eql(prop_name, "label") or eql(prop_name, "description")) {
             if (!isStringType(PropType))
-                @compileError("field '" ++ field_name ++ "': '" ++ prop ++ "' must be a string");
+                @compileError("field '" ++ field_name ++ "': '" ++ prop_name ++ "' must be a string");
         } else {
-            @compileError("field '" ++ field_name ++ "': unknown property '" ++ prop ++ "'");
+            @compileError("field '" ++ field_name ++ "': unknown property '" ++ prop_name ++ "'");
         }
     }
 }
@@ -130,9 +130,11 @@ pub fn record(comptime type_defs: anytype, comptime rec: anytype) @TypeOf(rec) {
 /// domain type. Field order is preserved.
 pub fn RecordInstanceType(comptime type_defs: anytype, comptime rec: anytype) type {
     comptime checkRecord(type_defs, rec);
-    const names = @typeInfo(@TypeOf(rec)).@"struct".field_names;
-    var types: [names.len]type = undefined;
-    for (names, 0..) |name, i| {
+    const rec_names = @typeInfo(@TypeOf(rec)).@"struct".field_names;
+    var types: [rec_names.len]type = undefined;
+    var names: [rec_names.len][]const u8 = undefined;
+    for (rec_names, 0..) |name, i| {
+        names[i] = name;
         types[i] = @field(type_defs, @field(rec, name).type).Type;
     }
     const frozen = types;
@@ -142,8 +144,11 @@ pub fn RecordInstanceType(comptime type_defs: anytype, comptime rec: anytype) ty
 /// The Info type corresponding to a record Def type: same field names, every
 /// field a `FieldInfo`.
 pub fn RecordInfoOf(comptime RecordDefType: type) type {
-    const names = @typeInfo(RecordDefType).@"struct".field_names;
-    return @Struct(.auto, null, names, &@splat(FieldInfo), &@splat(.{}));
+    const rec_names = @typeInfo(RecordDefType).@"struct".field_names;
+    var names: [rec_names.len][]const u8 = undefined;
+    for (rec_names, 0..) |name, i| names[i] = name;
+    const frozen_names = names;
+    return @Struct(.auto, null, &frozen_names, &@splat(FieldInfo), &@splat(.{}));
 }
 
 fn LabelHolder(comptime name: []const u8) type {
@@ -269,9 +274,9 @@ fn checkFkDef(comptime fk: anytype, comptime fk_name: []const u8, comptime field
     const info = @typeInfo(FkType);
     if (info != .@"struct" or info.@"struct".is_tuple)
         @compileError("fk '" ++ fk_name ++ "': a fk definition must be a struct like .{ .entity = ..., .fields = ... }");
-    inline for (info.@"struct".field_names) |prop| {
-        if (!eql(prop, "entity") and !eql(prop, "fields"))
-            @compileError("fk '" ++ fk_name ++ "': unknown property '" ++ prop ++ "'");
+    inline for (info.@"struct".field_names) |prop_name| {
+        if (!eql(prop_name, "entity") and !eql(prop_name, "fields"))
+            @compileError("fk '" ++ fk_name ++ "': unknown property '" ++ prop_name ++ "'");
     }
     if (!@hasField(FkType, "entity") or !@hasField(FkType, "fields"))
         @compileError("fk '" ++ fk_name ++ "' needs 'entity' and 'fields'");
@@ -289,9 +294,9 @@ fn checkEntityDef(comptime def: anytype) void {
     const info = @typeInfo(DefType);
     if (info != .@"struct" or info.@"struct".is_tuple)
         @compileError("an entity definition must be a struct like .{ .pk = ..., .fields = ... }");
-    inline for (info.@"struct".field_names) |prop| {
-        if (!eql(prop, "fields") and !eql(prop, "pk") and !eql(prop, "fks") and !eql(prop, "uks"))
-            @compileError("entity definition: unknown property '" ++ prop ++ "'");
+    inline for (info.@"struct".field_names) |prop_name| {
+        if (!eql(prop_name, "fields") and !eql(prop_name, "pk") and !eql(prop_name, "fks") and !eql(prop_name, "uks"))
+            @compileError("entity definition: unknown property '" ++ prop_name ++ "'");
     }
     if (!@hasField(DefType, "fields")) @compileError("an entity definition needs 'fields'");
     if (!@hasField(DefType, "pk")) @compileError("an entity definition needs 'pk'");
@@ -441,8 +446,11 @@ fn FkInfoOf(comptime fk: anytype) type {
 }
 
 fn CompletedFksType(comptime fks: anytype) type {
-    const fk_names = @typeInfo(@TypeOf(fks)).@"struct".field_names;
-    var types: [fk_names.len]type = undefined;
+    const fk_names_in = @typeInfo(@TypeOf(fks)).@"struct".field_names;
+    var fk_names: [fk_names_in.len][]const u8 = undefined;
+    for (fk_names_in, 0..) |name, i| fk_names[i] = name;
+
+    var types: [fk_names_in.len]type = undefined;
     inline for (fk_names, 0..) |fk_name, i| {
         types[i] = FkInfoOf(@field(fks, fk_name));
     }
