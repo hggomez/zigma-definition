@@ -17,6 +17,10 @@ sentidos, los validadores de tipo, etc.
 
 Este módulo cubre solo la parte descriptiva de los sistemas: no genera nada por sí mismo.
 
+El paquete también incluye el módulo independiente `zigma_postgres_ddl`, que consume esas
+descripciones y genera las sentencias PostgreSQL de creación inicial del schema. No forma
+parte del núcleo descriptivo y requiere un mapping explícito de tipos de dominio a tipos SQL.
+
 ## Convención de nombres: Def e Info
 
 Cada concepto descriptivo tiene (al menos) dos versiones, distinguidas por sufijo:
@@ -155,9 +159,42 @@ Después en `build.zig`:
 ```zig
 const zigma = b.dependency("zigma_definition", .{}).module("zigma");
 exe.root_module.addImport("zigma", zigma);
+
+const postgres_ddl = b.dependency("zigma_definition", .{}).module("zigma_postgres_ddl");
+exe.root_module.addImport("zigma_postgres_ddl", postgres_ddl);
 ```
 
 El paquete también exporta `aida`, descripto en `examples/aida.zig`.
+
+## DDL inicial para PostgreSQL
+
+Los tipos SQL se mantienen separados de los `TypeDef` para que la descripción del sistema
+no dependa de una base de datos concreta:
+
+```zig
+const postgres_ddl = @import("zigma_postgres_ddl");
+
+const mappings = postgres_ddl.defineTypeMappings(zigma.merge(.{
+    postgres_ddl.common_type_mappings,
+    .{
+        .fecha = postgres_ddl.TypeMapping{ .sql_type = "DATE" },
+        .email = postgres_ddl.TypeMapping{ .sql_type = "TEXT" },
+    },
+}));
+
+const materias_sql = postgres_ddl.createTableDdl(aida.entity_defs, "materias", mappings);
+const schema_sql = postgres_ddl.createSchemaDdl(aida.entity_defs, mappings);
+```
+
+La salida contiene `CREATE TABLE IF NOT EXISTS`, columnas, PKs, UKs y FKs con nombres
+determinísticos. El schema completo ordena primero las tablas referenciadas, admite FKs
+reflexivas y rechaza ciclos entre tablas diferentes, que requerirían una segunda fase con
+`ALTER TABLE`.
+
+Esta primera versión no ejecuta el SQL ni compara contra una base existente. Si una tabla
+ya existe, `IF NOT EXISTS` no agrega columnas ni constraints nuevas: cambiar la definición
+solo cambia el script generado. Changelog, introspección y migraciones quedan para una fase
+posterior.
 
 ## Licencia
 

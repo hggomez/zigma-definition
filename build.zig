@@ -40,6 +40,11 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "defined_type_wrong_field_type.zig", .expected = "expected type 'i64', found '*const [1:0]u8'" },
     .{ .file = "validar_cargo_missing_field.zig", .expected = at("validar_cargo_missing_field.zig") },
     .{ .file = "defined_type_no_field.zig", .expected = at("defined_type_no_field.zig") },
+    .{ .file = "postgres_ddl_mapping_missing.zig", .expected = "entity 'clases', field 'fecha': missing PostgreSQL type mapping for domain type 'fecha'" },
+    .{ .file = "postgres_ddl_mapping_invalid.zig", .expected = "PostgreSQL type mapping 'text': 'sql_type' must be a non-empty string" },
+    .{ .file = "postgres_ddl_unknown_table.zig", .expected = "PostgreSQL DDL: unknown entity 'inexistentes'" },
+    .{ .file = "postgres_ddl_identifier_too_long.zig", .expected = "PostgreSQL identifier 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' exceeds 63 bytes" },
+    .{ .file = "postgres_ddl_fk_cycle.zig", .expected = "PostgreSQL DDL: foreign key cycle involving entity 'lefts' cannot be generated with inline constraints" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -61,6 +66,36 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const postgres_ddl_mod = b.addModule("zigma_postgres_ddl", .{
+        .root_source_file = b.path("src/postgres_ddl.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_mod },
+        },
+    });
+
+    const postgres_executor_mod = b.addModule("zigma_postgres_executor", .{
+        .root_source_file = b.path("src/postgres_executor.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const postgres_libpq_mod = b.addModule("zigma_postgres_libpq", .{
+        .root_source_file = b.path("src/postgres_libpq.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma_postgres_executor", .module = postgres_executor_mod },
+        },
+    });
+    postgres_libpq_mod.link_libc = true;
+    postgres_libpq_mod.linkSystemLibrary("pq", .{});
+    if (b.option([]const u8, "libpq-prefix", "Prefix containing the libpq include/ and lib/ directories")) |prefix| {
+        postgres_libpq_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
+        postgres_libpq_mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
+    }
+
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/aida_test.zig"),
@@ -74,8 +109,60 @@ pub fn build(b: *std.Build) void {
     });
     const run_tests = b.addRunArtifact(tests);
 
+    const postgres_ddl_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/postgres_ddl_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "zigma_postgres_ddl", .module = postgres_ddl_mod },
+            },
+        }),
+    });
+    const run_postgres_ddl_tests = b.addRunArtifact(postgres_ddl_tests);
+
+    const postgres_executor_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/postgres_executor_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "zigma_postgres_ddl", .module = postgres_ddl_mod },
+                .{ .name = "zigma_postgres_executor", .module = postgres_executor_mod },
+            },
+        }),
+    });
+    const run_postgres_executor_tests = b.addRunArtifact(postgres_executor_tests);
+
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_postgres_ddl_tests.step);
+    test_step.dependOn(&run_postgres_executor_tests.step);
+
+    const postgres_integration_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/postgres_integration_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "zigma_postgres_ddl", .module = postgres_ddl_mod },
+                .{ .name = "zigma_postgres_executor", .module = postgres_executor_mod },
+                .{ .name = "zigma_postgres_libpq", .module = postgres_libpq_mod },
+            },
+        }),
+    });
+    const run_postgres_integration = b.addSystemCommand(&.{"sh"});
+    run_postgres_integration.addFileArg(b.path("test/integration/run_postgres.sh"));
+    run_postgres_integration.addArtifactArg(postgres_integration_tests);
+
+    const postgres_test_step = b.step("test-postgres", "Run integration tests against disposable PostgreSQL");
+    postgres_test_step.dependOn(&run_postgres_integration.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{
@@ -87,6 +174,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "zigma", .module = zigma_mod },
                     .{ .name = "aida", .module = aida_mod },
+                    .{ .name = "zigma_postgres_ddl", .module = postgres_ddl_mod },
                 },
             }),
         });
