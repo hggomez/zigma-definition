@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: zigma_aida_postgres
+    environment:
+      POSTGRES_USER: aida
+      POSTGRES_PASSWORD: aida
+      POSTGRES_DB: aida
+    ports:
+      - "5432:5432"
+    volumes:
+      - zigma_aida_pgdata:/var/lib/postgresql/data
+
+volumes:
+  zigma_aida_pgdata:

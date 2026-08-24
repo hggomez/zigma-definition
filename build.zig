@@ -61,6 +61,15 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const schema_sql_mod = b.addModule("schema_sql", .{
+        .root_source_file = b.path("src/schema_sql.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_mod },
+        },
+    });
+
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/aida_test.zig"),
@@ -74,8 +83,50 @@ pub fn build(b: *std.Build) void {
     });
     const run_tests = b.addRunArtifact(tests);
 
+    const schema_sql_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/schema_sql_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "schema_sql", .module = schema_sql_mod },
+            },
+        }),
+    });
+    const run_schema_sql_tests = b.addRunArtifact(schema_sql_tests);
+
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_schema_sql_tests.step);
+
+    // `zig build create-database`: prints the aida schema (tools/print_aida_schema.zig)
+    // and pipes it into psql, running inside the Postgres container started by
+    // `docker compose up -d` (see docker-compose.yml).
+    const print_aida_schema = b.addExecutable(.{
+        .name = "print_aida_schema",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/print_aida_schema.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "schema_sql", .module = schema_sql_mod },
+            },
+        }),
+    });
+    const run_print_aida_schema = b.addRunArtifact(print_aida_schema);
+    const aida_schema_sql = run_print_aida_schema.captureStdOut(.{});
+
+    const apply_aida_schema = b.addSystemCommand(&.{
+        "docker", "exec", "-i", "zigma_aida_postgres",
+        "psql",   "-U",   "aida", "-d", "aida",
+    });
+    apply_aida_schema.setStdIn(.{ .lazy_path = aida_schema_sql });
+
+    const create_database_step = b.step("create-database", "Generate the aida schema and apply it to the running Postgres container");
+    create_database_step.dependOn(&apply_aida_schema.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{
