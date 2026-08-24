@@ -1,12 +1,13 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 1 ]; then
-    echo "usage: run_postgres.sh <integration-test-binary>" >&2
+if [ "$#" -ne 2 ]; then
+    echo "usage: run_postgres.sh <integration-test-binary> <bootstrap-binary>" >&2
     exit 2
 fi
 
 test_binary=$1
+bootstrap_binary=$2
 container_name="zigma-postgres-integration-$$"
 schema_name="zigma_integration_$$"
 
@@ -39,7 +40,24 @@ done
 
 published_address=$(docker port "$container_name" 5432/tcp)
 published_port=${published_address##*:}
+database_url="postgresql://postgres:postgres@127.0.0.1:${published_port}/zigma_test"
 
-ZIGMA_POSTGRES_URL="postgresql://postgres:postgres@127.0.0.1:${published_port}/zigma_test" \
+# Exercise the actual runtime example, including its DATABASE_URL boundary.
+DATABASE_URL="$database_url" "$bootstrap_binary"
+DATABASE_URL="$database_url" "$bootstrap_binary"
+
+actual_public_tables=$(docker exec "$container_name" psql \
+    --username postgres \
+    --dbname zigma_test \
+    --tuples-only \
+    --no-align \
+    --command "SELECT string_agg(table_name, ',' ORDER BY table_name) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'")
+expected_public_tables="alumnos,clases,cursos,docentes,inscripciones,materias,mesas,opciones,periodos,preguntas,presencias"
+if [ "$actual_public_tables" != "$expected_public_tables" ]; then
+    echo "bootstrap created unexpected public tables: $actual_public_tables" >&2
+    exit 1
+fi
+
+ZIGMA_POSTGRES_URL="$database_url" \
 ZIGMA_POSTGRES_SCHEMA="$schema_name" \
     "$test_binary"

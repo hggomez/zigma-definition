@@ -81,20 +81,34 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const libpq_prefix = b.option(
+        []const u8,
+        "libpq-prefix",
+        "Prefix containing the libpq include/ and lib/ directories",
+    );
+    const postgres_libpq_translate = b.addTranslateC(.{
+        .root_source_file = b.path("src/postgres_libpq.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    if (libpq_prefix) |prefix| {
+        postgres_libpq_translate.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
+    }
+    const postgres_libpq_bindings_mod = postgres_libpq_translate.createModule();
+    postgres_libpq_bindings_mod.linkSystemLibrary("pq", .{});
+    if (libpq_prefix) |prefix| {
+        postgres_libpq_bindings_mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
+    }
+
     const postgres_libpq_mod = b.addModule("zigma_postgres_libpq", .{
         .root_source_file = b.path("src/postgres_libpq.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zigma_postgres_executor", .module = postgres_executor_mod },
+            .{ .name = "libpq", .module = postgres_libpq_bindings_mod },
         },
     });
-    postgres_libpq_mod.link_libc = true;
-    postgres_libpq_mod.linkSystemLibrary("pq", .{});
-    if (b.option([]const u8, "libpq-prefix", "Prefix containing the libpq include/ and lib/ directories")) |prefix| {
-        postgres_libpq_mod.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
-        postgres_libpq_mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
-    }
 
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -157,9 +171,33 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+
+    const postgres_bootstrap = b.addExecutable(.{
+        .name = "postgres-bootstrap",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/postgres_bootstrap.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "zigma_postgres_ddl", .module = postgres_ddl_mod },
+                .{ .name = "zigma_postgres_executor", .module = postgres_executor_mod },
+                .{ .name = "zigma_postgres_libpq", .module = postgres_libpq_mod },
+            },
+        }),
+    });
+    const run_postgres_bootstrap = b.addRunArtifact(postgres_bootstrap);
+    const postgres_bootstrap_step = b.step(
+        "run-postgres-bootstrap",
+        "Apply the compile-time AIDA schema using DATABASE_URL",
+    );
+    postgres_bootstrap_step.dependOn(&run_postgres_bootstrap.step);
+
     const run_postgres_integration = b.addSystemCommand(&.{"sh"});
     run_postgres_integration.addFileArg(b.path("test/integration/run_postgres.sh"));
     run_postgres_integration.addArtifactArg(postgres_integration_tests);
+    run_postgres_integration.addArtifactArg(postgres_bootstrap);
 
     const postgres_test_step = b.step("test-postgres", "Run integration tests against disposable PostgreSQL");
     postgres_test_step.dependOn(&run_postgres_integration.step);

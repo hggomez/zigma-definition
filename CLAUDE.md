@@ -4,7 +4,8 @@ Port a Zig del módulo `system-design` (TypeScript): la parte descriptiva del fr
 SSOTIGAD (Single Source Of Truth Implies Good Application Design). Provee el vocabulario
 para describir sistemas (tipos de dominio, entidades, campos, pks, uks, fks) de modo que
 generadores automáticos puedan derivar tablas, endpoints, pantallas, serializadores y
-validadores. Este módulo cubre **solo la parte descriptiva**: no genera nada.
+validadores. El núcleo `zigma` cubre **solo la parte descriptiva**; la generación y ejecución
+PostgreSQL viven en módulos independientes.
 
 La referencia semántica es el repo `system-design` (hermano de este): la convención
 Def/Info, los nombres ya elegidos y las decisiones de diseño están documentados en su
@@ -24,12 +25,22 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 ## Estructura
 
 * `src/zigma.zig`: el framework descriptor (módulo `zigma`). No conoce ningún sistema concreto.
+* `src/postgres_ddl.zig`: generación comptime del DDL inicial (módulo
+  `zigma_postgres_ddl`).
+* `src/postgres_executor.zig`: ejecución transaccional independiente del driver (módulo
+  `zigma_postgres_executor`).
+* `src/postgres_libpq.zig`: adaptador bloqueante opcional sobre `libpq` (módulo
+  `zigma_postgres_libpq`).
 * `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
-* `test/aida_test.zig`: los tests positivos (runtime y asserts comptime).
+* `examples/postgres_bootstrap.zig`: ejecutable que genera el DDL de AIDA en compilación y
+  lo aplica usando `DATABASE_URL` en runtime.
+* `test/*_test.zig`: tests positivos (runtime y asserts comptime).
 * `test/compile_errors/*.zig`: fragmentos que **deben fallar** la compilación; `build.zig`
   los compila con `expect_errors` (el paso tiene éxito solo si el error coincide) y los
   cuelga del step `test`. La lista de casos con su mensaje esperado está en `build.zig`.
 * `zig build test` corre todo: tests de runtime y casos de no-compila.
+* `zig build test-postgres -Dlibpq-prefix=...` levanta un PostgreSQL descartable con Docker
+  y prueba la ejecución real; queda separado para que la suite normal no requiera servicios.
 
 ## Decisiones de diseño
 

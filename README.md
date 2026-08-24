@@ -20,6 +20,8 @@ Este módulo cubre solo la parte descriptiva de los sistemas: no genera nada por
 El paquete también incluye el módulo independiente `zigma_postgres_ddl`, que consume esas
 descripciones y genera las sentencias PostgreSQL de creación inicial del schema. No forma
 parte del núcleo descriptivo y requiere un mapping explícito de tipos de dominio a tipos SQL.
+Los módulos opcionales `zigma_postgres_executor` y `zigma_postgres_libpq` permiten ejecutar
+ese DDL en una transacción sin acoplar el generador a una conexión concreta.
 
 ## Convención de nombres: Def e Info
 
@@ -128,8 +130,11 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
 
 * `src/zigma.zig`: el framework descriptor (módulo `zigma`); no conoce ningún sistema
   concreto.
+* `src/postgres_ddl.zig`: generación comptime del DDL PostgreSQL inicial.
+* `src/postgres_executor.zig`: política transaccional independiente del driver.
+* `src/postgres_libpq.zig`: adaptador bloqueante y mínimo sobre `libpq`.
 * `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
-* `test/aida_test.zig`: los tests positivos.
+* `test/*_test.zig`: tests positivos del descriptor, el DDL y el executor.
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
   error esperado listado en `build.zig`.
 
@@ -162,6 +167,13 @@ exe.root_module.addImport("zigma", zigma);
 
 const postgres_ddl = b.dependency("zigma_definition", .{}).module("zigma_postgres_ddl");
 exe.root_module.addImport("zigma_postgres_ddl", postgres_ddl);
+
+const postgres_executor = b.dependency("zigma_definition", .{}).module("zigma_postgres_executor");
+exe.root_module.addImport("zigma_postgres_executor", postgres_executor);
+
+// Opcional: requiere headers y biblioteca de libpq.
+const postgres_libpq = b.dependency("zigma_definition", .{}).module("zigma_postgres_libpq");
+exe.root_module.addImport("zigma_postgres_libpq", postgres_libpq);
 ```
 
 El paquete también exporta `aida`, descripto en `examples/aida.zig`.
@@ -191,10 +203,58 @@ determinísticos. El schema completo ordena primero las tablas referenciadas, ad
 reflexivas y rechaza ciclos entre tablas diferentes, que requerirían una segunda fase con
 `ALTER TABLE`.
 
-Esta primera versión no ejecuta el SQL ni compara contra una base existente. Si una tabla
-ya existe, `IF NOT EXISTS` no agrega columnas ni constraints nuevas: cambiar la definición
-solo cambia el script generado. Changelog, introspección y migraciones quedan para una fase
-posterior.
+El generador no conecta ni compara contra una base existente. Si una tabla ya existe,
+`IF NOT EXISTS` no agrega columnas ni constraints nuevas: cambiar la definición solo cambia
+el script generado. Changelog, introspección y migraciones quedan para una fase posterior.
+
+## Ejecución transaccional
+
+`zigma_postgres_executor` recibe el string inmutable y cualquier conexión que implemente
+estructuralmente `begin`, `exec`, `commit` y `rollback`. De esa forma la política de
+transacción no depende de `libpq` ni de las definiciones del sistema:
+
+```zig
+const postgres_executor = @import("zigma_postgres_executor");
+const postgres_libpq = @import("zigma_postgres_libpq");
+
+const schema_sql = postgres_ddl.createSchemaDdl(aida.entity_defs, mappings);
+
+var connection = postgres_libpq.Connection.init(allocator);
+defer connection.deinit();
+try connection.connect(database_url);
+
+try postgres_executor.executeSchema(&connection, schema_sql);
+```
+
+El executor abre una transacción propia. Si falla la ejecución o el commit, intenta rollback
+sin reemplazar el error original. La conexión debe estar fuera de otra transacción;
+`zigma_postgres_libpq` chequea esa precondición. El adaptador es deliberadamente pequeño y
+bloqueante: ejecuta SQL confiable, conserva el último diagnóstico de PostgreSQL y no incluye
+pool, parámetros, lectura de filas ni operaciones CRUD.
+
+`zig build test` no necesita PostgreSQL ni `libpq`. La integración real usa un contenedor
+descartable, un puerto aleatorio y PostgreSQL 18.4:
+
+```sh
+zig build test-postgres -Dlibpq-prefix="$(brew --prefix libpq)"
+```
+
+En sistemas donde `pkg-config` ya descubre `libpq`, se puede omitir `-Dlibpq-prefix`.
+
+### Ejemplo ejecutable
+
+`examples/postgres_bootstrap.zig` muestra la composición completa. Sus entidades, mappings
+y `schema_sql` son constantes evaluadas en compilación; `main` solo lee la conexión y aplica
+ese string durante la ejecución:
+
+```sh
+DATABASE_URL="postgresql://user:password@localhost/database" \
+zig build run-postgres-bootstrap -Dlibpq-prefix="$(brew --prefix libpq)"
+```
+
+La URL no se incorpora al binario: se obtiene del ambiente en runtime. El comando termina
+con error y muestra el diagnóstico retenido por `libpq` si no puede conectar o aplicar el
+schema.
 
 ## Licencia
 
