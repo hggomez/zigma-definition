@@ -107,21 +107,40 @@ driver, ver `TEST_QUEUE.md`).
 En arranque, nada implementado todavía (ningún código de este hito escrito). Lo que se
 acordó hasta ahora, para retomar directamente en la próxima sesión:
 
-* **HTTP: `std.http.Server` directo, sin framework.** Decisión tomada. Investigado
-  (`std/http/Server.zig` de nuestro toolchain pineado, no de blogs de otras versiones):
-  es deliberadamente bajo nivel — `http.Server.init(in: *Reader, out: *Writer)` sobre
-  una conexión de `std.net.Server.accept()`, `server.receiveHead()` devuelve un
-  `Request` con `.head.method` / `.head.target` (path crudo), y `request.respond(body,
-  options)` para contestar. **No** trae router, ni path params, ni parseo de JSON —
-  eso lo escribimos nosotros. Motivo de la decisión: el "router" que necesitamos no es
-  un DSL de rutas a mano (`router.get("/alumnos/:id", ...)` estilo `http.zig`/`httpz`
-  de karlseguin) sino un dispatch genérico derivado de `entity_defs` (nombre de
-  entidad + verbo CRUD → handler), en línea con cómo ya se derivó `sql_generator` de
+* **Orden del hito, decidido**: primero backend↔DB, recién después backend↔frontend.
+  Concretamente: lograr que código del backend hable con Postgres y probarlo con tests
+  (TDD, sin servidor HTTP de por medio todavía) *antes* de tocar `std.http.Server`. El
+  HTTP queda pospuesto — no es el próximo paso.
+* **Driver de Postgres: `libpq` directo, no un paquete Zig de terceros.** Decisión
+  tomada (se descarta investigar/probar `pg.zig`, tanto el original de `karlseguin`
+  como el fork de `lalinsky` sobre `std.Io` — quedan documentados más abajo por si en
+  algún momento conviene reconsiderarlos, pero no son el plan). `libpq` es la librería
+  C oficial de Postgres: hay que ligarla desde Zig vía `@cImport`/`translate-c`. Más
+  trabajo de wireo que un paquete Zig ya armado, pero sin depender de que un proyecto
+  de terceros persiga el ritmo de los dev builds de Zig — motivo ya discutido al
+  comparar las opciones (ver más abajo).
+  * **Todavía sin investigar** (queda para la próxima sesión, antes de escribir
+    código): cómo se linkea `libpq` desde `build.zig` (`linkSystemLibrary("pq")`,
+    dónde vive la lib/headers en Windows — probablemente hace falta la instalación de
+    PostgreSQL o solo el cliente, `libpq-dev` en Linux), forma de las funciones de la
+    C API (`PQconnectdb`, `PQexecParams` para queries parametrizadas, `PQgetvalue`/
+    `PQntuples`/`PQnfields` para leer resultados, `PQclear`/`PQfinish` para liberar) y
+    cómo se ven esas funciones ya traducidas por `translate-c` en Zig.
+* **HTTP: `std.http.Server` directo, sin framework.** Decisión tomada, pero pospuesta
+  (ver arriba). Investigado (`std/http/Server.zig` de nuestro toolchain pineado, no de
+  blogs de otras versiones): es deliberadamente bajo nivel —
+  `http.Server.init(in: *Reader, out: *Writer)` sobre una conexión de
+  `std.net.Server.accept()`, `server.receiveHead()` devuelve un `Request` con
+  `.head.method` / `.head.target` (path crudo), y `request.respond(body, options)`
+  para contestar. **No** trae router, ni path params, ni parseo de JSON — eso lo
+  escribimos nosotros. Motivo de la decisión: el "router" que necesitamos no es un DSL
+  de rutas a mano (`router.get("/alumnos/:id", ...)` estilo `http.zig`/`httpz` de
+  karlseguin) sino un dispatch genérico derivado de `entity_defs` (nombre de entidad +
+  verbo CRUD → handler), en línea con cómo ya se derivó `sql_generator` de
   `EntityInfo`. Un framework de rutas está pensado para el caso que NO tenemos (rutas
   escritas a mano una por una).
-* **Driver de Postgres: todavía sin decidir, sin probar contra nuestro toolchain.**
-  Investigado (no implementado): dos forks reales de `pg.zig`, cliente nativo del
-  protocolo de Postgres (sin libpq).
+* **Investigado pero descartado por ahora — paquetes `pg.zig` (cliente nativo del
+  protocolo de Postgres, sin libpq)**, documentado por si se reconsidera:
   * `karlseguin/pg.zig` (el original): apunta a Zig 0.16.0 en `master`. Pool
     (`pg.Pool`), queries parametrizadas (`pool.query("... where power > $1", .{9000})`),
     filas tipadas (`row.get(i32, 0)`) y mapeo a struct por nombre de columna
@@ -132,25 +151,19 @@ acordó hasta ahora, para retomar directamente en la próxima sesión:
     en `print_schema.zig` (`std.Io.Threaded` / `init.io`). Reemplaza OpenSSL por
     `tls.zig` para que TLS funcione bajo `std.Io`. Misma forma de pool/query/row que
     el original, más `error.Timeout` en `acquire()`.
-  * Ninguno de los dos fija `minimum_zig_version` en su `build.zig.zon`: sin garantía
-    de que compilen contra nuestro pin exacto (`0.17.0-dev.1778+767d25269`) — hay que
-    probarlo cuando se llegue a este paso, no asumirlo de la documentación.
-  * Candidato preferido, a confirmar probando: **`lalinsky/pg.zig`**, por estar
-    construido sobre la misma interfaz `std.Io` que ya estamos usando (en vez de la
-    original, pensada para el modelo bloqueante viejo).
-  * Alternativa de respaldo si ninguno compila: bindings C a `libpq` vía
-    `@cImport`/`translate-c` (más trabajo de wireo, pero `libpq` es estable y no
-    depende de que un paquete Zig siga el ritmo de los dev builds).
+  * Ninguno de los dos fija `minimum_zig_version` en su `build.zig.zon`.
 
 ## Próximos pasos
 
-1. Primer paso chico, TDD: decidir con qué arrancar — probablemente un handler mínimo
-   de `std.http.Server` que conteste algo fijo (sin Postgres todavía), para validar el
-   wireo del servidor (accept loop, `zig build run` o similar) antes de meter el
-   driver. Acordar el paso exacto antes de programarlo (no se escribió código de
-   hito 2 todavía).
-2. Ahí sí: probar compilar `lalinsky/pg.zig` (o el original, o libpq como respaldo)
-   contra nuestro `0.17.0-dev.1778+767d25269` real, no contra lo que dicen los docs.
-3. Forma de los endpoints (REST por entidad vs. genérico parametrizado por
+1. Investigar cómo usar `libpq` desde Zig: linkeo en `build.zig`, dónde está la
+   librería/headers en esta máquina (Windows), y la forma de la C API una vez pasada
+   por `translate-c`. Investigación, no implementación todavía.
+2. Primer paso chico, TDD: una función mínima del backend que abre una conexión a
+   Postgres (el contenedor de `docker-compose.yml`, ya con el esquema de aida
+   aplicado) y corre una query simple, probada con un test — sin `std.http.Server` de
+   por medio. Acordar la forma exacta del primer test antes de escribirlo.
+3. Recién después de tener backend↔DB probado: retomar `std.http.Server` (ya decidido
+   más arriba) para wirear backend↔frontend.
+4. Forma de los endpoints (REST por entidad vs. genérico parametrizado por
    `EntityInfo`) y forma del dispatch (`entity_defs` → tabla de handlers): a definir
-   una vez que el server básico y el driver estén probados por separado.
+   en el paso 3.
