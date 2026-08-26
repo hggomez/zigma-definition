@@ -114,6 +114,27 @@ pub fn build(b: *std.Build) void {
     const print_schema_step = b.step("print-schema", "Print the CREATE TABLE DDL generated for the aida system");
     print_schema_step.dependOn(&run_print_schema.step);
 
+    // `zig build create-database`: starts the Postgres container (docker-compose.yml)
+    // if it isn't running, waits for it to be ready (the `--wait` flag blocks on the
+    // container's healthcheck, so this is race-free even on first-time init), and
+    // pipes the generated aida schema into psql running inside that container. No
+    // Postgres driver needed: psql runs inside the container, so the only host
+    // dependency is Docker.
+    const docker_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait" });
+
+    const run_print_schema_for_db = b.addRunArtifact(print_schema_exe);
+    const aida_schema_sql = run_print_schema_for_db.captureStdOut(.{});
+
+    const apply_aida_schema = b.addSystemCommand(&.{
+        "docker", "exec", "-i", "zigma_aida_postgres",
+        "psql",   "-U",   "aida", "-d", "aida",
+    });
+    apply_aida_schema.setStdIn(.{ .lazy_path = aida_schema_sql });
+    apply_aida_schema.step.dependOn(&docker_up.step);
+
+    const create_database_step = b.step("create-database", "Start Postgres via Docker, then generate and apply the aida schema");
+    create_database_step.dependOn(&apply_aida_schema.step);
+
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_sql_generator_tests.step);

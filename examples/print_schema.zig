@@ -10,6 +10,13 @@ const sql_generator = @import("sql_generator");
 // the result, not comptime-known enough for its internal @field lookups.
 const schema_ddl = sql_generator.schemaSql(aida.sql_type_defs, aida.entity_defs);
 
-pub fn main() void {
-    std.debug.print("{s}\n", .{schema_ddl});
+// Writes to stdout, not std.debug.print (which always goes to stderr): the
+// `create-database` build step pipes this output into psql via
+// captureStdOut, so it must land on stdout to be picked up.
+pub fn main(init: std.process.Init) !void {
+    var buffer: [4096]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(init.io, &buffer);
+    const stdout = &stdout_writer.interface;
+    try stdout.print("{s}\n", .{schema_ddl});
+    try stdout.flush();
 }

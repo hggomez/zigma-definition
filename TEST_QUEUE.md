@@ -8,13 +8,8 @@ revisión antes de implementar.
 
 ## Pendientes (módulo `sql_generator` — esquema de la base de datos)
 
-* **Esquema completo de aida**: `schemaSql` corrido sobre `aida.entity_defs`
-  (11 entidades, ya con fks entre ellas) — la demo real de "ver corriendo
-  con aida". Sostiene además el paso manual de imprimir el esquema a
-  stdout. Quedó explícitamente para después de que NOT NULL/PK/UK/FK
-  estuvieran implementados y probados por separado (ya lo están): recién
-  ahora se puede escribir con confianza el DDL esperado de las 11
-  entidades.
+Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`. Las próximas ideas
+de test van a salir del hito 2 (endpoints CRUD/backend).
 
 ## Hechos (referencia rápida, no repetir)
 
@@ -44,3 +39,6 @@ revisión antes de implementar.
   sql_unknown_type_mapping.zig`, mensaje `"type 'x' has no SQL mapping"`).
 * Pk siempre `NOT NULL`, sin importar el `nullable` del campo (fixture
   `combinacion`, pk `a`,`b`, ninguno con `nullable: false` explícito).
+* Esquema completo de aida (`schemaSql` sobre las 11 entidades de
+  `aida.entity_defs`, en orden de declaración) — sostiene el "ver
+  corriendo" de este hito (`zig build print-schema`).

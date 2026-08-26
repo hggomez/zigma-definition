@@ -77,17 +77,36 @@ driver, ver `TEST_QUEUE.md`).
   Confirmado corriendo: las 11 tablas salen con sus fks (incluida la reflexiva de
   `docentes.jefe` y las dos a `docentes` desde `mesas`), pks compuestas y `NOT NULL`
   correcto.
+* **Hito 1 completo**: el DDL corre contra un Postgres real, no solo se imprime.
+  Decisión: **Postgres vía Docker**, sin driver de Postgres para Zig — `psql` corre
+  *dentro* del contenedor, así que la única dependencia del host es Docker. El patrón
+  se tomó (no se heredó el código) de `origin/example-database-connection`, una rama
+  exploratoria no mergeada que ya lo había resuelto así.
+  * `docker-compose.yml`: un servicio `postgres:16` (`zigma_aida_postgres`, db/user/pass
+    `aida`), con `healthcheck` (`pg_isready`) para que el arranque sea determinístico.
+  * `build.zig`, step `zig build create-database`: corre `docker compose up -d --wait`
+    (bloquea hasta que el healthcheck pasa — sin esto, `docker exec` podía llegar antes
+    de que Postgres estuviera listo para aceptar conexiones), captura el stdout de
+    `print_schema` (`captureStdOut`) y lo pipea a
+    `docker exec -i zigma_aida_postgres psql -U aida -d aida` (`setStdIn`).
+  * Bug encontrado y corregido en el camino: `examples/print_schema.zig` usaba
+    `std.debug.print`, que en Zig **siempre** escribe a stderr, nunca a stdout —
+    `captureStdOut` capturaba un string vacío. Al principio pasó desapercibido porque
+    una corrida vieja había dejado cacheado un resultado previo; se detectó por un
+    `failed command` espurio en la salida de `zig build`, se confirmó pidiendo
+    `\dt`/`\d` directo a Postgres (las tablas no coincidían con lo esperado hasta
+    corregirlo). Se reescribió con la interfaz nueva de Zig 0.17
+    (`std.process.Init.io`, `std.Io.File.stdout().writer(io, &buffer)`,
+    `stdout.print(...)` + `stdout.flush()`), que sí escribe a stdout.
+  * Confirmado de punta a punta con `docker compose down -v` (reset completo) seguido
+    de `zig build create-database`: las 11 tablas se crean limpias, con sus fks, pks
+    compuestas y `NOT NULL` correctos (verificado con `psql -c "\dt"` y `\d docentes`).
 
 ## Próximos pasos
 
-* **Hito 1 (base de datos), paso siguiente**: correr el DDL generado contra una base
-  real. Decisión: **Postgres vía Docker** (no SQLite — la mención anterior a SQLite en
-  este archivo quedó superada; el `sql_types` de `aida` sigue siendo genérico, cambiar
-  de dialecto es solo cambiar ese mapeo). Falta decidir: cómo levanta Docker el build
-  (`zig build` invocando `docker compose`, un step aparte, o manual por ahora),
-  qué driver/binding Postgres para Zig, y si `sql_generator.zig` necesita algo
-  específico de Postgres (tipos, `SERIAL`/`IDENTITY`, etc. — hoy es agnóstico).
-* **Hito 2 (backend), después de la base real**: endpoints CRUD (alta/baja/modif/
-  consulta = DML) derivados de las `EntityInfo`, para que el backend los use. Todavía
-  sin decidir framework HTTP ni forma del endpoint (REST por entidad, uno genérico
-  parametrizado, etc.) — se acuerda cuando se llegue a ese punto.
+* **Hito 2 (backend)**: endpoints CRUD (alta/baja/modificación/consulta = DML) sobre el
+  Postgres ya corriendo, derivados de las `EntityInfo`. Todavía sin decidir framework
+  HTTP para Zig, forma del endpoint (REST por entidad vs. uno genérico parametrizado),
+  ni cómo el backend habla con Postgres (acá si va a hacer falta un driver real o
+  bindings a libpq, a diferencia del paso de creación de esquema que se resolvió sin
+  uno) — se acuerda cuando se llegue a ese punto.
