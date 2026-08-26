@@ -102,11 +102,55 @@ driver, ver `TEST_QUEUE.md`).
     de `zig build create-database`: las 11 tablas se crean limpias, con sus fks, pks
     compuestas y `NOT NULL` correctos (verificado con `psql -c "\dt"` y `\d docentes`).
 
+## Hito 2 (backend): estado y decisiones
+
+En arranque, nada implementado todavía (ningún código de este hito escrito). Lo que se
+acordó hasta ahora, para retomar directamente en la próxima sesión:
+
+* **HTTP: `std.http.Server` directo, sin framework.** Decisión tomada. Investigado
+  (`std/http/Server.zig` de nuestro toolchain pineado, no de blogs de otras versiones):
+  es deliberadamente bajo nivel — `http.Server.init(in: *Reader, out: *Writer)` sobre
+  una conexión de `std.net.Server.accept()`, `server.receiveHead()` devuelve un
+  `Request` con `.head.method` / `.head.target` (path crudo), y `request.respond(body,
+  options)` para contestar. **No** trae router, ni path params, ni parseo de JSON —
+  eso lo escribimos nosotros. Motivo de la decisión: el "router" que necesitamos no es
+  un DSL de rutas a mano (`router.get("/alumnos/:id", ...)` estilo `http.zig`/`httpz`
+  de karlseguin) sino un dispatch genérico derivado de `entity_defs` (nombre de
+  entidad + verbo CRUD → handler), en línea con cómo ya se derivó `sql_generator` de
+  `EntityInfo`. Un framework de rutas está pensado para el caso que NO tenemos (rutas
+  escritas a mano una por una).
+* **Driver de Postgres: todavía sin decidir, sin probar contra nuestro toolchain.**
+  Investigado (no implementado): dos forks reales de `pg.zig`, cliente nativo del
+  protocolo de Postgres (sin libpq).
+  * `karlseguin/pg.zig` (el original): apunta a Zig 0.16.0 en `master`. Pool
+    (`pg.Pool`), queries parametrizadas (`pool.query("... where power > $1", .{9000})`),
+    filas tipadas (`row.get(i32, 0)`) y mapeo a struct por nombre de columna
+    (`row.to()`). TLS marcado experimental, necesita OpenSSL. Es estricto: no hace
+    coerción de tipos.
+  * `lalinsky/pg.zig` (fork activo, commits recientes): reescrito para la interfaz
+    `std.Io` nueva de Zig — la misma que usamos recién para arreglar el bug de stdout
+    en `print_schema.zig` (`std.Io.Threaded` / `init.io`). Reemplaza OpenSSL por
+    `tls.zig` para que TLS funcione bajo `std.Io`. Misma forma de pool/query/row que
+    el original, más `error.Timeout` en `acquire()`.
+  * Ninguno de los dos fija `minimum_zig_version` en su `build.zig.zon`: sin garantía
+    de que compilen contra nuestro pin exacto (`0.17.0-dev.1778+767d25269`) — hay que
+    probarlo cuando se llegue a este paso, no asumirlo de la documentación.
+  * Candidato preferido, a confirmar probando: **`lalinsky/pg.zig`**, por estar
+    construido sobre la misma interfaz `std.Io` que ya estamos usando (en vez de la
+    original, pensada para el modelo bloqueante viejo).
+  * Alternativa de respaldo si ninguno compila: bindings C a `libpq` vía
+    `@cImport`/`translate-c` (más trabajo de wireo, pero `libpq` es estable y no
+    depende de que un paquete Zig siga el ritmo de los dev builds).
+
 ## Próximos pasos
 
-* **Hito 2 (backend)**: endpoints CRUD (alta/baja/modificación/consulta = DML) sobre el
-  Postgres ya corriendo, derivados de las `EntityInfo`. Todavía sin decidir framework
-  HTTP para Zig, forma del endpoint (REST por entidad vs. uno genérico parametrizado),
-  ni cómo el backend habla con Postgres (acá si va a hacer falta un driver real o
-  bindings a libpq, a diferencia del paso de creación de esquema que se resolvió sin
-  uno) — se acuerda cuando se llegue a ese punto.
+1. Primer paso chico, TDD: decidir con qué arrancar — probablemente un handler mínimo
+   de `std.http.Server` que conteste algo fijo (sin Postgres todavía), para validar el
+   wireo del servidor (accept loop, `zig build run` o similar) antes de meter el
+   driver. Acordar el paso exacto antes de programarlo (no se escribió código de
+   hito 2 todavía).
+2. Ahí sí: probar compilar `lalinsky/pg.zig` (o el original, o libpq como respaldo)
+   contra nuestro `0.17.0-dev.1778+767d25269` real, no contra lo que dicen los docs.
+3. Forma de los endpoints (REST por entidad vs. genérico parametrizado por
+   `EntityInfo`) y forma del dispatch (`entity_defs` → tabla de handlers): a definir
+   una vez que el server básico y el driver estén probados por separado.
