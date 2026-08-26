@@ -10,6 +10,17 @@ pub const type_defs = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .
     .email = zigma.common_type_defs.text,
 } }));
 
+/// SQL type for each of this system's domain types, parallel to `type_defs`.
+/// `fecha` maps to one opaque column (TEXT): the SQL generator never looks
+/// at the underlying Zig type, only at the domain type name.
+pub const sql_type_defs = .{
+    .text = "TEXT",
+    .integer = "INTEGER",
+    .boolean = "BOOLEAN",
+    .fecha = "TEXT",
+    .email = "TEXT",
+};
+
 /// the instance type of a record def, bound to this system's type_defs:
 /// DefinedType(cargo) = struct { cargo: []const u8, orden: i64, ... }
 pub fn DefinedType(comptime rec: anytype) type {

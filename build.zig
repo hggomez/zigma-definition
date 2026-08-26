@@ -40,6 +40,7 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "defined_type_wrong_field_type.zig", .expected = "expected type 'i64', found '*const [1:0]u8'" },
     .{ .file = "validar_cargo_missing_field.zig", .expected = at("validar_cargo_missing_field.zig") },
     .{ .file = "defined_type_no_field.zig", .expected = at("defined_type_no_field.zig") },
+    .{ .file = "sql_unknown_type_mapping.zig", .expected = "type 'text' has no SQL mapping" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -61,6 +62,15 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const sql_generator_mod = b.addModule("sql_generator", .{
+        .root_source_file = b.path("src/sql_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_mod },
+        },
+    });
+
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/aida_test.zig"),
@@ -74,8 +84,39 @@ pub fn build(b: *std.Build) void {
     });
     const run_tests = b.addRunArtifact(tests);
 
+    const sql_generator_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/sql_generator_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "sql_generator", .module = sql_generator_mod },
+            },
+        }),
+    });
+    const run_sql_generator_tests = b.addRunArtifact(sql_generator_tests);
+
+    const print_schema_exe = b.addExecutable(.{
+        .name = "print_schema",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/print_schema.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "sql_generator", .module = sql_generator_mod },
+            },
+        }),
+    });
+    const run_print_schema = b.addRunArtifact(print_schema_exe);
+    const print_schema_step = b.step("print-schema", "Print the CREATE TABLE DDL generated for the aida system");
+    print_schema_step.dependOn(&run_print_schema.step);
+
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_sql_generator_tests.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{
@@ -87,6 +128,7 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{
                     .{ .name = "zigma", .module = zigma_mod },
                     .{ .name = "aida", .module = aida_mod },
+                    .{ .name = "sql_generator", .module = sql_generator_mod },
                 },
             }),
         });
