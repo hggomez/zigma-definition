@@ -31,9 +31,23 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   `zigma_postgres_executor`).
 * `src/postgres_libpq.zig`: adaptador bloqueante opcional sobre `libpq` (módulo
   `zigma_postgres_libpq`).
+* `src/postgres_migrations.zig`: snapshot canónico, diff y drafts Liquibase formatted-SQL
+  (módulo `zigma_postgres_migrations`); no conoce filesystem, procesos ni conexiones.
+* `src/liquibase_runner.zig`: startup versionado mediante el CLI externo (módulo
+  `zigma_liquibase_runner`); credenciales solo por ambiente.
+* `src/rest.zig`: codecs, routing, JSON y validación CRUD (módulo `zigma_rest`); no conoce
+  sockets ni PostgreSQL.
+* `src/postgres_crud.zig`: SQL CRUD parametrizado derivado de entidades (módulo
+  `zigma_postgres_crud`).
+* `src/std_http.zig`: servidor secuencial de referencia (módulo `zigma_std_http`).
 * `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
+* `examples/aida_postgres.zig`: mappings y proyección PostgreSQL compartida de AIDA.
 * `examples/postgres_bootstrap.zig`: ejecutable que genera el DDL de AIDA en compilación y
   lo aplica usando `DATABASE_URL` en runtime.
+* `db/`: snapshot aceptado, baseline/changesets inmutables y directorio del único draft.
+* `tools/postgres_migration_tool.zig`: workflow de init/check/draft/accept-files.
+* `tools/postgres_schema_validator.zig`: comparación SSOT↔`pg_catalog` en un schema esperado
+  temporal; se usa antes de aceptar o baselinar.
 * `test/*_test.zig`: tests positivos (runtime y asserts comptime).
 * `test/compile_errors/*.zig`: fragmentos que **deben fallar** la compilación; `build.zig`
   los compila con `expect_errors` (el paso tiene éxito solo si el error coincide) y los
@@ -41,6 +55,11 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `zig build test` corre todo: tests de runtime y casos de no-compila.
 * `zig build test-postgres -Dlibpq-prefix=...` levanta un PostgreSQL descartable con Docker
   y prueba la ejecución real; queda separado para que la suite normal no requiera servicios.
+* `zig build test-migrations -Dlibpq-prefix=... -Dliquibase-bin=...` fija Liquibase 5.0.4 y
+  PostgreSQL 18.4, y prueba baseline, idempotencia, migraciones manuales, rollback, checksum
+  y adopción validada.
+* `zig build test-rest-postgres -Dlibpq-prefix=...` prueba el CRUD generado end-to-end con
+  `std.http`, libpq y PostgreSQL descartable.
 
 ## Decisiones de diseño
 
@@ -67,6 +86,11 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   tipos (dedup por nombre, gana el último, orden de primera aparición) y
   `zigma.mergePk(.{pk1, pk2})` para pks (dedup preservando orden). La concatenación con
   duplicados (`a.pk ++ b.pk`) también sirve como pk: `completeEntity` la deduplica.
+* En el flujo versionado, las entidades son estado deseado y `db/schema.snapshot.json` es
+  el último estado aceptado. Un mismatch falla el build. Los drafts llevan hashes SHA-256
+  de ambos extremos; operaciones riesgosas quedan como `ZIGMA-BLOCKER` y nunca se infieren
+  `CASCADE`, renames ni casts. Solo la reproducción en PostgreSQL y la igualdad de catálogo
+  permiten mover el draft a `db/changes/` y reemplazar atómicamente el snapshot.
 
 ## Zig: versión y particularidades
 

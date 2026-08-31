@@ -9,6 +9,11 @@ const aida = @import("aida");
 const postgres_ddl = @import("zigma_postgres_ddl");
 const postgres_executor = @import("zigma_postgres_executor");
 const postgres_libpq = @import("zigma_postgres_libpq");
+const schema_guard = @import("aida_schema_guard");
+
+comptime {
+    _ = schema_guard;
+}
 
 const type_mappings = postgres_ddl.defineTypeMappings(zigma.merge(.{
     postgres_ddl.common_type_mappings,

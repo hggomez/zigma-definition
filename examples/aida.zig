@@ -30,7 +30,7 @@ pub const materia = zigma.record(type_defs, .{
 
 pub const docente = zigma.record(type_defs, .{
     .docente = .{ .type = "text" },
-    .apellido = .{ .type = "text", .nullable = false },
+    .apellido = .{ .type = "text", .nullable = true },
     .nombres = .{ .type = "text", .nullable = false },
     .cargo = .{ .type = "text" },
     .email = .{ .type = "email" },

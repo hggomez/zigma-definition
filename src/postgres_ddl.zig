@@ -174,13 +174,16 @@ fn renderTable(
     comptime table_name: []const u8,
     comptime entity: anytype,
     comptime type_mappings: anytype,
+    comptime if_not_exists: bool,
 ) []const u8 {
     validateIdentifier(table_name);
     const info = CompletedEntityHolder(entity).value;
     if (info.pk.len == 0)
         @compileError("entity '" ++ table_name ++ "': PostgreSQL DDL requires a non-empty pk");
 
-    comptime var ddl: []const u8 = "CREATE TABLE IF NOT EXISTS " ++ quoteIdentifier(table_name) ++ " (\n";
+    comptime var ddl: []const u8 = "CREATE TABLE " ++
+        (if (if_not_exists) "IF NOT EXISTS " else "") ++
+        quoteIdentifier(table_name) ++ " (\n";
 
     inline for (@typeInfo(@TypeOf(info.fields)).@"struct".field_names) |field_name| {
         validateIdentifier(field_name);
@@ -215,9 +218,10 @@ fn RenderedTable(
     comptime table_name: []const u8,
     comptime entity: anytype,
     comptime type_mappings: anytype,
+    comptime if_not_exists: bool,
 ) type {
     return struct {
-        const value: []const u8 = renderTable(table_name, entity, type_mappings);
+        const value: []const u8 = renderTable(table_name, entity, type_mappings, if_not_exists);
     };
 }
 
@@ -282,7 +286,7 @@ pub fn createTableDdl(
     const validated = zigma.defineEntities(entity_defs);
     if (!@hasField(@TypeOf(validated), table_name))
         @compileError("PostgreSQL DDL: unknown entity '" ++ table_name ++ "'");
-    return RenderedTable(table_name, @field(validated, table_name), type_mappings).value;
+    return RenderedTable(table_name, @field(validated, table_name), type_mappings, true).value;
 }
 
 /// Generates the complete PostgreSQL schema. Referenced tables come before
@@ -294,7 +298,22 @@ pub fn createSchemaDdl(comptime entity_defs: anytype, comptime type_mappings: an
     comptime var ddl: []const u8 = "";
     inline for (SchemaOrder(validated).names, 0..) |table_name, index| {
         if (index != 0) ddl = ddl ++ "\n";
-        ddl = ddl ++ RenderedTable(table_name, @field(validated, table_name), type_mappings).value;
+        ddl = ddl ++ RenderedTable(table_name, @field(validated, table_name), type_mappings, true).value;
+    }
+    return ddl;
+}
+
+/// Generates the initial migration for a genuinely empty database. Unlike
+/// `createSchemaDdl`, this deliberately omits `IF NOT EXISTS`: migration
+/// history must surface drift instead of silently accepting pre-existing
+/// objects.
+pub fn createBaselineDdl(comptime entity_defs: anytype, comptime type_mappings: anytype) []const u8 {
+    comptime checkTypeMappings(type_mappings);
+    const validated = zigma.defineEntities(entity_defs);
+    comptime var ddl: []const u8 = "";
+    inline for (SchemaOrder(validated).names, 0..) |table_name, index| {
+        if (index != 0) ddl = ddl ++ "\n";
+        ddl = ddl ++ RenderedTable(table_name, @field(validated, table_name), type_mappings, false).value;
     }
     return ddl;
 }

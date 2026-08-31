@@ -145,6 +145,49 @@ test "executes and verifies the complete AIDA schema in PostgreSQL" {
     try postgres_executor.executeSchema(&connection, schema_ddl);
     try connection.exec(catalog_assertions);
 
+    try connection.exec("CREATE TABLE query_probe (id BIGINT PRIMARY KEY, value TEXT)");
+    var inserted_one = try connection.queryParams(
+        allocator,
+        "INSERT INTO query_probe (id, value) VALUES ($1, $2) RETURNING id, value",
+        &.{ "1", null },
+    );
+    defer inserted_one.deinit();
+    try std.testing.expectEqual(@as(usize, 2), inserted_one.columns.len);
+    try std.testing.expectEqualStrings("id", inserted_one.columns[0]);
+    try std.testing.expectEqualStrings("value", inserted_one.columns[1]);
+    try std.testing.expectEqual(@as(usize, 1), inserted_one.rows.len);
+    try std.testing.expectEqualStrings("1", inserted_one.rows[0][0].?);
+    try std.testing.expect(inserted_one.rows[0][1] == null);
+
+    var inserted_two = try connection.queryParams(
+        allocator,
+        "INSERT INTO query_probe (id, value) VALUES ($1, $2) RETURNING id, value",
+        &.{ "2", "two" },
+    );
+    inserted_two.deinit();
+    var selected = try connection.queryParams(
+        allocator,
+        "SELECT id, value FROM query_probe ORDER BY id",
+        &.{},
+    );
+    defer selected.deinit();
+    try std.testing.expectEqual(@as(usize, 2), selected.rows.len);
+    try std.testing.expect(selected.rows[0][1] == null);
+    try std.testing.expectEqualStrings("two", selected.rows[1][1].?);
+
+    if (connection.queryParams(
+        allocator,
+        "INSERT INTO query_probe (id, value) VALUES ($1, $2) RETURNING id, value",
+        &.{ "2", "duplicate" },
+    )) |unexpected| {
+        var result = unexpected;
+        result.deinit();
+        return error.ExpectedUniqueViolation;
+    } else |err| {
+        try std.testing.expectEqual(error.PostgresError, err);
+    }
+    try std.testing.expectEqualStrings("23505", connection.lastSqlState() orelse return error.MissingSqlState);
+
     const invalid_ddl =
         \\CREATE TABLE rollback_probe (id BIGINT PRIMARY KEY);
         \\THIS IS NOT VALID SQL;

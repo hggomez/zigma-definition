@@ -1,13 +1,14 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 2 ]; then
-    echo "usage: run_postgres.sh <integration-test-binary> <bootstrap-binary>" >&2
+if [ "$#" -ne 3 ]; then
+    echo "usage: run_postgres.sh <integration-test-binary> <bootstrap-binary> <schema-validator>" >&2
     exit 2
 fi
 
 test_binary=$1
 bootstrap_binary=$2
+schema_validator=$3
 container_name="zigma-postgres-integration-$$"
 schema_name="zigma_integration_$$"
 
@@ -57,6 +58,20 @@ if [ "$actual_public_tables" != "$expected_public_tables" ]; then
     echo "bootstrap created unexpected public tables: $actual_public_tables" >&2
     exit 1
 fi
+
+DATABASE_URL="$database_url" ZIGMA_ACTUAL_SCHEMA=public "$schema_validator" --baseline-adoption
+
+# Baselining may ignore Liquibase's own tables, but it must reject any history
+# beyond the one initial baseline row.
+docker exec "$container_name" psql --username postgres --dbname zigma_test \
+    --command "CREATE TABLE public.databasechangelog (id TEXT, author TEXT); INSERT INTO public.databasechangelog VALUES ('000002_later', 'zigma');" \
+    >/dev/null
+if DATABASE_URL="$database_url" ZIGMA_ACTUAL_SCHEMA=public "$schema_validator" --baseline-adoption >/dev/null 2>&1; then
+    echo "schema validator unexpectedly accepted later Liquibase history" >&2
+    exit 1
+fi
+docker exec "$container_name" psql --username postgres --dbname zigma_test \
+    --command "DROP TABLE public.databasechangelog" >/dev/null
 
 ZIGMA_POSTGRES_URL="$database_url" \
 ZIGMA_POSTGRES_SCHEMA="$schema_name" \

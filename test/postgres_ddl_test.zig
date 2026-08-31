@@ -103,7 +103,7 @@ test "creates a reflexive foreign key inline" {
     const expected =
         \\CREATE TABLE IF NOT EXISTS "docentes" (
         \\    "docente" TEXT NOT NULL,
-        \\    "apellido" TEXT NOT NULL,
+        \\    "apellido" TEXT,
         \\    "nombres" TEXT NOT NULL,
         \\    "cargo" TEXT,
         \\    "email" TEXT,
@@ -167,7 +167,7 @@ test "creates the complete AIDA schema in dependency order" {
     const expected =
         \\CREATE TABLE IF NOT EXISTS "docentes" (
         \\    "docente" TEXT NOT NULL,
-        \\    "apellido" TEXT NOT NULL,
+        \\    "apellido" TEXT,
         \\    "nombres" TEXT NOT NULL,
         \\    "cargo" TEXT,
         \\    "email" TEXT,

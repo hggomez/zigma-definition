@@ -23,6 +23,15 @@ parte del núcleo descriptivo y requiere un mapping explícito de tipos de domin
 Los módulos opcionales `zigma_postgres_executor` y `zigma_postgres_libpq` permiten ejecutar
 ese DDL en una transacción sin acoplar el generador a una conexión concreta.
 
+Para schemas versionados, `zigma_postgres_migrations` deriva un snapshot canónico y drafts
+de migración desde las mismas entidades, mientras `zigma_liquibase_runner` aplica únicamente
+changesets ya aceptados mediante Liquibase. La compilación nunca se conecta a PostgreSQL.
+
+La capa REST opcional mantiene la misma separación: `zigma_rest` genera controllers y
+routing en compilación, `zigma_postgres_crud` genera SQL parametrizado y `zigma_std_http`
+aporta un servidor secuencial de referencia. Ninguna de esas responsabilidades modifica el
+modelo descriptivo ni el snapshot de migraciones.
+
 ## Convención de nombres: Def e Info
 
 Cada concepto descriptivo tiene (al menos) dos versiones, distinguidas por sufijo:
@@ -133,7 +142,17 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
 * `src/postgres_ddl.zig`: generación comptime del DDL PostgreSQL inicial.
 * `src/postgres_executor.zig`: política transaccional independiente del driver.
 * `src/postgres_libpq.zig`: adaptador bloqueante y mínimo sobre `libpq`.
+* `src/postgres_migrations.zig`: snapshot, diff estructural y drafts formatted-SQL.
+* `src/liquibase_runner.zig`: invocación runtime directa y bloqueante de Liquibase.
+* `src/rest.zig`: codecs, routing, JSON, validación y respuestas REST, sin sockets ni base.
+* `src/postgres_crud.zig`: CRUD PostgreSQL parametrizado derivado de las entidades.
+* `src/std_http.zig`: adaptador HTTP bloqueante y secuencial sobre `std.http`.
 * `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
+* `examples/aida_postgres.zig`: mappings y modelo PostgreSQL compilado de AIDA.
+* `examples/aida_rest.zig`: codecs de `fecha`/`email` y API REST compilada de AIDA.
+* `examples/aida_rest_server.zig`: composición Liquibase → libpq → REST → `std.http`.
+* `db/`: snapshot aceptado, changelog raíz, changesets inmutables y drafts.
+* `tools/`: workflow de migraciones y comparación estructural vía `pg_catalog`.
 * `test/*_test.zig`: tests positivos del descriptor, el DDL y el executor.
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
   error esperado listado en `build.zig`.
@@ -171,6 +190,21 @@ exe.root_module.addImport("zigma_postgres_ddl", postgres_ddl);
 const postgres_executor = b.dependency("zigma_definition", .{}).module("zigma_postgres_executor");
 exe.root_module.addImport("zigma_postgres_executor", postgres_executor);
 
+const postgres_migrations = b.dependency("zigma_definition", .{}).module("zigma_postgres_migrations");
+exe.root_module.addImport("zigma_postgres_migrations", postgres_migrations);
+
+const liquibase_runner = b.dependency("zigma_definition", .{}).module("zigma_liquibase_runner");
+exe.root_module.addImport("zigma_liquibase_runner", liquibase_runner);
+
+const rest = b.dependency("zigma_definition", .{}).module("zigma_rest");
+exe.root_module.addImport("zigma_rest", rest);
+
+const postgres_crud = b.dependency("zigma_definition", .{}).module("zigma_postgres_crud");
+exe.root_module.addImport("zigma_postgres_crud", postgres_crud);
+
+const std_http = b.dependency("zigma_definition", .{}).module("zigma_std_http");
+exe.root_module.addImport("zigma_std_http", std_http);
+
 // Opcional: requiere headers y biblioteca de libpq.
 const postgres_libpq = b.dependency("zigma_definition", .{}).module("zigma_postgres_libpq");
 exe.root_module.addImport("zigma_postgres_libpq", postgres_libpq);
@@ -205,7 +239,110 @@ reflexivas y rechaza ciclos entre tablas diferentes, que requerirían una segund
 
 El generador no conecta ni compara contra una base existente. Si una tabla ya existe,
 `IF NOT EXISTS` no agrega columnas ni constraints nuevas: cambiar la definición solo cambia
-el script generado. Changelog, introspección y migraciones quedan para una fase posterior.
+el script generado. Para bases versionadas se usa el workflow de la sección siguiente; este
+DDL crudo se conserva para validación, tests y adopción inicial.
+
+## PostgreSQL versionado con Liquibase
+
+Las entidades Zigma siguen siendo el estado deseado. Dos artefactos históricos se versionan
+en Git:
+
+* `db/schema.snapshot.json`: último modelo canónico aceptado.
+* `db/changes/*.sql`: changesets Liquibase formatted-SQL, ordenados por revisión.
+
+`db/schema_guard.zig` embebe el snapshot y lo compara en compilación. Además, el build normal
+ejecuta `check-schema`, que muestra un draft legible cuando existe drift. Ninguno de esos dos
+chequeos abre una conexión.
+
+El repositorio fija Liquibase Community **5.0.4**. Instalar esa versión desde la distribución
+oficial y agregar el driver PostgreSQL una sola vez:
+
+```sh
+liquibase --version                 # debe informar 5.0.4
+liquibase lpm add postgresql
+```
+
+Se puede indicar la ruta exacta con `-Dliquibase-bin=/ruta/a/liquibase`. El flujo cotidiano es:
+
+```sh
+# 1. Modificar entidades o mappings; el build ahora falla mostrando el diff.
+zig build
+
+# 2. Crear el único draft permitido. No avanza el snapshot.
+zig build migration -Dname=add_example
+
+# 3. Revisar db/drafts/000002_add_example.sql. Los comentarios
+#    ZIGMA-BLOCKER requieren SQL PostgreSQL manual y deben eliminarse.
+
+# 4. Reproducir historia + candidato en PostgreSQL descartable, comparar
+#    pg_catalog con el SSOT y, solo si coincide, aceptar ambos artefactos.
+zig build accept-migration \
+  -Dlibpq-prefix="$(brew --prefix libpq)" \
+  -Dliquibase-bin=/ruta/a/liquibase
+```
+
+Las revisiones tienen seis dígitos y son secuenciales. Un conflicto entre branches se resuelve
+rebaseando y regenerando el draft, porque el orden es parte del contrato. Los hashes SHA-256
+de los snapshots origen y destino impiden aceptar un draft stale. Los changesets aceptados no
+se editan: Liquibase detecta cualquier modificación mediante su checksum.
+
+Los cambios seguros (tabla nueva, columna nullable, quitar `NOT NULL`, nuevas UK/FK) se
+renderizan directamente. Drops, posibles renames, columnas nuevas no-null, casts, `SET NOT
+NULL`, cambios/remociones de constraints y orden de columnas producen `ZIGMA-BLOCKER`. El
+generador nunca infiere `CASCADE`, rename ni conversión de datos; el desarrollador escribe la
+operación explícita y `accept-migration` prueba el catálogo resultante.
+
+### Startup versionado
+
+La aplicación ejecuta Liquibase antes de aceptar tráfico. La URL debe ser JDBC; usuario y
+password se heredan al hijo mediante variables de ambiente y no aparecen en sus argumentos:
+
+```sh
+LIQUIBASE_URL="jdbc:postgresql://localhost:5432/zigma_dev" \
+LIQUIBASE_USERNAME=zigma \
+LIQUIBASE_PASSWORD=secret \
+LIQUIBASE_CHANGELOG=db/changelog-root.yaml \
+LIQUIBASE_BIN=/ruta/a/liquibase \
+zig build run-postgres-liquibase-bootstrap
+```
+
+Liquibase aporta checksums y locking para startups concurrentes. Un error de ejecutable,
+conexión, checksum o changeset impide el arranque. `zigma_postgres_executor` y `libpq` siguen
+disponibles, pero no aplican el historial versionado.
+
+### Inicialización, adopción y tests
+
+`zig build init-migrations` se usa una sola vez en un sistema sin historia: genera el baseline
+sin `IF NOT EXISTS` y el snapshot inicial. Este repositorio ya contiene esa revisión.
+
+Para adoptar una base creada previamente por `postgres_bootstrap`, el comando exige tanto la
+URL libpq como la JDBC. Primero construye un schema esperado temporal, compara tablas,
+columnas y constraints, comprueba que no exista historia posterior y recién entonces ejecuta
+`changelog-sync`:
+
+```sh
+DATABASE_URL="postgresql://zigma:secret@localhost:5432/zigma_dev" \
+LIQUIBASE_COMMAND_URL="jdbc:postgresql://localhost:5432/zigma_dev" \
+LIQUIBASE_COMMAND_USERNAME=zigma \
+LIQUIBASE_COMMAND_PASSWORD=secret \
+ZIGMA_ACTUAL_SCHEMA=public \
+zig build baseline-existing \
+  -Dlibpq-prefix="$(brew --prefix libpq)" \
+  -Dliquibase-bin=/ruta/a/liquibase
+```
+
+La suite pura no necesita servicios externos. La suite completa fija PostgreSQL
+`18.4-alpine3.24` y requiere Docker, libpq y Liquibase 5.0.4:
+
+```sh
+zig build test
+zig build test-migrations \
+  -Dlibpq-prefix="$(brew --prefix libpq)" \
+  -Dliquibase-bin=/ruta/a/liquibase
+```
+
+Reaplicar `CREATE TABLE IF NOT EXISTS` no es una migración. Producción solo recibe historia
+aceptada; nunca calcula diferencias contra una base viva durante startup.
 
 ## Ejecución transaccional
 
@@ -230,7 +367,9 @@ El executor abre una transacción propia. Si falla la ejecución o el commit, in
 sin reemplazar el error original. La conexión debe estar fuera de otra transacción;
 `zigma_postgres_libpq` chequea esa precondición. El adaptador es deliberadamente pequeño y
 bloqueante: ejecuta SQL confiable, conserva el último diagnóstico de PostgreSQL y no incluye
-pool, parámetros, lectura de filas ni operaciones CRUD.
+pool ni concurrencia. Para REST también expone queries de texto parametrizadas, resultados
+tabulares owned (incluyendo `NULL`) y el último SQLSTATE; la construcción del CRUD permanece
+en `zigma_postgres_crud`.
 
 `zig build test` no necesita PostgreSQL ni `libpq`. La integración real usa un contenedor
 descartable, un puerto aleatorio y PostgreSQL 18.4:
@@ -255,6 +394,64 @@ zig build run-postgres-bootstrap -Dlibpq-prefix="$(brew --prefix libpq)"
 La URL no se incorpora al binario: se obtiene del ambiente en runtime. El comando termina
 con error y muestra el diagnóstico retenido por `libpq` si no puede conectar o aplicar el
 schema.
+
+## REST CRUD derivado de las entidades
+
+`zigma_rest.Api(entity_defs, codecs)` produce en compilación la tabla de rutas y el dispatch
+para todas las entidades. Los codecs se mantienen separados tanto de `TypeDef` como de los
+mappings SQL. El framework incluye `text`, `integer` y `boolean`; AIDA agrega `fecha` ISO
+`YYYY-MM-DD` y usa el codec de texto para `email`:
+
+```zig
+const codecs = rest.defineCodecs(aida.type_defs, zigma.merge(.{
+    rest.common_codecs,
+    .{
+        .fecha = aida_rest.date_codec,
+        .email = rest.text_codec,
+    },
+}));
+
+const Api = rest.Api(aida.entity_defs, codecs);
+var api = Api.init(.{});
+var repository = postgres_crud.Repository(aida.entity_defs).init(&connection);
+```
+
+Por cada nombre exacto de entidad se exponen `GET`, `POST`, `PUT` y `DELETE` bajo
+`/api/<entidad>`. Los filtros de query usan igualdad y `AND`; su orden en SQL siempre sigue
+el orden de campos de la entidad. `POST` exige PK y campos efectivos no-null, `PUT` es parcial
+y no modifica PK, y `PUT`/`DELETE` exigen al menos un filtro. Las mutaciones usan
+`RETURNING *`.
+
+Los identificadores SQL provienen exclusivamente de las definiciones y se escapan. Todos los
+valores viajan mediante `$1`, `$2`, etc.; incluso un valor con forma de inyección nunca se
+concatena al SQL. Violaciones PostgreSQL de clase SQLSTATE `23` se devuelven como `409`, una
+conexión no disponible como `503`, y los diagnósticos internos no aparecen en HTTP.
+
+### Servidor AIDA completo
+
+El ejemplo versionado ejecuta Liquibase antes de abrir libpq y recién entonces comienza a
+aceptar requests:
+
+```sh
+DATABASE_URL="postgresql://zigma:secret@localhost:5432/zigma_dev" \
+LIQUIBASE_URL="jdbc:postgresql://localhost:5432/zigma_dev" \
+LIQUIBASE_USERNAME=zigma \
+LIQUIBASE_PASSWORD=secret \
+HTTP_ADDRESS=127.0.0.1 \
+HTTP_PORT=8080 \
+zig build run-aida-rest -Dlibpq-prefix="$(brew --prefix libpq)"
+```
+
+El adapter de referencia procesa una request por conexión y una conexión por vez, con headers
+de hasta 16 KiB y body de hasta 1 MiB. Es deliberadamente simple: todavía no incluye auth,
+TLS, CORS, paginación, pooling ni concurrencia.
+
+La suite pura valida routing, codecs, JSON y SQL exacto sin servicios externos. La integración
+HTTP real usa un PostgreSQL descartable y un puerto aleatorio:
+
+```sh
+zig build test-rest-postgres -Dlibpq-prefix="$(brew --prefix libpq)"
+```
 
 ## Licencia
 
