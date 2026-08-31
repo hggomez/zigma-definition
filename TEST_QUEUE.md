@@ -17,10 +17,16 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
 * Test #2/#3 sobre los builders generados (invariantes que no repiten al generador): un
   `$n` y un valor por columna; orden de `values` = orden de columnas, independiente del
   orden de claves del objeto de entrada.
-* Contra Postgres real (la base es el oráculo, ya no string-assert): insert→selectByPk
-  ida y vuelta, `update` toca solo las columnas nombradas, `delete` y después selectByPk
-  → vacío, violación de uk (`materias.denominacion`) y de fk mapeadas a error de dominio,
-  `fecha` por una columna `TEXT`, entidad de pk compuesta (`inscripciones`).
+* Contra Postgres real (la base es el oráculo, ya no string-assert). Hecho: insert→
+  selectByPk ida y vuelta (`periodos`). Falta: `update` toca solo las columnas nombradas,
+  `delete` y después selectByPk → vacío, violación de uk (`materias.denominacion`) y de fk
+  mapeadas a error de dominio, `fecha` por una columna `TEXT` (hoy se rompe: `pg` recibe el
+  objeto crudo), entidad de pk compuesta (`inscripciones`, necesita `cursos`+`alumnos`
+  antes por las fks).
+* `apply_aida_schema` (usado por `create-database` y `ts-backend-db`) no es idempotente:
+  el DDL es `CREATE TABLE`, no `CREATE TABLE IF NOT EXISTS`, así que re-correrlo sobre una
+  base ya creada tira `relation "x" already exists` (psql sigue igual, exit 0, pero
+  ensucia la salida). Ver si conviene `IF NOT EXISTS` o un `DROP ... CASCADE` previo.
 * `type` del `row`/`pk`: usa `,` como separador; TS idiomático es `;` dentro de un type
   literal (ambos válidos).
 

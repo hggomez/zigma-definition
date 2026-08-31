@@ -1,3 +1,6 @@
 .zig-cache/
 zig-out/
 *.o
+backend/node_modules/
+backend/src/dml.ts
+backend/src/dml.test.ts

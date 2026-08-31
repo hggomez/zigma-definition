@@ -191,22 +191,36 @@ pub fn build(b: *std.Build) void {
     const dml_ts = b.addRunArtifact(print_ts_backend_exe).captureStdOut(.{});
     const dml_test_ts = b.addRunArtifact(print_ts_backend_tests_exe).captureStdOut(.{});
 
-    const ts_backend_wf = b.addWriteFiles();
-    _ = ts_backend_wf.addCopyFile(dml_ts, "dml.ts");
-    _ = ts_backend_wf.addCopyFile(dml_test_ts, "dml.test.ts");
+    // The generated files are written into the committed backend/ package
+    // (gitignored there) so the hand-written integration test can import
+    // ./dml.ts and Node resolves it.
+    const write_ts_backend = b.addUpdateSourceFiles();
+    write_ts_backend.addCopyFileToSource(dml_ts, "backend/src/dml.ts");
+    write_ts_backend.addCopyFileToSource(dml_test_ts, "backend/src/dml.test.ts");
 
-    const install_ts_backend = b.addInstallDirectory(.{
-        .source_dir = ts_backend_wf.getDirectory(),
-        .install_dir = .prefix,
-        .install_subdir = "ts-backend",
-    });
+    const run_ts_backend_node_tests = b.addSystemCommand(&.{ "node", "--test", "src/dml.test.ts" });
+    run_ts_backend_node_tests.setCwd(b.path("backend"));
+    run_ts_backend_node_tests.step.dependOn(&write_ts_backend.step);
 
-    const run_ts_backend_node_tests = b.addSystemCommand(&.{ "node", "--test", "dml.test.ts" });
-    run_ts_backend_node_tests.setCwd(ts_backend_wf.getDirectory());
-    run_ts_backend_node_tests.step.dependOn(&install_ts_backend.step);
-
-    const ts_backend_step = b.step("ts-backend", "Generate the aida TypeScript DML module + tests, then run the tests with node");
+    const ts_backend_step = b.step("ts-backend", "Generate the aida TypeScript DML module + tests into backend/, then run the pure tests with node");
     ts_backend_step.dependOn(&run_ts_backend_node_tests.step);
+
+    // `zig build ts-backend-db`: the same generation, then run the DML
+    // integration tests against the docker-compose Postgres (schema applied by
+    // the same steps as `create-database`). Needs Docker and `pg` in
+    // backend/node_modules (npm install runs first).
+    const npm = if (@import("builtin").os.tag == .windows) "npm.cmd" else "npm";
+    const npm_install = b.addSystemCommand(&.{ npm, "install", "--no-audit", "--no-fund" });
+    npm_install.setCwd(b.path("backend"));
+
+    const run_ts_backend_db_tests = b.addSystemCommand(&.{ "node", "--test", "src/dml.integration.test.ts" });
+    run_ts_backend_db_tests.setCwd(b.path("backend"));
+    run_ts_backend_db_tests.step.dependOn(&write_ts_backend.step);
+    run_ts_backend_db_tests.step.dependOn(&npm_install.step);
+    run_ts_backend_db_tests.step.dependOn(&apply_aida_schema.step);
+
+    const ts_backend_db_step = b.step("ts-backend-db", "Generate, then run the DML integration tests against the docker-compose Postgres");
+    ts_backend_db_step.dependOn(&run_ts_backend_db_tests.step);
 
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
