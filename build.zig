@@ -71,6 +71,15 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const ts_backend_generator_mod = b.addModule("ts_backend_generator", .{
+        .root_source_file = b.path("src/ts_backend_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_mod },
+        },
+    });
+
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/aida_test.zig"),
@@ -97,6 +106,20 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_sql_generator_tests = b.addRunArtifact(sql_generator_tests);
+
+    const ts_backend_generator_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/ts_backend_generator_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
+            },
+        }),
+    });
+    const run_ts_backend_generator_tests = b.addRunArtifact(ts_backend_generator_tests);
 
     const print_schema_exe = b.addExecutable(.{
         .name = "print_schema",
@@ -135,9 +158,60 @@ pub fn build(b: *std.Build) void {
     const create_database_step = b.step("create-database", "Start Postgres via Docker, then generate and apply the aida schema");
     create_database_step.dependOn(&apply_aida_schema.step);
 
+    // `zig build ts-backend`: generate the TypeScript DML module and its test
+    // module from the aida SSOT, write both to zig-out/ts-backend/, then run
+    // the generated tests with `node --test`. Node 22.18+ runs .ts directly
+    // and the generated tests only use node:test / node:assert, so there is
+    // no npm step.
+    const print_ts_backend_exe = b.addExecutable(.{
+        .name = "print_ts_backend",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/print_ts_backend.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
+            },
+        }),
+    });
+    const print_ts_backend_tests_exe = b.addExecutable(.{
+        .name = "print_ts_backend_tests",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/print_ts_backend_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
+            },
+        }),
+    });
+
+    const dml_ts = b.addRunArtifact(print_ts_backend_exe).captureStdOut(.{});
+    const dml_test_ts = b.addRunArtifact(print_ts_backend_tests_exe).captureStdOut(.{});
+
+    const ts_backend_wf = b.addWriteFiles();
+    _ = ts_backend_wf.addCopyFile(dml_ts, "dml.ts");
+    _ = ts_backend_wf.addCopyFile(dml_test_ts, "dml.test.ts");
+
+    const install_ts_backend = b.addInstallDirectory(.{
+        .source_dir = ts_backend_wf.getDirectory(),
+        .install_dir = .prefix,
+        .install_subdir = "ts-backend",
+    });
+
+    const run_ts_backend_node_tests = b.addSystemCommand(&.{ "node", "--test", "dml.test.ts" });
+    run_ts_backend_node_tests.setCwd(ts_backend_wf.getDirectory());
+    run_ts_backend_node_tests.step.dependOn(&install_ts_backend.step);
+
+    const ts_backend_step = b.step("ts-backend", "Generate the aida TypeScript DML module + tests, then run the tests with node");
+    ts_backend_step.dependOn(&run_ts_backend_node_tests.step);
+
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_sql_generator_tests.step);
+    test_step.dependOn(&run_ts_backend_generator_tests.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{

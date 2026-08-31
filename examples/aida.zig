@@ -21,6 +21,28 @@ pub const sql_type_defs = .{
     .email = "TEXT",
 };
 
+/// TS type for each of this system's domain types, parallel to `type_defs`.
+/// `fecha` is the nested struct written inline; the SQL side keeps it as one
+/// opaque column, the codec (later) bridges the two.
+pub const ts_type_defs = .{
+    .text = "string",
+    .integer = "number",
+    .boolean = "boolean",
+    .fecha = "{ año: number; mes: number; día: number }",
+    .email = "string",
+};
+
+/// A sample literal of each domain type, for the generated TS tests to feed
+/// the insert builders. The value only has to type-check against `ts_type_defs`,
+/// not be meaningful.
+pub const ts_sample_defs = .{
+    .text = "\"s1\"",
+    .integer = "1",
+    .boolean = "true",
+    .fecha = "{ año: 2026, mes: 1, día: 1 }",
+    .email = "\"s1\"",
+};
+
 /// the instance type of a record def, bound to this system's type_defs:
 /// DefinedType(cargo) = struct { cargo: []const u8, orden: i64, ... }
 pub fn DefinedType(comptime rec: anytype) type {
