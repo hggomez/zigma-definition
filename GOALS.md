@@ -104,8 +104,47 @@ driver, ver `TEST_QUEUE.md`).
 
 ## Hito 2 (backend): estado y decisiones
 
-En arranque, nada implementado todavía (ningún código de este hito escrito). Lo que se
-acordó hasta ahora, para retomar directamente en la próxima sesión:
+**Decisión de esta sesión, reemplaza lo que sigue**: el backend no se escribe en Zig. Se
+genera en **TypeScript (Node)**, y corre como su propio servicio en `docker-compose.yml`
+(un contenedor `backend` junto al de `postgres`, mismo patrón: la aplicación generada
+corriendo como servicio, no un contenedor de desarrollo/build para compilar Zig). Motivo:
+portabilidad (no atar el desarrollo a un toolchain nativo por SO) y no reinventar en Zig
+lo que ya existe maduro en el ecosistema Node para HTTP/Postgres.
+
+El backend en TypeScript necesita poder invocar funciones de dominio escritas en Zig (por
+ejemplo `validarCargo`) sin reescribirlas: esas reglas viven en la única fuente de verdad
+(las definiciones `zigma`/`aida` en Zig), así que hace falta un mecanismo de interop
+TS → Zig. **Sin decidir todavía cuál**, para la próxima sesión:
+
+* **C ABI**: Zig exporta funciones (`export fn ... callconv(.c)`) a una lib compartida
+  (`.so`/`.dll`), invocada desde Node con una librería tipo `koffi` (FFI sin escribir un
+  addon nativo). Más directo, pero la lib queda atada a la plataforma/arquitectura donde
+  se compiló — no es problema si el contenedor del backend siempre la compila en su
+  propio build Linux.
+* **WASM**: Zig compila a `wasm32`, corrido con un runtime WASM embebido en Node
+  (bindings de `wasmtime`/`wasmer`). Más portable (no atado a la plataforma del
+  contenedor), pero pasar datos complejos (structs, strings) es más manual — hay que
+  serializar contra la memoria lineal del módulo.
+* En cualquiera de los dos casos: las funciones de `zigma` son comptime/genéricas, y no
+  hay generics en un ABI C ni en WASM. Hace falta un paso de build que monomorfice
+  exports concretos para el sistema específico (aida) — un export por función de
+  validación/regla de negocio, no una función genérica reusable entre sistemas.
+
+**Ya no aplica** (era para un backend en Zig, descartado por la decisión de arriba):
+
+* La investigación de `libpq` (driver de Postgres para Zig) — el cliente de Postgres pasa
+  a ser responsabilidad de TypeScript (a elegir: `pg`, `postgres.js`, etc.).
+* La decisión de `std.http.Server` — el servidor HTTP pasa a ser Node/TypeScript
+  (framework a elegir, o ninguno si se arranca con Node puro).
+
+Queda documentado abajo el detalle de esa investigación (linkeo de `libpq`, forma de
+`std.http.Server`, evaluación de `pg.zig`) como contexto histórico, por si en algún punto
+conviene retomarlo — pero no es el plan actual.
+
+### Contexto histórico (backend en Zig, superado)
+
+Lo que se había acordado en la sesión anterior, cuando el plan todavía era un backend
+enteramente en Zig:
 
 * **Orden del hito, decidido**: primero backend↔DB, recién después backend↔frontend.
   Concretamente: lograr que código del backend hable con Postgres y probarlo con tests
@@ -155,15 +194,15 @@ acordó hasta ahora, para retomar directamente en la próxima sesión:
 
 ## Próximos pasos
 
-1. Investigar cómo usar `libpq` desde Zig: linkeo en `build.zig`, dónde está la
-   librería/headers en esta máquina (Windows), y la forma de la C API una vez pasada
-   por `translate-c`. Investigación, no implementación todavía.
-2. Primer paso chico, TDD: una función mínima del backend que abre una conexión a
-   Postgres (el contenedor de `docker-compose.yml`, ya con el esquema de aida
-   aplicado) y corre una query simple, probada con un test — sin `std.http.Server` de
-   por medio. Acordar la forma exacta del primer test antes de escribirlo.
-3. Recién después de tener backend↔DB probado: retomar `std.http.Server` (ya decidido
-   más arriba) para wirear backend↔frontend.
-4. Forma de los endpoints (REST por entidad vs. genérico parametrizado por
-   `EntityInfo`) y forma del dispatch (`entity_defs` → tabla de handlers): a definir
-   en el paso 3.
+1. Elegir mecanismo de interop TypeScript → Zig (C ABI vía `koffi` vs WASM) —
+   investigación, no implementación todavía.
+2. Definir cómo se generan los exports concretos: el paso de build que monomorfice, para
+   el sistema aida, las funciones de validación/reglas de negocio escritas en Zig hacia
+   el ABI/WASM elegido.
+3. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`):
+   Dockerfile de Node, sin acoplar el desarrollo al host Windows.
+4. Elegir cliente de Postgres para TypeScript y, si hace falta, framework HTTP (o arrancar
+   con Node puro).
+5. Primer paso chico, TDD, a acordar con el programador: probablemente el primer llamado
+   real desde TypeScript a una función de Zig ya compilada (el `validarCargo` de ejemplo),
+   antes de sumarle HTTP o DB.
