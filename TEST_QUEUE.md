@@ -8,8 +8,33 @@ revisión antes de implementar.
 
 ## Pendientes (módulo `sql_generator` — esquema de la base de datos)
 
-Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`. Las próximas ideas
-de test van a salir del hito 2 (endpoints CRUD/backend).
+Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
+
+## Pendientes (módulo `ts_backend_generator` — interfaz de DML en TS)
+
+* Caso "no compila": tipo de dominio sin entrada en `ts_type_defs` / `ts_sample_defs` →
+  `@compileError` propio (paralelo a `sql_unknown_type_mapping.zig`).
+* Test #2/#3 sobre los builders generados (invariantes que no repiten al generador): un
+  `$n` y un valor por columna; orden de `values` = orden de columnas, independiente del
+  orden de claves del objeto de entrada.
+* Contra Postgres real (la base es el oráculo, ya no string-assert): insert→selectByPk
+  ida y vuelta, `update` toca solo las columnas nombradas, `delete` y después selectByPk
+  → vacío, violación de uk (`materias.denominacion`) y de fk mapeadas a error de dominio,
+  `fecha` por una columna `TEXT`, entidad de pk compuesta (`inscripciones`).
+* `type` del `row`/`pk`: usa `,` como separador; TS idiomático es `;` dentro de un type
+  literal (ambos válidos).
+
+## Hechos ts_backend_generator (referencia rápida, no repetir)
+
+* `insertFn` / `generateTsBackend`: un builder `INSERT` por entidad, y el módulo entero.
+* `selectByPkFn`, `selectAllFn`, `updateFn`, `deleteFn`: los otros builders de DML.
+  Cubierto: pk simple y compuesta (`WHERE` y numeración de placeholders `SET`-luego-`WHERE`
+  en `update`), `selectAll` sin parámetros, `update` de fila completa, `update` omitido
+  para entidades all-pk (`hasNonPkColumns`).
+* `insertFnTest` .. `deleteFnTest` / `generateTsBackendTests`: el test #1 por builder y el
+  módulo de tests entero (imports `node:test`/`node:assert` + import de `./dml.ts`).
+* `ts_type_defs` / `ts_sample_defs` en `aida.zig`, paralelos a `sql_type_defs`.
+* `zig build ts-backend`: genera `dml.ts` + `dml.test.ts` y corre `node --test`.
 
 ## Hechos (referencia rápida, no repetir)
 

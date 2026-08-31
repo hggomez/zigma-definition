@@ -104,6 +104,43 @@ driver, ver `TEST_QUEUE.md`).
 
 ## Hito 2 (backend): estado y decisiones
 
+### Progreso
+
+Primera capa del backend TS: la **interfaz de DML sobre la base**, generada desde el SSOT
+igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` → TS).
+
+* Nuevo módulo `ts_backend_generator` (`src/ts_backend_generator.zig`, wireado en
+  `build.zig`, tests en `test/ts_backend_generator_test.zig`): de cada `EntityInfo` genera
+  hasta cinco *builders* parametrizados, cada uno devuelve `{ text, values }` (la forma que
+  toma una query de `pg`): `insert<E>`, `select<E>ByPk`, `selectAll<E>`, `update<E>` (solo
+  si la entidad tiene columnas fuera de la pk — si no, no hay nada que `SET`), `delete<E>`.
+  * pk compuesta → `WHERE "a" = $1 AND "b" = $2`; en `update`, los placeholders del `WHERE`
+    siguen después de los del `SET`.
+  * `update` es de fila completa (todas las columnas no-pk en el `SET`), no un patch
+    parcial: así sigue siendo un template estático como los demás. El patch parcial, si se
+    quiere, es otro builder aparte más adelante.
+  * `examples/aida.zig` tiene ahora `ts_type_defs` (dominio → tipo TS; `fecha` es el struct
+    inline `{ año; mes; día }`) y `ts_sample_defs` (dominio → literal de ejemplo para los
+    tests generados), ambos paralelos a `sql_type_defs`.
+* El generador **también genera los tests TS** (`generateTsBackendTests`): por cada builder,
+  el test #1 (arma un argumento de ejemplo tipado, llama al builder, chequea que no tira y
+  devuelve `{ text, values }`). Correrlos en Node es lo que prueba que el TS emitido
+  parsea, tipa y ejecuta — la capa que un string-assert de Zig no alcanza.
+* `build.zig`, step `zig build ts-backend`: genera `dml.ts` + `dml.test.ts` del sistema
+  aida en `zig-out/ts-backend/` y corre los tests con `node --test`. Node 22.18+ corre
+  `.ts` directo y los tests solo usan `node:test` / `node:assert`, así que no hay paso de
+  npm. Confirmado de punta a punta: 52 builders (11 entidades), 52 tests en verde.
+* `zig build test` sigue sin depender de Node (45/45): los casos de string-assert del
+  generador viven ahí; `ts-backend` es un step aparte.
+
+**Falta** para completar la interfaz de DML: correr los builders contra un Postgres real
+(el contenedor de `docker-compose.yml`, esquema de aida ya aplicado por `create-database`)
+— insert→selectByPk, violación de uk/fk mapeada a error de dominio, `fecha` ida y vuelta
+por una columna `TEXT`. Eso ya no es string-assert: la base es el oráculo. Después: el
+resto del backend (endpoints HTTP) y el interop TS → Zig para las reglas de dominio.
+
+### Decisiones previas
+
 **Decisión de esta sesión, reemplaza lo que sigue**: el backend no se escribe en Zig. Se
 genera en **TypeScript (Node)**, y corre como su propio servicio en `docker-compose.yml`
 (un contenedor `backend` junto al de `postgres`, mismo patrón: la aplicación generada
