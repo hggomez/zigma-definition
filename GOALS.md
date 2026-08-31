@@ -133,14 +133,17 @@ igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` 
 * `zig build test` sigue sin depender de Node (45/45): los casos de string-assert del
   generador viven ahí; `ts-backend` es un step aparte.
 * **Primer test de integración contra Postgres real, en verde**: `backend/` es ahora un
-  paquete Node versionado (hand-written: `package.json` con `pg`, y los tests de
-  integración; `dml.ts` / `dml.test.ts` se generan adentro y están gitignoreados).
-  `zig build ts-backend-db`: levanta el contenedor, aplica el esquema (mismos steps que
-  `create-database`), `npm install`, y corre `backend/src/dml.integration.test.ts` —
-  `insertPeriodos` → `selectPeriodosByPk` ida y vuelta por la base, limpia con
-  `deletePeriodos`. Los builders todavía devuelven `{ text, values }` y el test los corre
-  con `pool.query(text, values)` directo; no hay capa de ejecución todavía (aparece cuando
-  un segundo test la necesite).
+  paquete Node versionado (hand-written: `package.json` con `pg`; `dml.ts` / `dml.test.ts`
+  se generan adentro y están gitignoreados). El test de integración es un **test de Zig**,
+  `test/db_backend_integration_test.zig`, al lado de los otros: corre `node
+  --input-type=module -e` con un script que importa los builders generados y `pg`, hace
+  `insertPeriodos` → `selectPeriodosByPk` ida y vuelta por la base y limpia con
+  `deletePeriodos`; el test de Zig chequea el exit code y que imprima `ROUNDTRIP_OK`.
+  `zig build ts-backend-db` lo cuelga después de: levantar el contenedor, aplicar el
+  esquema (mismos steps que `create-database`), `npm install`, regenerar `dml.ts`. No está
+  en `zig build test` (necesita Docker + Node). Los builders todavía devuelven
+  `{ text, values }` y el script los corre con `pool.query(text, values)` directo; no hay
+  capa de ejecución todavía (aparece cuando un segundo test la necesite).
 
 **Falta** para completar la interfaz de DML: más casos de integración (update toca solo lo
 nombrado, delete→selectByPk vacío, violación de uk/fk como error de dominio, entidad de pk

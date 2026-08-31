@@ -205,22 +205,30 @@ pub fn build(b: *std.Build) void {
     const ts_backend_step = b.step("ts-backend", "Generate the aida TypeScript DML module + tests into backend/, then run the pure tests with node");
     ts_backend_step.dependOn(&run_ts_backend_node_tests.step);
 
-    // `zig build ts-backend-db`: the same generation, then run the DML
-    // integration tests against the docker-compose Postgres (schema applied by
-    // the same steps as `create-database`). Needs Docker and `pg` in
-    // backend/node_modules (npm install runs first).
+    // `zig build ts-backend-db`: bring up the container and apply the schema
+    // (same steps as `create-database`), `npm install` in backend/, regenerate
+    // dml.ts, then run test/db_backend_integration_test.zig - a Zig test that
+    // drives the generated builders through Node against the real database.
+    // Not on `test_step` (needs Docker + Node).
     const npm = if (@import("builtin").os.tag == .windows) "npm.cmd" else "npm";
     const npm_install = b.addSystemCommand(&.{ npm, "install", "--no-audit", "--no-fund" });
     npm_install.setCwd(b.path("backend"));
 
-    const run_ts_backend_db_tests = b.addSystemCommand(&.{ "node", "--test", "src/dml.integration.test.ts" });
-    run_ts_backend_db_tests.setCwd(b.path("backend"));
-    run_ts_backend_db_tests.step.dependOn(&write_ts_backend.step);
-    run_ts_backend_db_tests.step.dependOn(&npm_install.step);
-    run_ts_backend_db_tests.step.dependOn(&apply_aida_schema.step);
+    const db_backend_integration_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/db_backend_integration_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_db_backend_integration_tests = b.addRunArtifact(db_backend_integration_tests);
+    run_db_backend_integration_tests.has_side_effects = true;
+    run_db_backend_integration_tests.step.dependOn(&write_ts_backend.step);
+    run_db_backend_integration_tests.step.dependOn(&npm_install.step);
+    run_db_backend_integration_tests.step.dependOn(&apply_aida_schema.step);
 
-    const ts_backend_db_step = b.step("ts-backend-db", "Generate, then run the DML integration tests against the docker-compose Postgres");
-    ts_backend_db_step.dependOn(&run_ts_backend_db_tests.step);
+    const ts_backend_db_step = b.step("ts-backend-db", "Generate, then run the DML integration test against the docker-compose Postgres");
+    ts_backend_db_step.dependOn(&run_db_backend_integration_tests.step);
 
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
