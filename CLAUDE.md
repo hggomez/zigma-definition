@@ -24,6 +24,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 
 ## Estructura
 
+* `README.md`: guía de uso, arranque de AIDA, migraciones y tests.
+* `DOCS.md`: referencia del contrato, arquitectura y APIs del framework.
 * `src/framework/zigma.zig`: el framework descriptor (módulo `zigma`). No conoce ningún sistema concreto.
 * `src/postgres/ddl.zig`: generación comptime del DDL inicial (módulo
   `zigma_postgres_ddl`).

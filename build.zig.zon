@@ -16,6 +16,7 @@
         "tools",
         "test/integration",
         "README.md",
+        "DOCS.md",
         "LICENSE",
     },
 }
