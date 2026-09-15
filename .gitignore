@@ -1,6 +1,3 @@
 .zig-cache/
 zig-out/
 *.o
-.env
-.env2
-.env
