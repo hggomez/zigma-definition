@@ -84,6 +84,8 @@ pub const PackageFiles = struct {
     frontend_js: std.Build.LazyPath,
     frontend_html: std.Build.LazyPath,
     http: std.Build.LazyPath,
+    rest: std.Build.LazyPath,
+    memory_repository: std.Build.LazyPath,
 };
 
 pub fn filesHere(b: *std.Build) PackageFiles {
@@ -94,6 +96,8 @@ pub fn filesHere(b: *std.Build) PackageFiles {
         .frontend_js = b.path("src/frontend/main.js"),
         .frontend_html = b.path("src/frontend/index.html"),
         .http = b.path("src/http/main.zig"),
+        .rest = b.path("src/rest/api.zig"),
+        .memory_repository = b.path("src/http/memory_repository.zig"),
     };
 }
 
@@ -105,12 +109,18 @@ pub fn filesFromDependency(dep: *std.Build.Dependency) PackageFiles {
         .frontend_js = dep.path("src/frontend/main.js"),
         .frontend_html = dep.path("src/frontend/index.html"),
         .http = dep.path("src/http/main.zig"),
+        .rest = dep.path("src/rest/api.zig"),
+        .memory_repository = dep.path("src/http/memory_repository.zig"),
     };
 }
 
 pub const AppOptions = struct {
     files: PackageFiles,
     system_root: std.Build.LazyPath,
+    /// Consumer REST controller (`Api`, codecs). Required for the in-memory backend.
+    rest_root: std.Build.LazyPath,
+    /// Optional module providing `@import("aida")` for `rest_root` (same file the system uses).
+    aida_root: ?std.Build.LazyPath = null,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     /// Optional consumer map `domain type → widget`; installed as `widgets.js`.
@@ -179,8 +189,50 @@ pub fn addApp(b: *std.Build, opts: AppOptions) App {
     const files = opts.files;
 
     const zigma_native = zigmaModule(b, files, opts.target, opts.optimize);
-    const json_native = jsonModule(b, files, zigma_native, opts.target, opts.optimize);
-    const system_native = systemModule(b, opts.system_root, zigma_native, opts.target, opts.optimize);
+    const aida_root = opts.aida_root orelse opts.system_root;
+    const aida_native = b.createModule(.{
+        .root_source_file = aida_root,
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_native },
+        },
+    });
+    const system_native = b.createModule(.{
+        .root_source_file = opts.system_root,
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_native },
+            .{ .name = "aida", .module = aida_native },
+        },
+    });
+    const rest_native = b.createModule(.{
+        .root_source_file = files.rest,
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_native },
+        },
+    });
+    const app_rest_native = b.createModule(.{
+        .root_source_file = opts.rest_root,
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_native },
+            .{ .name = "zigma_rest", .module = rest_native },
+            .{ .name = "aida", .module = aida_native },
+        },
+    });
+    const memory_repo_native = b.createModule(.{
+        .root_source_file = files.memory_repository,
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .imports = &.{
+            .{ .name = "zigma_rest", .module = rest_native },
+        },
+    });
 
     const backend = b.addExecutable(.{
         .name = "backend",
@@ -190,8 +242,10 @@ pub fn addApp(b: *std.Build, opts: AppOptions) App {
             .optimize = opts.optimize,
             .imports = &.{
                 .{ .name = "zigma", .module = zigma_native },
-                .{ .name = "zigma_json", .module = json_native },
+                .{ .name = "zigma_rest", .module = rest_native },
                 .{ .name = "system", .module = system_native },
+                .{ .name = "app_rest", .module = app_rest_native },
+                .{ .name = "memory_repository", .module = memory_repo_native },
             },
         }),
     });
@@ -205,7 +259,23 @@ pub fn addApp(b: *std.Build, opts: AppOptions) App {
 
     const zigma_wasm = zigmaModule(b, files, wasm_target, wasm_optimize);
     const json_wasm = jsonModule(b, files, zigma_wasm, wasm_target, wasm_optimize);
-    const system_wasm = systemModule(b, opts.system_root, zigma_wasm, wasm_target, wasm_optimize);
+    const aida_wasm = b.createModule(.{
+        .root_source_file = aida_root,
+        .target = wasm_target,
+        .optimize = wasm_optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_wasm },
+        },
+    });
+    const system_wasm = b.createModule(.{
+        .root_source_file = opts.system_root,
+        .target = wasm_target,
+        .optimize = wasm_optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_wasm },
+            .{ .name = "aida", .module = aida_wasm },
+        },
+    });
 
     const frontend = b.addExecutable(.{
         .name = "frontend",
@@ -274,6 +344,8 @@ pub fn addAppFromDep(
     dep: *std.Build.Dependency,
     opts: struct {
         system_root: std.Build.LazyPath,
+        rest_root: std.Build.LazyPath,
+        aida_root: ?std.Build.LazyPath = null,
         target: std.Build.ResolvedTarget,
         optimize: std.builtin.OptimizeMode,
         widgets_js: ?std.Build.LazyPath = null,
@@ -283,6 +355,8 @@ pub fn addAppFromDep(
     return addApp(b, .{
         .files = filesFromDependency(dep),
         .system_root = opts.system_root,
+        .rest_root = opts.rest_root,
+        .aida_root = opts.aida_root,
         .target = opts.target,
         .optimize = opts.optimize,
         .widgets_js = opts.widgets_js,
@@ -345,7 +419,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const aida_rest_mod = b.addModule("aida_rest", .{
-        .root_source_file = b.path("examples/aida_rest.zig"),
+        .root_source_file = b.path("examples/aida/src/rest.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{

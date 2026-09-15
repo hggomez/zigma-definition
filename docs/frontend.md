@@ -53,7 +53,7 @@ flowchart TB
     bin --> lists
   end
 
-  mainjs -->|"GET/POST /{entity}<br/>PUT/DELETE /{entity}?pk…"| bin
+  mainjs -->|"GET/POST /api/{entity}<br/>PUT/DELETE /api/{entity}?pk…"| bin
 ```
 
 **What each arrow means**
@@ -65,7 +65,7 @@ flowchart TB
 | HTML → JS | Shell only: `#entity-nav`, `#sheet-title`, `#sheet-table` (`thead`/`tbody`/`tfoot`), `#status`. `<script src="title.js">` sets `document.title` from `addApp` `.title` (empty if omitted). No columns until JS runs. |
 | JS → WASM exports | Pointer/length accessors plus `build_row(entity_index)` / `create_row(entity_index)`. `entity_index` is field order on `entity_defs` (same order as the catalog array). |
 | WASM → JS import | `env.js_send_post(ptr, len)`: Zig has already written row JSON into `json_buf`; JS reads that slice and `fetches` `POST`. Zig does **not** await the Promise (the POST is fire-and-forget from WASM’s point of view; JS still `await`s inside the import). |
-| JS → HTTP | Hard-coded `http://localhost:8080`. CORS `*` on the server. Identity for PUT/DELETE is the query string (every pk field, nothing else). POST has no query. GET has no query. |
+| JS → HTTP | Hard-coded `http://localhost:8080/api`. CORS `*` on both the in-memory server and `zigma_std_http`. Identity for PUT/DELETE is the query string (pk fields). POST has no query. GET may include equality filters. PUT body omits PKs. Domain values (including `fecha` objects) follow the codecs / WASM row JSON. |
 
 **Responsibility split (why WASM exists)**
 
@@ -371,10 +371,16 @@ buildRowJson(entity)
 
 `parseFieldValue`:
 
-- `[]const u8` → alias the cell bytes (no copy)
+- empty cell (`bytes.len == 0`) → Zig `null` when `T` is `?Child`; `error.InvalidValue` for required `[]const u8`
+- `[]const u8` → alias the cell bytes (no copy); blank is rejected
 - int → `parseInt` base 10
 - bool → exactly `"true"` / `"false"`
 - struct → `std.json.parseFromSliceLeaky` of the cell (JS already `JSON.stringify`’d the nested object); string slices inside the struct must still point into those input bytes (`slicesInsideInput`)
+- the literal `"null"` is never absence (text keeps the string `"null"`; other domains reject it)
+
+Before PUT, JS omits PK fields from the WASM row JSON (REST rejects primary-key updates). POST keeps the full row. Domain shapes such as `fecha` objects are unchanged on the wire. URLs are `/api/{entity}` (and `/api/{entity}?pk…` for PUT/DELETE).
+
+**Boolean UI gap:** default checkboxes only pack `"true"` / `"false"` (`input.checked`). An optional boolean (`?bool`) can be Zig `null` from an empty packed cell, but the stock checkbox never emits empty — leaving it unchecked posts `false`, not null. A tri-state control (or clear action) would be needed before the page can set optional booleans to null.
 
 JS import (called from `create_row`):
 
@@ -526,6 +532,7 @@ JS does not call this explicitly; `fetch` does.
 | `src/frontend/main.js` | Nav + table from catalog; packing; GET/POST/PUT/DELETE; optional `./widgets.js` |
 | `src/frontend/index.html` | Empty shell + CSS for the sheet; loads generated `title.js` |
 | `src/http/main.zig` | In-memory lists; same `system`; CORS |
+| `src/rest/std_http.zig` | Socket adapter for `zigma_rest`; CORS + `OPTIONS` |
 | `examples/aida/src/aida.zig` | Domain Defs (vocabulary fixture) |
 | `examples/aida/src/system.zig` | Wired as `system` (Defs + demo seeds) |
 | `examples/aida/src/widgets.js` | Domain type → widget (`fecha` date picker) |

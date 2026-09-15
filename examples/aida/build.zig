@@ -8,6 +8,8 @@ pub fn build(b: *std.Build) void {
     const zigma_dep = b.dependency("zigma_definition", .{});
     _ = zigma_build.addAppFromDep(b, zigma_dep, .{
         .system_root = b.path("src/system.zig"),
+        .rest_root = b.path("src/rest.zig"),
+        .aida_root = b.path("src/aida.zig"),
         .widgets_js = b.path("src/widgets.js"),
         .title = "aida",
         .target = target,

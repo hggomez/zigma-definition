@@ -36,13 +36,26 @@ test "nullable record values serialize as JSON null or their domain value" {
     try std.testing.expectError(error.NoSpaceLeft, zigma_json.stringifyRecord(empty, &short_buf));
 }
 
+test "fieldStorage unwraps optionals to the child widget shape" {
+    try expectEqualStrings("text", zigma_json.fieldStorage(?[]const u8));
+    try expectEqualStrings("integer", zigma_json.fieldStorage(?i64));
+    try expectEqualStrings("boolean", zigma_json.fieldStorage(?bool));
+    try expectEqualStrings("object", zigma_json.fieldStorage(?aida.Fecha));
+}
+
+test "empty cell is Zig null for optionals and invalid for required text" {
+    try std.testing.expect((try zigma_json.parseFieldValue(?[]const u8, "")) == null);
+    try std.testing.expect((try zigma_json.parseFieldValue(?i64, "")) == null);
+    try std.testing.expect((try zigma_json.parseFieldValue(?bool, "")) == null);
+    try std.testing.expect((try zigma_json.parseFieldValue(?aida.Fecha, "")) == null);
+    try std.testing.expectError(error.InvalidValue, zigma_json.parseFieldValue([]const u8, ""));
+}
+
 test "nullable query types decode a supplied value without inventing a null literal" {
     try expectEqualStrings("null", (try zigma_json.parseFieldValue(?[]const u8, "null")).?);
-    try expectEqualStrings("", (try zigma_json.parseFieldValue(?[]const u8, "")).?);
     try std.testing.expect((try zigma_json.parseFieldValue(?i64, "0")).? == 0);
     try std.testing.expect((try zigma_json.parseFieldValue(?bool, "false")).? == false);
     try std.testing.expectError(error.InvalidValue, zigma_json.parseFieldValue(?i64, "null"));
-    try std.testing.expectError(error.InvalidValue, zigma_json.parseFieldValue(?i64, ""));
     const date = (try zigma_json.parseFieldValue(?aida.Fecha, "{\"año\":2024,\"mes\":2,\"día\":29}")).?;
     try std.testing.expect(date.@"año" == 2024 and date.mes == 2 and date.@"día" == 29);
 }

@@ -1,6 +1,7 @@
 //! Adaptador secuencial pequeño de HTTP/1.1 para `zigma_rest`, con las funciones
 //! de red de la biblioteca estándar de Zig. Cada conexión TCP atiende una solicitud y se
-//! cierra.
+//! cierra. Incluye CORS permisivo (`*`) para poder abrir el frontend de ejemplo desde
+//! otro origen (p. ej. `:8000` → `:8080`).
 
 const std = @import("std");
 const rest = @import("zigma_rest");
@@ -16,6 +17,23 @@ pub const Config = struct {
     /// Útil sobre todo para integrar el servidor y probarlo de forma determinista.
     /// `null` hace que atienda solicitudes hasta que se detenga el proceso.
     max_requests: ?usize = null,
+};
+
+const cors_origin = std.http.Header{
+    .name = "Access-Control-Allow-Origin",
+    .value = "*",
+};
+const cors_methods = std.http.Header{
+    .name = "Access-Control-Allow-Methods",
+    .value = "GET, POST, PUT, DELETE, OPTIONS",
+};
+const cors_headers = std.http.Header{
+    .name = "Access-Control-Allow-Headers",
+    .value = "Content-Type",
+};
+const json_content_type = std.http.Header{
+    .name = "Content-Type",
+    .value = "application/json",
 };
 
 fn methodFromStd(method: std.http.Method) rest.Method {
@@ -40,7 +58,15 @@ fn send(
     try request.respond(body, .{
         .status = @fromBackingInt(@intCast(status)),
         .keep_alive = false,
-        .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},
+        .extra_headers = &.{ json_content_type, cors_origin },
+    });
+}
+
+fn sendOptions(request: *std.http.Server.Request) !void {
+    try request.respond("", .{
+        .status = .no_content,
+        .keep_alive = false,
+        .extra_headers = &.{ cors_origin, cors_methods, cors_headers },
     });
 }
 
@@ -80,6 +106,12 @@ pub fn serve(
             served += 1;
             continue;
         };
+
+        if (request.head.method == .OPTIONS) {
+            try sendOptions(&request);
+            served += 1;
+            continue;
+        }
 
         const method = methodFromStd(request.head.method);
         // Leer el cuerpo puede reutilizar el buffer de entrada HTTP. Copia antes el

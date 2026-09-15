@@ -74,8 +74,9 @@ zig build run-aida-rest -Dlibpq-prefix=/opt/homebrew/opt/libpq
 ```
 
 El servidor aplica las migraciones aceptadas pendientes y luego escucha en
-`http://127.0.0.1:8080`. Si una migración falla, el arranque se detiene. Al clonar el
-repositorio con su historial completo, este mismo comando construye la base desde cero.
+`http://127.0.0.1:8080` con CORS permisivo para el frontend de ejemplo. Si una migración
+falla, el arranque se detiene. Al clonar el repositorio con su historial completo, este
+mismo comando construye la base desde cero.
 
 Podés configurar `HTTP_ADDRESS`, `HTTP_PORT` y `LIQUIBASE_SCHEMA`. Si Liquibase no está en
 el PATH, exportá `LIQUIBASE_BIN` con la ruta de su ejecutable.
@@ -134,6 +135,29 @@ migración nueva. Para `accept-migration`, podés indicar un ejecutable específ
 `init-migrations` y `baseline-existing` se usan al crear un historial nuevo o adoptar una
 base preexistente. Un clon de este repositorio sobre una base vacía sigue el arranque normal.
 Consultá [inicialización y adopción](DOCS.md#inicialización-adopción-y-tests) para esos casos.
+
+## Pendiente de revisión: `fecha`
+
+El dominio AIDA define `Fecha` como struct Zig `{ año, mes, día }`
+([examples/aida/src/aida.zig](examples/aida/src/aida.zig)). Eso es la forma canónica del
+tipo; no es un string ISO.
+
+Hoy el cableado HTTP/JSON ↔ PostgreSQL queda así (revisar si conviene unificarlo):
+
+| Capa | Forma |
+| --- | --- |
+| Dominio / WASM / JSON de fila | objeto `{"año","mes","día"}` |
+| Codec de wire | [examples/aida/src/fecha_wire.zig](examples/aida/src/fecha_wire.zig): objeto ↔ texto `YYYY-MM-DD` **sin** validar el calendario civil |
+| PostgreSQL | columna `DATE` (texto ISO hacia libpq) |
+| UI | [examples/aida/src/widgets.js](examples/aida/src/widgets.js) convierte el objeto a `<input type="date">` y viceversa |
+
+El controlador REST ([examples/aida/src/rest.zig](examples/aida/src/rest.zig)) solo registra el
+codec; no implementa reglas de `Fecha`. Una fecha civil inválida puede pasar el codec y
+fallar recién en PostgreSQL.
+
+**Preguntas abiertas:** ¿el JSON público debería ser siempre el objeto de dominio, o ISO?
+¿la validación civil pertenece al dominio, al codec, a la base, o a ninguna de esas capas?
+¿hace falta un codec genérico para structs de dominio en lugar de uno ad hoc por tipo?
 
 ## Tests
 

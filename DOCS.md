@@ -580,7 +580,9 @@ después abre libpq y finalmente comienza a aceptar solicitudes HTTP.
 
 El adapter de referencia procesa una request por conexión y una conexión por vez, con headers
 de hasta 16 KiB y body de hasta 1 MiB. Es deliberadamente simple: todavía no incluye auth,
-TLS, CORS, paginación, pooling ni concurrencia.
+TLS, paginación, pooling ni concurrencia. El adaptador de referencia sí agrega CORS
+permisivo (`Access-Control-Allow-Origin: *` y respuesta `OPTIONS`) para el frontend de
+ejemplo en otro origen.
 
 La suite pura valida routing, codecs, JSON y SQL exacto sin servicios externos. La integración
 HTTP real usa un PostgreSQL descartable y un puerto aleatorio:

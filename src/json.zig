@@ -1,12 +1,13 @@
 //! JSON writer for record instances and Def→Info schemas.
-//! Record values follow the Zig field type (string, int, bool, nested struct).
+//! Record values follow the Zig field type (string, int, bool, nested struct, optional).
 //! `stringifyRecordSchema` writes `[{name,label},...]` from a completed record Info.
 //! `stringifyEntitySchema` / `stringifyEntityCatalog` write entity Infos.
 //! Field `storage` is the Zig shape used by the page (`text`/`integer`/`boolean`/
-//! `object`), not the domain type name. Entity fields also include `is_name`.
+//! `object`), not the domain type name; optionals use the child shape.
 //! A struct is `object` with nested `fields`.
 //! `parseFieldValue` turns a cell string into that Zig type (structs as JSON objects;
 //! string fields alias the cell, they are not copies from parse scratch).
+//! Empty cell → Zig null for `?T`; required text rejects blank.
 //!
 //! Generator: imports `zigma` only. Does not know any concrete system.
 
@@ -53,9 +54,11 @@ pub fn stringifyRecordSchema(rec_info: anytype, buf: []u8) error{NoSpaceLeft}![]
     return buf[0..pos];
 }
 
-/// Page widget shape for Zig type `T`: `"text"` / `"integer"` / `"boolean"` / `"object"`. Compile error if unsupported.
+/// Page widget shape for Zig type `T`: `"text"` / `"integer"` / `"boolean"` / `"object"`.
+/// Optionals use the child shape (`?i64` → `"integer"`). Compile error if unsupported.
 pub fn fieldStorage(comptime T: type) []const u8 {
     switch (@typeInfo(T)) {
+        .optional => |o| return fieldStorage(o.child),
         .pointer => |p| {
             if (p.size == .slice and p.child == u8) return "text";
             @compileError("unsupported field type " ++ @typeName(T));
@@ -71,12 +74,20 @@ pub fn fieldStorage(comptime T: type) []const u8 {
 /// `[]const u8` values alias `bytes`, including string fields inside a struct
 /// (the same contract as a top-level text cell). JSON strings that need an
 /// unescape copy would live in parse scratch and are `error.InvalidValue`.
-/// Un tipo opcional acepta un valor de su dominio; la cadena "null" no representa ausencia.
+/// An empty cell is Zig `null` for `?T` and `error.InvalidValue` for required
+/// `[]const u8`. The literal `"null"` is never absence: for text it is the
+/// string `"null"`; for other domains it is `InvalidValue`.
 pub fn parseFieldValue(comptime T: type, bytes: []const u8) error{InvalidValue}!T {
     switch (@typeInfo(T)) {
-        .optional => |optional| return try parseFieldValue(optional.child, bytes),
+        .optional => |optional| {
+            if (bytes.len == 0) return null;
+            return try parseFieldValue(optional.child, bytes);
+        },
         .pointer => |p| {
-            if (p.size == .slice and p.child == u8) return bytes;
+            if (p.size == .slice and p.child == u8) {
+                if (bytes.len == 0) return error.InvalidValue;
+                return bytes;
+            }
             @compileError("unsupported field type " ++ @typeName(T));
         },
         .int => return std.fmt.parseInt(T, bytes, 10) catch error.InvalidValue,

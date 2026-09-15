@@ -25,7 +25,7 @@ zig build frontend
 python3 -m http.server 8000 --directory zig-out/frontend
 ```
 
-**Browser:** open <http://localhost:8000/>. After WASM loads, a nav of entity names appears and the first catalog entity is shown (in aida, `docentes`), then filled from `GET /{entity}`, plus an empty row at the bottom. Open `#materias` for that table (labels `materia` / `denominación`). Fill that last row and click **New**. The backend should print the JSON, the new row should appear in the table, and the last row should be empty again for the next alta. **Save** on an existing row sends `PUT /{entity}?pk…` and replaces that row (pk cells are locked). **Delete** sends `DELETE /{entity}?pk…` with no body. Other entities are the same at `#docentes`, `#clases`, etc. The lists live in the backend process only (restarting it restores the seeds).
+**Browser:** open <http://localhost:8000/>. After WASM loads, a nav of entity names appears and the first catalog entity is shown (in aida, `docentes`), then filled from `GET /api/{entity}`, plus an empty row at the bottom. Open `#materias` for that table (labels `materia` / `denominación`). Fill that last row and click **New**. The backend should print the JSON, the new row should appear in the table, and the last row should be empty again for the next alta. **Save** on an existing row sends `PUT /api/{entity}?pk…` (body omits pk fields). **Delete** sends `DELETE /api/{entity}?pk…` with no body. Other entities are the same at `#docentes`, `#clases`, etc. The lists live in the backend process only (restarting it restores the seeds).
 
 Every entity is seeded with at least two rows (FKs point at those pks). Restarting the backend restores the seeds.
 
@@ -40,7 +40,7 @@ zig build frontend
 
 - `index.html` — shell (nav + empty table; JS fills them from the WASM catalog)
 - `title.js` — generated `document.title` from `addAppFromDep` `.title` (`"aida"`)
-- `main.js` — reads the entity catalog from WASM, builds the table, `GET`/`POST /{entity}`, `PUT`/`DELETE /{entity}?pk…`
+- `main.js` — reads the entity catalog from WASM, builds the table, `GET`/`POST /api/{entity}`, `PUT`/`DELETE /api/{entity}?pk…`
 - `widgets.js` — aida’s domain-type widgets (`fecha` → date picker); optional for other consumers
 - `frontend.wasm` — catalog from `completeEntity` of every entity in `src/system.zig`, typed row builder, JSON via `stringifyRecord`
 
@@ -59,12 +59,13 @@ Or, after `zig build`, run the installed binary:
 ./zig-out/bin/backend
 ```
 
-It listens on `http://localhost:8080`. CORS is enabled so the page on another origin can call it.
+It listens on `http://localhost:8080` and speaks the same `/api/<entity>` contract as the PostgreSQL REST server (`zigma_rest`). CORS is enabled so the page on another origin can call it.
 
-- `GET /{entity}` returns the in-memory list for that entity as a JSON array. `src/system.zig` seeds every entity with at least two rows. Other GET paths are `404`.
-- `POST /{entity}` prints the request, parses a record instance, appends it, and answers `{"status": "received"}`.
-- `PUT /{entity}?k=v&…` prints the request, replaces the row whose pk matches the query (body pk must match; every pk field required), and answers `{"status": "received"}` (or 404 if that pk is missing).
-- `DELETE /{entity}?k=v&…` prints the request, removes the row whose pk matches the query (no body; full pk required), and answers `{"status": "received"}` (or 404 if that pk is missing).
+- `GET /api/{entity}` returns matching rows as a JSON array (optional equality filters in the query). Seeds load every entity with at least two rows.
+- `POST /api/{entity}` inserts a JSON object (`Content-Type: application/json`) and answers **201** with the stored row.
+- `PUT /api/{entity}?k=v&…` applies a **partial** update (PK fields forbidden in the body) and answers **200** with the updated rows array (`[]` if none matched).
+- `DELETE /api/{entity}?k=v&…` deletes matching rows and answers **200** with the deleted rows array.
+- Errors use `{"error":{"code","message"}}` (same as REST).
 
 Leave this running.
 
@@ -92,6 +93,7 @@ The library `zig build` at the repo root does **not** install this app.
 | `examples/aida/build.zig` | consumer: `addAppFromDep` (`.title = "aida"`) |
 | `src/frontend/main.zig` | WASM: catalog + row builder; `system` is injected at build |
 | `src/json.zig` | JSON for rows and entity Infos |
-| `src/frontend/main.js` | nav + table from the catalog; `GET`/`POST /{entity}`, `PUT`/`DELETE /{entity}?pk` |
+| `src/frontend/main.js` | nav + table from the catalog; `GET`/`POST /api/{entity}`, `PUT`/`DELETE /api/{entity}?pk` |
 | `src/frontend/index.html` | shell: nav, empty table + status; loads generated `title.js` |
-| `src/http/main.zig` | in-memory `GET`/`POST /{entity}`, `PUT`/`DELETE /{entity}?pk` from `system` |
+| `src/http/main.zig` | in-memory `zigma_rest` + CORS on `/api/{entity}` |
+| `examples/aida/src/rest.zig` | AIDA codecs + `Api` (shared with the Postgres server) |

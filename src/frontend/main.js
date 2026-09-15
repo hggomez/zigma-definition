@@ -1,4 +1,4 @@
-const apiBase = "http://localhost:8080";
+const apiBase = "http://localhost:8080/api";
 
 let catalog = [];
 let currentEntity = null;
@@ -10,10 +10,14 @@ let relatedByEntity = {};
 
 const importObject = {
     env: {
-        /** WASM import: `ptr`/`len` into `json_buf`. POSTs that JSON to `/{currentEntity}`. No return. */
+        /** WASM import: `ptr`/`len` into `json_buf`. POSTs that JSON to `/api/{currentEntity}`. No return. */
         js_send_post: async (ptr, len) => {
             const jsonString = readMemoryString(ptr, len);
-            await sendJson(`${apiBase}/${currentEntity.name}`, "POST", jsonString);
+            await sendJson(
+                `${apiBase}/${currentEntity.name}`,
+                "POST",
+                restBodyFromRowJson(currentEntity, jsonString, { omitPk: false }),
+            );
         }
     }
 };
@@ -88,6 +92,15 @@ function cellString(field, value) {
     if (field && field.storage === "boolean") return value === true || value === "true" ? "true" : "false";
     if (value == null) return "";
     return String(value);
+}
+
+/** WASM row JSON → REST PUT/POST body. PUT omits PK fields (REST rejects primary-key updates). */
+function restBodyFromRowJson(entity, jsonString, { omitPk }) {
+    const obj = JSON.parse(jsonString);
+    if (omitPk) {
+        for (const name of entity.pk) delete obj[name];
+    }
+    return JSON.stringify(obj);
 }
 
 /** Target row label: `is_name` fields joined, else the pk. */
@@ -523,14 +536,18 @@ function updateSaveButton(tr) {
     save.disabled = !isRowDirty(tr);
 }
 
-/** PUT: pack live cells from `tr`, `build_row`, body from `json_buf`. Query pk from loaded `row`. */
+/** PUT: pack live cells from `tr`, `build_row`, patch body without PK fields. Query pk from loaded `row`. */
 async function saveRow(tr, row) {
     try {
         writeInputStrings(rowValuesFrom(tr));
         const len = wasmExports.build_row(entityIndex());
         if (!len) throw new Error(rowBuildError());
         const jsonString = readMemoryString(wasmExports.json_ptr(), len);
-        await sendJson(resourceUrl(currentEntity, row), "PUT", jsonString);
+        await sendJson(
+            resourceUrl(currentEntity, row),
+            "PUT",
+            restBodyFromRowJson(currentEntity, jsonString, { omitPk: true }),
+        );
     } catch (err) {
         showRowBuildError(tr, err instanceof Error ? err.message : String(err));
     }

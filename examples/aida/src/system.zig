@@ -1,7 +1,7 @@
 //! Injected `system` for generators: aida Defs plus optional demo seeds.
 //! Generators require `type_defs` and `entity_defs`; `seeds` is optional.
 
-const aida = @import("aida.zig");
+const aida = @import("aida");
 
 pub const type_defs = aida.type_defs;
 pub const entity_defs = aida.entity_defs;
@@ -26,8 +26,8 @@ pub const seeds = blk: {
                 .nombres = "Ana",
                 .cargo = "TIT",
                 .email = "ana@example.com",
-                .email_alternativo = "",
-                .jefe = "",
+                .email_alternativo = null,
+                .jefe = null,
                 .telefono = null,
                 .experiencia = null,
                 .esImportador = null,
@@ -38,7 +38,7 @@ pub const seeds = blk: {
                 .nombres = "Luis",
                 .cargo = "JTP",
                 .email = "luis@example.com",
-                .email_alternativo = "",
+                .email_alternativo = null,
                 .jefe = "1",
                 .telefono = null,
                 .experiencia = null,
@@ -76,7 +76,7 @@ pub const seeds = blk: {
                 .orden = 1,
                 .pregunta = 1,
                 .formulacion = "Que es un algoritmo?",
-                .aclaraciones = "",
+                .aclaraciones = null,
                 .tipo_respuesta = "opcion multiple",
             },
             .{
