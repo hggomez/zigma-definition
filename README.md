@@ -24,8 +24,19 @@ liquibase lpm add postgresql
 La [instalación de Liquibase en Linux](DOCS.md#instalación-de-liquibase-en-linux) está en
 la documentación. Todos los comandos siguientes se ejecutan desde la raíz del repositorio.
 
-Los ejemplos usan `-Dlibpq-prefix=/opt/homebrew/opt/libpq` para macOS con Homebrew. Ajustá
-esa ruta a tu instalación; si `pkg-config` encuentra libpq, podés omitir la opción.
+Los ejemplos usan `-Dlibpq-prefix=/opt/homebrew/opt/libpq` para macOS con Homebrew.
+En Linux podés reemplazar esa opción por rutas independientes, consultadas con `pg_config`:
+
+```sh
+zig build check-aida-rest \
+  -Dlibpq-include="$(pg_config --includedir)" \
+  -Dlibpq-lib="$(pg_config --libdir)"
+```
+
+Las mismas opciones sirven para arrancar el servidor y ejecutar las integraciones.
+Cada ruta explícita tiene prioridad sobre la correspondiente del prefijo; la otra sigue
+usando el prefijo si está definido. En Ubuntu/Debian, instalá `libpq-dev` para disponer
+de los headers y la biblioteca de desarrollo en la máquina donde compilás.
 
 ## Arrancar AIDA
 

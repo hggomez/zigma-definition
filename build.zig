@@ -227,19 +227,33 @@ pub fn build(b: *std.Build) void {
     const libpq_prefix = b.option(
         []const u8,
         "libpq-prefix",
-        "Prefix containing the libpq include/ and lib/ directories",
+        "Prefijo que contiene los directorios include/ y lib/ de libpq",
+    );
+    const libpq_include = b.option(
+        []const u8,
+        "libpq-include",
+        "Directorio de libpq-fe.h; tiene prioridad sobre libpq-prefix/include",
+    );
+    const libpq_lib = b.option(
+        []const u8,
+        "libpq-lib",
+        "Directorio de la biblioteca libpq; tiene prioridad sobre libpq-prefix/lib",
     );
     const postgres_libpq_translate = b.addTranslateC(.{
         .root_source_file = b.path("src/postgres/libpq.h"),
         .target = target,
         .optimize = optimize,
     });
-    if (libpq_prefix) |prefix| {
+    if (libpq_include) |include_dir| {
+        postgres_libpq_translate.addSystemIncludePath(.{ .cwd_relative = include_dir });
+    } else if (libpq_prefix) |prefix| {
         postgres_libpq_translate.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "include" }) });
     }
     const postgres_libpq_bindings_mod = postgres_libpq_translate.createModule();
     postgres_libpq_bindings_mod.linkSystemLibrary("pq", .{});
-    if (libpq_prefix) |prefix| {
+    if (libpq_lib) |lib_dir| {
+        postgres_libpq_bindings_mod.addLibraryPath(.{ .cwd_relative = lib_dir });
+    } else if (libpq_prefix) |prefix| {
         postgres_libpq_bindings_mod.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ prefix, "lib" }) });
     }
 

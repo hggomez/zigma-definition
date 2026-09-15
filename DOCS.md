@@ -482,7 +482,29 @@ descartable, un puerto aleatorio y PostgreSQL 18.4:
 zig build test-postgres -Dlibpq-prefix="$(brew --prefix libpq)"
 ```
 
-En sistemas donde `pkg-config` ya descubre `libpq`, se puede omitir `-Dlibpq-prefix`.
+Las rutas de libpq se pueden configurar con estas opciones de build:
+
+| Opción | Efecto |
+|---|---|
+| `-Dlibpq-prefix=/ruta` | Usa `/ruta/include` para headers y `/ruta/lib` para bibliotecas. |
+| `-Dlibpq-include=/ruta` | Usa ese directorio para encontrar `libpq-fe.h`, con prioridad sobre el include del prefijo. |
+| `-Dlibpq-lib=/ruta` | Usa ese directorio para encontrar la biblioteca `pq`, con prioridad sobre el lib del prefijo. |
+
+Las prioridades son independientes: se puede sobrescribir solo una ruta y conservar la
+otra derivada del prefijo. Sin una ruta explícita ni prefijo, se mantiene la búsqueda
+predeterminada de Zig. El descubrimiento de la biblioteca mediante `pkg-config` no
+configura automáticamente los includes del paso de traducción de C.
+
+Para instalaciones de Linux con headers y bibliotecas en directorios separados:
+
+```sh
+zig build test-postgres \
+  -Dlibpq-include="$(pg_config --includedir)" \
+  -Dlibpq-lib="$(pg_config --libdir)"
+```
+
+`pg_config` debe corresponder a la instalación de libpq que se quiere utilizar. Las
+opciones también se aplican a los demás pasos que compilan consumidores de libpq.
 
 ### Ejemplo ejecutable
 
