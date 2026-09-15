@@ -38,6 +38,7 @@ pub const docente = zigma.record(type_defs, .{
     .jefe = .{ .type = "text", .description = "jefe de cátedra (otro docente)" },
     .telefono = .{ .type = "text" },
     .experiencia = .{ .type = "integer" },
+    .esImportador = .{ .type = "boolean" }
 });
 
 pub const asignacion = zigma.record(type_defs, .{
