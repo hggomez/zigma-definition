@@ -9,6 +9,44 @@ const tiny = @import("tiny_system.zig");
 
 const expectEqualStrings = std.testing.expectEqualStrings;
 
+test "nullable record values serialize as JSON null or their domain value" {
+    const Row = zigma.RecordInstanceType(aida.type_defs, .{
+        .text = .{ .type = "text" },
+        .number = .{ .type = "integer" },
+        .flag = .{ .type = "boolean" },
+        .date = .{ .type = "fecha" },
+    });
+    var buf: [256]u8 = undefined;
+    const empty: Row = .{ .text = null, .number = null, .flag = null, .date = null };
+    try expectEqualStrings(
+        "{\"text\":null,\"number\":null,\"flag\":null,\"date\":null}",
+        try zigma_json.stringifyRecord(empty, &buf),
+    );
+    const present: Row = .{
+        .text = "null",
+        .number = 0,
+        .flag = false,
+        .date = .{ .@"año" = 2024, .mes = 2, .@"día" = 29 },
+    };
+    try expectEqualStrings(
+        "{\"text\":\"null\",\"number\":0,\"flag\":false,\"date\":{\"año\":2024,\"mes\":2,\"día\":29}}",
+        try zigma_json.stringifyRecord(present, &buf),
+    );
+    var short_buf: [8]u8 = undefined;
+    try std.testing.expectError(error.NoSpaceLeft, zigma_json.stringifyRecord(empty, &short_buf));
+}
+
+test "nullable query types decode a supplied value without inventing a null literal" {
+    try expectEqualStrings("null", (try zigma_json.parseFieldValue(?[]const u8, "null")).?);
+    try expectEqualStrings("", (try zigma_json.parseFieldValue(?[]const u8, "")).?);
+    try std.testing.expect((try zigma_json.parseFieldValue(?i64, "0")).? == 0);
+    try std.testing.expect((try zigma_json.parseFieldValue(?bool, "false")).? == false);
+    try std.testing.expectError(error.InvalidValue, zigma_json.parseFieldValue(?i64, "null"));
+    try std.testing.expectError(error.InvalidValue, zigma_json.parseFieldValue(?i64, ""));
+    const date = (try zigma_json.parseFieldValue(?aida.Fecha, "{\"año\":2024,\"mes\":2,\"día\":29}")).?;
+    try std.testing.expect(date.@"año" == 2024 and date.mes == 2 and date.@"día" == 29);
+}
+
 test "stringifies a materia row from its fields" {
     const MateriaRow = zigma.RecordInstanceType(aida.type_defs, aida.materia);
     var buf: [256]u8 = undefined;
@@ -68,7 +106,7 @@ test "stringifies entity fks as source-to-target maps" {
     var buf: [2048]u8 = undefined;
     const json = try zigma_json.stringifyEntitySchema(aida.type_defs, "docentes", aida.docentes, &buf);
     try expectEqualStrings(
-        "{\"name\":\"docentes\",\"pk\":[\"docente\"],\"uks\":{},\"fks\":{\"jefe\":{\"entity\":\"docentes\",\"fields\":{\"jefe\":\"docente\"}}},\"fields\":[{\"name\":\"docente\",\"label\":\"docente\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"apellido\",\"label\":\"apellido\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"nombres\",\"label\":\"nombres\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"cargo\",\"label\":\"cargo\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"email\",\"label\":\"email\",\"type\":\"email\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"email_alternativo\",\"label\":\"email alternativo\",\"type\":\"email\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"jefe\",\"label\":\"jefe\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"}]}",
+        "{\"name\":\"docentes\",\"pk\":[\"docente\"],\"uks\":{},\"fks\":{\"jefe\":{\"entity\":\"docentes\",\"fields\":{\"jefe\":\"docente\"}}},\"fields\":[{\"name\":\"docente\",\"label\":\"docente\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"apellido\",\"label\":\"apellido\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"nombres\",\"label\":\"nombres\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"cargo\",\"label\":\"cargo\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"email\",\"label\":\"email\",\"type\":\"email\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"email_alternativo\",\"label\":\"email alternativo\",\"type\":\"email\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"jefe\",\"label\":\"jefe\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"telefono\",\"label\":\"telefono\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"experiencia\",\"label\":\"experiencia\",\"type\":\"integer\",\"is_name\":false,\"storage\":\"integer\"},{\"name\":\"esImportador\",\"label\":\"esImportador\",\"type\":\"boolean\",\"is_name\":false,\"storage\":\"boolean\"}]}",
         json,
     );
 }

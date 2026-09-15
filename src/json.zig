@@ -71,8 +71,10 @@ pub fn fieldStorage(comptime T: type) []const u8 {
 /// `[]const u8` values alias `bytes`, including string fields inside a struct
 /// (the same contract as a top-level text cell). JSON strings that need an
 /// unescape copy would live in parse scratch and are `error.InvalidValue`.
+/// Un tipo opcional acepta un valor de su dominio; la cadena "null" no representa ausencia.
 pub fn parseFieldValue(comptime T: type, bytes: []const u8) error{InvalidValue}!T {
     switch (@typeInfo(T)) {
+        .optional => |optional| return try parseFieldValue(optional.child, bytes),
         .pointer => |p| {
             if (p.size == .slice and p.child == u8) return bytes;
             @compileError("unsupported field type " ++ @typeName(T));
@@ -302,10 +304,14 @@ fn writeNameList(buf: []u8, pos: *usize, list: anytype) error{NoSpaceLeft}!void 
     try writeByte(buf, pos, ']');
 }
 
-/// Appends one JSON value from a Zig string, int, bool, or struct. Advances `pos`.
+/// Agrega un valor JSON de texto, entero, booleano, struct u opcional y avanza `pos`.
 fn writeJsonValue(buf: []u8, pos: *usize, value: anytype) error{NoSpaceLeft}!void {
     const T = @TypeOf(value);
     switch (@typeInfo(T)) {
+        .optional => if (value) |present|
+            try writeJsonValue(buf, pos, present)
+        else
+            try writeRaw(buf, pos, "null"),
         .pointer => |p| {
             if (p.size == .slice and p.child == u8) {
                 try writeJsonString(buf, pos, value);
