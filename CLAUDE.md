@@ -4,6 +4,8 @@ Port a Zig del módulo `system-design` (TypeScript): la parte descriptiva del fr
 SSOTIGAD (Single Source Of Truth Implies Good Application Design). Provee el vocabulario
 para describir sistemas (tipos de dominio, entidades, campos, pks, uks, fks) de modo que
 generadores automáticos puedan derivar tablas, endpoints, pantallas, serializadores y
+validadores. Este módulo cubre la parte descriptiva (`src/zigma.zig`) y generadores que la
+consumen (JSON, HTTP, frontend WASM). El descriptor no importa a los generadores.
 validadores. El núcleo `zigma` cubre **solo la parte descriptiva**; la generación y ejecución
 PostgreSQL viven en módulos independientes.
 
@@ -51,6 +53,15 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `tools/postgres_schema_validator.zig`: comparación SSOT↔`pg_catalog` en un schema esperado
   temporal; se usa antes de aceptar o baselinar.
 * `test/*_test.zig`: tests positivos (runtime y asserts comptime).
+Mapa de archivos para no recorrer el repo: `AGENTS.md`.
+
+* `src/zigma.zig`: el framework descriptor (módulo `zigma`). No conoce ningún sistema concreto ni importa generadores.
+* `src/json.zig`: generador JSON (módulo `zigma_json`); solo importa `zigma`.
+* `src/http/main.zig`: backend HTTP genérico; importa `system` (`type_defs` + `entity_defs`, `seeds` opcional).
+* `src/frontend/`: cliente WASM genérico (mismo contrato `system`).
+* `examples/aida/src/aida.zig`: el sistema de alumnos descripto con el vocabulario (módulo `aida`, fixture de tests).
+* `examples/aida/`: app de ejemplo que depende del paquete (`src/system.zig` + `build.zig`).
+* `test/aida_test.zig`: los tests positivos (runtime y asserts comptime).
 * `test/compile_errors/*.zig`: fragmentos que **deben fallar** la compilación; `build.zig`
   los compila con `expect_errors` (el paso tiene éxito solo si el error coincide) y los
   cuelga del step `test`. La lista de casos con su mensaje esperado está en `build.zig`.
@@ -62,6 +73,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   y adopción validada.
 * `zig build test-rest-postgres -Dlibpq-prefix=...` prueba el CRUD generado end-to-end con
   `std.http`, libpq y PostgreSQL descartable.
+* `addApp` / `addAppFromDep` en `build.zig` arma backend nativo y frontend WASM; el consumidor es `examples/aida/`, no el `build()` de la librería.
+* `zig build test` corre todo: tests de runtime (`aida` y JSON) y casos de no-compila.
 
 ## Decisiones de diseño
 

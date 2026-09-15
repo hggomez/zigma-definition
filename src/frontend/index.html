@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title></title>
+    <script src="title.js"></script>
+    <style>
+      :root {
+        --grid: #e2e4e8;
+        --header-bg: #f0f2f5;
+        --locked: #f3f4f6;
+        --tab-bar: #e8eaed;
+        --accent: #188038;
+        --focus: #1a73e8;
+        --pk: #f9ab00;
+        --fk: #5e35b1;
+        --text: #202124;
+        --muted: #5f6368;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        font: 13px/1.2 "Segoe UI", system-ui, sans-serif;
+        color: var(--text);
+        background: #fff;
+      }
+      .workbook-bar {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+        padding: 0.45rem 0.75rem;
+        border-bottom: 1px solid var(--grid);
+        background: #fff;
+        flex-shrink: 0;
+        position: sticky;
+        top: 0;
+        z-index: 5;
+      }
+      .workbook-bar h1 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 500;
+      }
+      #status {
+        margin: 0;
+        flex: 1;
+        padding: 0.2rem 0.5rem;
+        border: 1px solid transparent;
+        background: transparent;
+        font: 12px/1.4 "Segoe UI", system-ui, sans-serif;
+        color: var(--muted);
+        min-height: 1.6em;
+      }
+      #status:empty {
+        padding: 0;
+        min-height: 0;
+        border: none;
+      }
+      #status.network {
+        border-color: #f5c6c2;
+        background: #fce8e6;
+        color: #c5221f;
+      }
+      .grid-wrap {
+        flex: 1;
+        overflow: auto;
+        background: #f8f9fa;
+      }
+      table.sheet {
+        border-collapse: collapse;
+        background: #fff;
+        width: max-content;
+        max-width: none;
+      }
+      table.sheet th,
+      table.sheet td {
+        border: 1px solid var(--grid);
+        padding: 0;
+        height: 24px;
+      }
+      table.sheet th {
+        background: var(--header-bg);
+        padding: 0 8px;
+        text-align: center;
+        font-weight: 500;
+        font-size: 12px;
+        color: var(--muted);
+        white-space: nowrap;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        box-shadow: 0 1px 0 var(--grid);
+      }
+      table.sheet th.pk,
+      table.sheet td.pk {
+        border-color: var(--pk);
+        border-width: 2px;
+      }
+      table.sheet th.fk,
+      table.sheet td.fk {
+        border-color: var(--fk);
+        border-width: 2px;
+      }
+      table.sheet th.pk.fk,
+      table.sheet td.pk.fk {
+        border-top-color: var(--pk);
+        border-bottom-color: var(--pk);
+        border-left-color: var(--fk);
+        border-right-color: var(--fk);
+      }
+      table.sheet th.pk {
+        box-shadow: 0 1px 0 var(--pk);
+      }
+      table.sheet th.fk {
+        box-shadow: 0 1px 0 var(--fk);
+      }
+      table.sheet th.pk.fk {
+        box-shadow: 0 1px 0 var(--pk);
+      }
+      table.sheet th:last-child,
+      table.sheet td.action {
+        background: var(--header-bg);
+        white-space: nowrap;
+        border-color: var(--grid);
+      }
+      table.sheet td.action {
+        padding: 0 6px;
+        vertical-align: middle;
+        background: #fafafa;
+      }
+      table.sheet tbody tr:hover td {
+        background: #f8fbff;
+      }
+      table.sheet tbody tr:hover td.action {
+        background: #f0f4f8;
+      }
+      table.sheet tfoot td {
+        background: #f6fdf8;
+      }
+      table.sheet tfoot td.action {
+        background: #eef8f0;
+      }
+      table.sheet td input:not([type="hidden"]) {
+        display: block;
+        width: 100%;
+        min-width: 0;
+        height: 24px;
+        margin: 0;
+        border: none;
+        padding: 0 6px;
+        font: inherit;
+        background: transparent;
+        outline: none;
+      }
+      table.sheet td select {
+        display: block;
+        width: 100%;
+        min-width: 0;
+        height: 24px;
+        margin: 0;
+        border: none;
+        padding: 0 4px 0 6px;
+        font: inherit;
+        background: transparent;
+        outline: none;
+      }
+      table.sheet td input.input-integer {
+        text-align: right;
+      }
+      table.sheet td input[type="checkbox"] {
+        width: auto;
+        min-width: 0;
+        height: auto;
+        margin: 0 auto;
+        display: block;
+      }
+      table.sheet td input[type="date"] {
+        min-width: 10rem;
+      }
+      table.sheet td.cell-error {
+        outline: 2px solid #d93025;
+        outline-offset: -2px;
+        background: #fce8e6;
+      }
+      table.sheet td input:focus,
+      table.sheet td select:focus {
+        outline: 2px solid var(--focus);
+        outline-offset: -2px;
+        background: #fff;
+        position: relative;
+        z-index: 1;
+      }
+      table.sheet td .object-fields {
+        display: flex;
+        height: 24px;
+        width: max-content;
+      }
+      table.sheet td .object-fields input {
+        min-width: 0;
+        flex: 0 0 auto;
+        border-right: 1px solid var(--grid);
+      }
+      table.sheet td .object-fields input.input-integer {
+        width: 4.5rem;
+        min-width: 4.5rem;
+      }
+      table.sheet td .object-fields input:last-child {
+        border-right: none;
+      }
+      table.sheet tbody td.pk input,
+      table.sheet tbody td.pk select {
+        pointer-events: none;
+        cursor: default;
+      }
+      table.sheet td input:disabled,
+      table.sheet td select:disabled {
+        background: var(--locked);
+        color: #5f6368;
+      }
+      table.sheet td .fk-locked {
+        height: 24px;
+      }
+      table.sheet td.action button {
+        font: inherit;
+        font-size: 12px;
+        padding: 1px 8px;
+        border: 1px solid var(--grid);
+        background: #fff;
+        border-radius: 2px;
+        cursor: pointer;
+      }
+      table.sheet td.action button:hover {
+        background: #e8f0fe;
+        border-color: #c4d7f5;
+      }
+      table.sheet td.action button:disabled {
+        opacity: 0.55;
+        cursor: default;
+        background: #f1f3f4;
+        color: #80868b;
+        border-color: #dadce0;
+      }
+      table.sheet td.action button:disabled:hover {
+        background: #f1f3f4;
+        border-color: #dadce0;
+      }
+      table.sheet td.action button + button {
+        margin-left: 4px;
+      }
+      nav#entity-nav {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 0;
+        padding: 0 0 0 8px;
+        background: var(--tab-bar);
+        border-top: 1px solid var(--grid);
+        flex-shrink: 0;
+        min-height: 28px;
+      }
+      nav#entity-nav a {
+        padding: 4px 14px 5px;
+        border: 1px solid transparent;
+        border-bottom: none;
+        text-decoration: none;
+        color: var(--muted);
+        background: transparent;
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      nav#entity-nav a:hover {
+        background: #f1f3f4;
+        color: var(--text);
+      }
+      nav#entity-nav a.selected {
+        background: #fff;
+        color: var(--accent);
+        font-weight: 600;
+        border-color: var(--grid);
+        border-top: 2px solid var(--accent);
+        margin-bottom: -1px;
+        padding-top: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="workbook-bar">
+      <h1 id="sheet-title"></h1>
+      <p id="status">Loading...</p>
+    </div>
+    <div class="grid-wrap">
+      <table id="sheet-table" class="sheet">
+        <thead></thead>
+        <tbody></tbody>
+        <tfoot></tfoot>
+      </table>
+    </div>
+    <nav id="entity-nav"></nav>
+    <script src="main.js"></script>
+  </body>
+</html>

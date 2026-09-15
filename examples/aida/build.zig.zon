@@ -1,0 +1,14 @@
+.{
+    .name = .aida,
+    .version = "0.0.0",
+    .fingerprint = 0xdefc40b863b4b015,
+    .minimum_zig_version = "0.17.0-dev.1282+c0f9b51d8",
+    .dependencies = .{
+        .zigma_definition = .{ .path = "../.." },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

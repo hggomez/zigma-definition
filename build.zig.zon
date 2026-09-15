@@ -5,8 +5,7 @@
     .minimum_zig_version = "0.17.0-dev.1818+7051f8e73",
     .dependencies = .{},
     // What goes into the published package (and therefore into its hash).
-    // The tests stay in the repository; they are just not shipped: a consumer
-    // never runs them, and they are bigger than the framework itself.
+    // Tests and docs stay in the repository; they are not shipped.
     .paths = .{
         "build.zig",
         "build.zig.zon",

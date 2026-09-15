@@ -1,6 +1,7 @@
 .zig-cache/
 zig-out/
 *.o
+.cursor/
 .idea/
 .idea/data_source_mapping.xml
 .idea/dataSources.xml
