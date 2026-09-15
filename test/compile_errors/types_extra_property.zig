@@ -1,5 +1,5 @@
-//! expected: type 'fecha': must be a TypeDef
-//! (a struct that is not exactly the shape of TypeDef is rejected too)
+//! Diagnóstico esperado: `type 'fecha': must be a TypeDef`.
+//! También se rechaza un struct que no tenga exactamente la forma de TypeDef.
 const zigma = @import("zigma");
 
 comptime {

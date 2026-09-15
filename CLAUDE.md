@@ -24,22 +24,22 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 
 ## Estructura
 
-* `src/zigma.zig`: el framework descriptor (módulo `zigma`). No conoce ningún sistema concreto.
-* `src/postgres_ddl.zig`: generación comptime del DDL inicial (módulo
+* `src/framework/zigma.zig`: el framework descriptor (módulo `zigma`). No conoce ningún sistema concreto.
+* `src/postgres/ddl.zig`: generación comptime del DDL inicial (módulo
   `zigma_postgres_ddl`).
-* `src/postgres_executor.zig`: ejecución transaccional independiente del driver (módulo
-  `zigma_postgres_executor`).
-* `src/postgres_libpq.zig`: adaptador bloqueante opcional sobre `libpq` (módulo
+* `src/postgres/executor_ddl.zig`: ejecución transaccional independiente del driver (módulo
+  `zigma_postgres_executor_ddl`).
+* `src/postgres/libpq.zig`: adaptador bloqueante opcional sobre `libpq` (módulo
   `zigma_postgres_libpq`).
-* `src/postgres_migrations.zig`: snapshot canónico, diff y drafts Liquibase formatted-SQL
+* `src/postgres/migrations/schema.zig`: snapshot canónico, diff y drafts Liquibase formatted-SQL
   (módulo `zigma_postgres_migrations`); no conoce filesystem, procesos ni conexiones.
-* `src/liquibase_runner.zig`: startup versionado mediante el CLI externo (módulo
+* `src/postgres/migrations/liquibase_runner.zig`: startup versionado mediante el CLI externo (módulo
   `zigma_liquibase_runner`); credenciales solo por ambiente.
-* `src/rest.zig`: codecs, routing, JSON y validación CRUD (módulo `zigma_rest`); no conoce
+* `src/rest/api.zig`: codecs, routing, JSON y validación CRUD (módulo `zigma_rest`); no conoce
   sockets ni PostgreSQL.
-* `src/postgres_crud.zig`: SQL CRUD parametrizado derivado de entidades (módulo
+* `src/postgres/crud.zig`: SQL CRUD parametrizado derivado de entidades (módulo
   `zigma_postgres_crud`).
-* `src/std_http.zig`: servidor secuencial de referencia (módulo `zigma_std_http`).
+* `src/rest/std_http.zig`: servidor secuencial de referencia (módulo `zigma_std_http`).
 * `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
 * `examples/aida_postgres.zig`: mappings y proyección PostgreSQL compartida de AIDA.
 * `examples/postgres_bootstrap.zig`: ejecutable que genera el DDL de AIDA en compilación y

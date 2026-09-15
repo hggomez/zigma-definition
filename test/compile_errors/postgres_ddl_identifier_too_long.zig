@@ -1,4 +1,4 @@
-//! expected: PostgreSQL identifiers are limited to 63 bytes
+//! Se espera un rechazo: los identificadores PostgreSQL tienen un límite de 63 bytes.
 const zigma = @import("zigma");
 const ddl = @import("zigma_postgres_ddl");
 
@@ -11,5 +11,6 @@ comptime {
         .fields = fields,
     });
     const entities = zigma.defineEntities(.{ .things = entity });
-    _ = ddl.createTableDdl(entities, "things", ddl.common_type_mappings);
+    const Model = zigma.System(zigma.common_type_defs, entities);
+    _ = ddl.createTableDdl(Model, "things", ddl.common_type_mappings);
 }

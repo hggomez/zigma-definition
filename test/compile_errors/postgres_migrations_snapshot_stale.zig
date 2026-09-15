@@ -12,5 +12,5 @@ const mappings = ddl.defineTypeMappings(zigma.merge(.{
 }));
 
 comptime {
-    migrations.assertAcceptedSnapshot(aida.entity_defs, mappings, "{}");
+    migrations.assertAcceptedSnapshot(aida.Model, mappings, "{}");
 }

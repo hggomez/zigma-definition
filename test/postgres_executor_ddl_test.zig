@@ -2,7 +2,7 @@ const std = @import("std");
 const zigma = @import("zigma");
 const aida = @import("aida");
 const postgres_ddl = @import("zigma_postgres_ddl");
-const postgres_executor = @import("zigma_postgres_executor");
+const postgres_executor_ddl = @import("zigma_postgres_executor_ddl");
 
 const type_mappings = postgres_ddl.defineTypeMappings(zigma.merge(.{
     postgres_ddl.common_type_mappings,
@@ -12,7 +12,7 @@ const type_mappings = postgres_ddl.defineTypeMappings(zigma.merge(.{
     },
 }));
 
-const schema_ddl = postgres_ddl.createSchemaDdl(aida.entity_defs, type_mappings);
+const schema_ddl = postgres_ddl.createSchemaDdl(aida.Model, type_mappings);
 
 const Event = enum {
     begin,
@@ -67,7 +67,7 @@ fn expectEvents(connection: *const FakeConnection, expected: []const Event) !voi
 test "executes the immutable generated schema in one transaction" {
     var connection = FakeConnection{};
 
-    try postgres_executor.executeSchema(&connection, schema_ddl);
+    try postgres_executor_ddl.executeSchema(&connection, schema_ddl);
 
     try expectEvents(&connection, &.{ .begin, .exec, .commit });
     const executed = connection.executed_sql.?;
@@ -81,7 +81,7 @@ test "does not rollback when beginning the transaction fails" {
 
     try std.testing.expectError(
         error.BeginFailed,
-        postgres_executor.executeSchema(&connection, schema_ddl),
+        postgres_executor_ddl.executeSchema(&connection, schema_ddl),
     );
 
     try expectEvents(&connection, &.{.begin});
@@ -93,7 +93,7 @@ test "rolls back and does not commit when schema execution fails" {
 
     try std.testing.expectError(
         error.ExecFailed,
-        postgres_executor.executeSchema(&connection, schema_ddl),
+        postgres_executor_ddl.executeSchema(&connection, schema_ddl),
     );
 
     try expectEvents(&connection, &.{ .begin, .exec, .rollback });
@@ -104,7 +104,7 @@ test "rolls back when commit fails" {
 
     try std.testing.expectError(
         error.CommitFailed,
-        postgres_executor.executeSchema(&connection, schema_ddl),
+        postgres_executor_ddl.executeSchema(&connection, schema_ddl),
     );
 
     try expectEvents(&connection, &.{ .begin, .exec, .commit, .rollback });
@@ -118,7 +118,7 @@ test "preserves the schema error when rollback also fails" {
 
     try std.testing.expectError(
         error.ExecFailed,
-        postgres_executor.executeSchema(&connection, schema_ddl),
+        postgres_executor_ddl.executeSchema(&connection, schema_ddl),
     );
 
     try expectEvents(&connection, &.{ .begin, .exec, .rollback });

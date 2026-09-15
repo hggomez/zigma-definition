@@ -44,8 +44,104 @@ const unsafe_entity = zigma.defineEntity(.{
 });
 const unsafe_defs = zigma.defineEntities(.{ .things = unsafe_entity });
 
+const empty_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[]}
+;
+const id_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"things","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false}],"primary_key":{"name":"pk_things","columns":["id"]},"unique_keys":[],"foreign_keys":[]}]}
+;
+const nullable_column_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"things","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false},{"name":"note","domain_type":"text","sql_type":"TEXT","nullable":true}],"primary_key":{"name":"pk_things","columns":["id"]},"unique_keys":[],"foreign_keys":[]}]}
+;
+const required_column_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"things","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false},{"name":"note","domain_type":"text","sql_type":"TEXT","nullable":false}],"primary_key":{"name":"pk_things","columns":["id"]},"unique_keys":[],"foreign_keys":[]}]}
+;
+const reordered_before_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"things","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false},{"name":"name","domain_type":"text","sql_type":"TEXT","nullable":false}],"primary_key":{"name":"pk_things","columns":["id"]},"unique_keys":[],"foreign_keys":[]}]}
+;
+const reordered_after_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"things","columns":[{"name":"name","domain_type":"text","sql_type":"TEXT","nullable":false},{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false}],"primary_key":{"name":"pk_things","columns":["id"]},"unique_keys":[],"foreign_keys":[]}]}
+;
+const bigint_name_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"things","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false},{"name":"name","domain_type":"text","sql_type":"BIGINT","nullable":false}],"primary_key":{"name":"pk_things","columns":["id"]},"unique_keys":[],"foreign_keys":[]}]}
+;
+const email_domain_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"things","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false},{"name":"name","domain_type":"email","sql_type":"TEXT","nullable":false}],"primary_key":{"name":"pk_things","columns":["id"]},"unique_keys":[],"foreign_keys":[]}]}
+;
+const composite_pk_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"things","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false},{"name":"name","domain_type":"text","sql_type":"TEXT","nullable":false}],"primary_key":{"name":"pk_things","columns":["id","name"]},"unique_keys":[],"foreign_keys":[]}]}
+;
+const unique_key_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"things","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false},{"name":"name","domain_type":"text","sql_type":"TEXT","nullable":false}],"primary_key":{"name":"pk_things","columns":["id"]},"unique_keys":[{"name":"uk_things_name","columns":["name"]}],"foreign_keys":[]}]}
+;
+const foreign_key_base_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"parents","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false}],"primary_key":{"name":"pk_parents","columns":["id"]},"unique_keys":[],"foreign_keys":[]},{"name":"things","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false}],"primary_key":{"name":"pk_things","columns":["id"]},"unique_keys":[],"foreign_keys":[]}]}
+;
+const foreign_key_snapshot =
+    \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"parents","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false}],"primary_key":{"name":"pk_parents","columns":["id"]},"unique_keys":[],"foreign_keys":[]},{"name":"things","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false}],"primary_key":{"name":"pk_things","columns":["id"]},"unique_keys":[],"foreign_keys":[{"name":"fk_things_parent","columns":["id"],"target_table":"parents","target_columns":["id"]}]}]}
+;
+
+fn expectMigrationName(expected: []const u8, before: []const u8, after: []const u8) !void {
+    const actual = try migrations.inferMigrationName(std.testing.allocator, before, after);
+    defer std.testing.allocator.free(actual);
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
+test "single structural changes receive precise automatic migration names" {
+    const cases = [_]struct {
+        expected: []const u8,
+        before: []const u8,
+        after: []const u8,
+    }{
+        .{ .expected = "create_table_things", .before = empty_snapshot, .after = id_snapshot },
+        .{ .expected = "remove_table_things", .before = id_snapshot, .after = empty_snapshot },
+        .{ .expected = "add_things_note", .before = id_snapshot, .after = nullable_column_snapshot },
+        .{ .expected = "add_things_note", .before = id_snapshot, .after = required_column_snapshot },
+        .{ .expected = "remove_things_note", .before = nullable_column_snapshot, .after = id_snapshot },
+        .{ .expected = "reorder_things_columns", .before = reordered_before_snapshot, .after = reordered_after_snapshot },
+        .{ .expected = "change_things_name_type", .before = reordered_before_snapshot, .after = bigint_name_snapshot },
+        .{ .expected = "make_things_note_nullable", .before = required_column_snapshot, .after = nullable_column_snapshot },
+        .{ .expected = "make_things_note_not_null", .before = nullable_column_snapshot, .after = required_column_snapshot },
+        .{ .expected = "change_things_name_domain", .before = reordered_before_snapshot, .after = email_domain_snapshot },
+        .{ .expected = "change_things_primary_key", .before = reordered_before_snapshot, .after = composite_pk_snapshot },
+        .{ .expected = "add_uk_things_name", .before = reordered_before_snapshot, .after = unique_key_snapshot },
+        .{ .expected = "change_uk_things_name", .before = unique_key_snapshot, .after = reordered_before_snapshot },
+        .{ .expected = "add_fk_things_parent", .before = foreign_key_base_snapshot, .after = foreign_key_snapshot },
+        .{ .expected = "change_fk_things_parent", .before = foreign_key_snapshot, .after = foreign_key_base_snapshot },
+    };
+
+    for (cases) |case| try expectMigrationName(case.expected, case.before, case.after);
+}
+
+test "automatic migration names summarize multiple changes deterministically" {
+    const before = migrations.createSchemaSnapshot(BaseModel, ddl.common_type_mappings);
+    const after = migrations.createSchemaSnapshot(ExtendedModel, ddl.common_type_mappings);
+    try expectMigrationName("update_things", before, after);
+    try expectMigrationName("update_schema", comprehensive_before, comprehensive_after);
+
+    const first = try migrations.inferMigrationName(std.testing.allocator, before, after);
+    defer std.testing.allocator.free(first);
+    const second = try migrations.inferMigrationName(std.testing.allocator, before, after);
+    defer std.testing.allocator.free(second);
+    try std.testing.expectEqualStrings(first, second);
+}
+
+test "automatic migration names normalize identifiers to lowercase ASCII slugs" {
+    const unusual =
+        \\{"format_version":1,"dialect":"postgresql","tables":[{"name":"Tâ \"BLE___Name","columns":[{"name":"id","domain_type":"integer","sql_type":"BIGINT","nullable":false}],"primary_key":{"name":"pk_unusual","columns":["id"]},"unique_keys":[],"foreign_keys":[]}]}
+    ;
+    try expectMigrationName("create_table_t_ble_name", empty_snapshot, unusual);
+}
+
+test "automatic migration naming rejects an unchanged schema" {
+    try std.testing.expectError(
+        error.SchemaUnchanged,
+        migrations.inferMigrationName(std.testing.allocator, id_snapshot, id_snapshot),
+    );
+}
+
 test "canonical AIDA snapshot parses and includes only database semantics" {
-    const json = migrations.createSchemaSnapshot(aida.entity_defs, mappings);
+    const json = migrations.createSchemaSnapshot(aida.Model, mappings);
     var parsed = try migrations.parseSnapshot(std.testing.allocator, json);
     defer parsed.deinit();
 
@@ -60,14 +156,14 @@ test "canonical AIDA snapshot parses and includes only database semantics" {
 }
 
 test "baseline DDL deliberately omits IF NOT EXISTS" {
-    const sql = ddl.createBaselineDdl(base_defs, ddl.common_type_mappings);
+    const sql = ddl.createBaselineDdl(BaseModel, ddl.common_type_mappings);
     try std.testing.expect(std.mem.startsWith(u8, sql, "CREATE TABLE \"things\""));
     try std.testing.expect(std.mem.indexOf(u8, sql, "IF NOT EXISTS") == null);
 }
 
 test "safe changes generate executable SQL without blockers" {
-    const before = migrations.createSchemaSnapshot(base_defs, ddl.common_type_mappings);
-    const after = migrations.createSchemaSnapshot(extended_defs, ddl.common_type_mappings);
+    const before = migrations.createSchemaSnapshot(BaseModel, ddl.common_type_mappings);
+    const after = migrations.createSchemaSnapshot(ExtendedModel, ddl.common_type_mappings);
     const draft = try migrations.createMigrationDraft(std.testing.allocator, before, after, .{
         .revision = 2,
         .name = "extend_things",
@@ -82,8 +178,8 @@ test "safe changes generate executable SQL without blockers" {
 }
 
 test "unsafe changes are detected but never emitted destructively" {
-    const before = migrations.createSchemaSnapshot(base_defs, ddl.common_type_mappings);
-    const after = migrations.createSchemaSnapshot(unsafe_defs, ddl.common_type_mappings);
+    const before = migrations.createSchemaSnapshot(BaseModel, ddl.common_type_mappings);
+    const after = migrations.createSchemaSnapshot(UnsafeModel, ddl.common_type_mappings);
     const draft = try migrations.createMigrationDraft(std.testing.allocator, before, after, .{
         .revision = 2,
         .name = "unsafe_change",
@@ -98,7 +194,7 @@ test "unsafe changes are detected but never emitted destructively" {
 }
 
 test "same desired state produces a metadata-only changeset" {
-    const snapshot = migrations.createSchemaSnapshot(base_defs, ddl.common_type_mappings);
+    const snapshot = migrations.createSchemaSnapshot(BaseModel, ddl.common_type_mappings);
     const draft = try migrations.createMigrationDraft(std.testing.allocator, snapshot, snapshot, .{
         .revision = 2,
         .name = "noop",
@@ -150,8 +246,8 @@ test "a new column in the middle is a blocker and is not falsely emitted as appe
 }
 
 test "draft endpoint hashes reject stale source or desired snapshots" {
-    const before = migrations.createSchemaSnapshot(base_defs, ddl.common_type_mappings);
-    const after = migrations.createSchemaSnapshot(extended_defs, ddl.common_type_mappings);
+    const before = migrations.createSchemaSnapshot(BaseModel, ddl.common_type_mappings);
+    const after = migrations.createSchemaSnapshot(ExtendedModel, ddl.common_type_mappings);
     const draft = try migrations.createMigrationDraft(std.testing.allocator, before, after, .{
         .revision = 2,
         .name = "hashes",
@@ -179,3 +275,9 @@ test "draft SQL doubles quotes in PostgreSQL identifiers" {
     try std.testing.expect(std.mem.indexOf(u8, draft.sql, "CREATE TABLE \"ta\"\"ble\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, draft.sql, "\"co\"\"l\" TEXT NOT NULL") != null);
 }
+
+const BaseModel = zigma.System(zigma.common_type_defs, base_defs);
+
+const ExtendedModel = zigma.System(zigma.common_type_defs, extended_defs);
+
+const UnsafeModel = zigma.System(zigma.common_type_defs, unsafe_defs);

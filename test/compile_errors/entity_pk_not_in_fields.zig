@@ -1,4 +1,4 @@
-//! expected: pk field 'inexistente' is not a field
+//! Diagnóstico esperado: `pk field 'inexistente' is not a field`.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

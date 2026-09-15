@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+# Developer workflow: prove a candidate migration against disposable
+# PostgreSQL before moving it into immutable history and advancing the snapshot.
+
 migration_tool=$1
 validator=$2
 liquibase_bin=$3
@@ -12,6 +15,7 @@ if [ "$draft_count" -ne 1 ]; then
     exit 1
 fi
 draft_file=$(find "$project_root/db/drafts" -maxdepth 1 -type f -name '*.sql')
+draft_name=$(basename "$draft_file")
 if grep -Fq -- 'ZIGMA-BLOCKER:' "$draft_file"; then
     echo "accept-migration refuses unresolved ZIGMA-BLOCKER markers" >&2
     exit 1
@@ -42,15 +46,16 @@ temp_changelog="$temp_dir/changelog-root.yaml"
 printf '%s\n' \
     'databaseChangeLog:' \
     '  - include:' \
-    "      file: $project_root/db/changelog-root.yaml" \
+    '      file: db/changelog-root.yaml' \
     '  - include:' \
-    "      file: $draft_file" >"$temp_changelog"
+    "      file: db/drafts/$draft_name" >"$temp_changelog"
 
 LIQUIBASE_COMMAND_URL="jdbc:postgresql://127.0.0.1:${published_port}/zigma_test" \
 LIQUIBASE_COMMAND_USERNAME=postgres \
 LIQUIBASE_COMMAND_PASSWORD=postgres \
 "$liquibase_bin" \
-    --changelog-file="$temp_changelog" \
+    --search-path="$temp_dir,$project_root" \
+    --changelog-file=changelog-root.yaml \
     --default-schema-name=actual \
     update
 

@@ -21,6 +21,16 @@ const FakeLauncher = struct {
         std.debug.assert(std.mem.eql(u8, "jdbc:postgresql://localhost/zigma", environment.get("LIQUIBASE_COMMAND_URL").?));
         std.debug.assert(std.mem.eql(u8, "zigma", environment.get("LIQUIBASE_COMMAND_USERNAME").?));
         std.debug.assert(std.mem.eql(u8, self.expected_password, environment.get("LIQUIBASE_COMMAND_PASSWORD").?));
+        inline for (.{
+            "LIQUIBASE_BIN",
+            "LIQUIBASE_CHANGELOG",
+            "LIQUIBASE_PASSWORD",
+            "LIQUIBASE_SCHEMA",
+            "LIQUIBASE_URL",
+            "LIQUIBASE_USERNAME",
+        }) |application_variable| {
+            std.debug.assert(environment.get(application_variable) == null);
+        }
         for (argv) |arg| std.debug.assert(std.mem.indexOf(u8, arg, self.expected_password) == null);
         return self.term;
     }

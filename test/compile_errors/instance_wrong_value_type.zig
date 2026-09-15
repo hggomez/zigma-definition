@@ -1,6 +1,6 @@
-//! expected: expected type 'i64'
-//! (the instance type is strongly typed: a string cannot be assigned to an
-//! integer field)
+//! Diagnóstico esperado: `expected type 'i64'`.
+//! El tipo de instancia tiene tipado estricto: no se puede asignar un string
+//! a un campo entero.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

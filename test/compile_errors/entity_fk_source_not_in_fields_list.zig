@@ -1,5 +1,5 @@
-//! expected: source field 'inexistente' is not a field
-//! (list form: source and target share the name)
+//! Diagnóstico esperado: `source field 'inexistente' is not a field`.
+//! Forma de lista: origen y destino comparten el nombre.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

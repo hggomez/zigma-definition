@@ -1,4 +1,4 @@
-//! expected: unknown type 'inexistente'
+//! Diagnóstico esperado: `unknown type 'inexistente'`.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

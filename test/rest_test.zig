@@ -14,7 +14,35 @@ const things = zigma.defineEntity(.{
 });
 const entity_defs = zigma.defineEntities(.{ .things = things });
 const codecs = rest.defineCodecs(zigma.common_type_defs, rest.common_codecs);
-const TestApi = rest.Api(entity_defs, codecs);
+const TestApi = rest.Api(Model, codecs);
+
+fn valueFor(values: []const rest.FieldValue, name: []const u8) ?rest.FieldValue {
+    for (values) |value| {
+        if (std.mem.eql(u8, value.name, name)) return value;
+    }
+    return null;
+}
+
+fn validateThing(values: []const rest.FieldValue) rest.BusinessValidationError!?rest.BusinessRuleViolation {
+    const name = (valueFor(values, "name") orelse return error.InvalidState).value orelse
+        return error.InvalidState;
+    const active = (valueFor(values, "active") orelse return error.InvalidState).value orelse
+        return error.InvalidState;
+    if ((std.mem.eql(u8, active, "true") or std.mem.eql(u8, active, "t")) and
+        std.mem.eql(u8, name, "Blocked"))
+    {
+        return .{
+            .code = "blocked_name_when_active",
+            .message = "An active thing cannot be named Blocked",
+        };
+    }
+    return null;
+}
+
+const business_validators = rest.defineBusinessValidators(Model, .{
+    .things = rest.BusinessValidator{ .validate = validateThing },
+});
+const ValidatedTestApi = rest.ApiWithBusinessValidators(Model, codecs, business_validators);
 
 const Operation = enum { none, select, insert, update, delete };
 
@@ -25,6 +53,9 @@ const FakeRepository = struct {
     values: []const rest.FieldValue = &.{},
     next_error: ?rest.RepositoryError = null,
     empty: bool = false,
+    select_calls: usize = 0,
+    insert_calls: usize = 0,
+    update_calls: usize = 0,
 
     fn makeResult(self: *FakeRepository, allocator: std.mem.Allocator) rest.RepositoryError!rest.QueryResult {
         const columns_source = [_][]const u8{ "id", "name", "active", "note" };
@@ -56,6 +87,7 @@ const FakeRepository = struct {
         filters: []const rest.FieldValue,
     ) rest.RepositoryError!rest.QueryResult {
         try self.maybeFail();
+        self.select_calls += 1;
         self.operation = .select;
         self.entity_name = entity_name;
         self.filters = filters;
@@ -69,6 +101,7 @@ const FakeRepository = struct {
         values: []const rest.FieldValue,
     ) rest.RepositoryError!rest.QueryResult {
         try self.maybeFail();
+        self.insert_calls += 1;
         self.operation = .insert;
         self.entity_name = entity_name;
         self.values = values;
@@ -83,6 +116,7 @@ const FakeRepository = struct {
         filters: []const rest.FieldValue,
     ) rest.RepositoryError!rest.QueryResult {
         try self.maybeFail();
+        self.update_calls += 1;
         self.operation = .update;
         self.entity_name = entity_name;
         self.values = values;
@@ -166,6 +200,51 @@ test "POST validates and normalizes a complete row" {
     try expectValue(repository.values[1], "name", "Alice");
     try expectValue(repository.values[2], "active", "true");
     try expectValue(repository.values[3], "note", null);
+}
+
+test "POST runs an entity business validator before inserting" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var api = ValidatedTestApi.init(.{});
+    var repository = FakeRepository{};
+
+    const response = try api.handle(arena.allocator(), &repository, .{
+        .method = .POST,
+        .target = "/api/things",
+        .content_type = "application/json",
+        .body = "{\"id\":7,\"name\":\"Blocked\",\"active\":true}",
+    });
+
+    try std.testing.expectEqual(@as(u16, 422), response.status);
+    try std.testing.expect(std.mem.indexOf(u8, response.body, "blocked_name_when_active") != null);
+    try std.testing.expectEqual(@as(usize, 0), repository.insert_calls);
+}
+
+test "PUT validates each merged current row before updating" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var api = ValidatedTestApi.init(.{});
+    var repository = FakeRepository{};
+
+    const rejected = try api.handle(arena.allocator(), &repository, .{
+        .method = .PUT,
+        .target = "/api/things?id=7",
+        .content_type = "application/json",
+        .body = "{\"name\":\"Blocked\"}",
+    });
+    try std.testing.expectEqual(@as(u16, 422), rejected.status);
+    try std.testing.expectEqual(@as(usize, 1), repository.select_calls);
+    try std.testing.expectEqual(@as(usize, 0), repository.update_calls);
+
+    const accepted = try api.handle(arena.allocator(), &repository, .{
+        .method = .PUT,
+        .target = "/api/things?id=7",
+        .content_type = "application/json",
+        .body = "{\"active\":false}",
+    });
+    try std.testing.expectEqual(@as(u16, 200), accepted.status);
+    try std.testing.expectEqual(@as(usize, 2), repository.select_calls);
+    try std.testing.expectEqual(@as(usize, 1), repository.update_calls);
 }
 
 test "PUT is partial and DELETE requires a filter" {
@@ -289,3 +368,5 @@ test "handle owns scratch allocations and returns only the response body" {
     defer std.testing.allocator.free(response.body);
     try std.testing.expectEqual(@as(u16, 200), response.status);
 }
+
+const Model = zigma.System(zigma.common_type_defs, entity_defs);

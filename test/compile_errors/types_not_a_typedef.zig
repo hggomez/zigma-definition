@@ -1,6 +1,6 @@
-//! expected: type 'text': must be a TypeDef
-//! (the declaration-site check: the mistake is reported where the collection
-//! is defined, not where it is first used)
+//! Diagnóstico esperado: `type 'text': must be a TypeDef`.
+//! Comprobación en la declaración: se informa el error donde se define
+//! la colección, no donde se usa por primera vez.
 const zigma = @import("zigma");
 
 comptime {

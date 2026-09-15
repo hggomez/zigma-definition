@@ -1,6 +1,6 @@
-//! Port of aida-test.ts. The positive cases live here; the negative cases
-//! (the @ts-expect-error ones of the TypeScript version) are the expected
-//! compile errors in test/compile_errors, driven by build.zig.
+//! Port de aida-test.ts. Los casos positivos están acá; los negativos,
+//! equivalentes a @ts-expect-error de TypeScript, son los errores de compilación
+//! esperados de test/compile_errors, ejecutados mediante build.zig.
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -20,7 +20,7 @@ fn fieldNames(comptime T: type) []const [:0]const u8 {
     return @typeInfo(T).@"struct".field_names;
 }
 
-// aida example
+// Ejemplo aida.
 
 test "deduces the record instance type" {
     const Cargo = zigma.RecordInstanceType(aida.type_defs, aida.cargo);
@@ -30,38 +30,53 @@ test "deduces the record instance type" {
         .orden = 4,
         .puede_dirigir = true,
     };
-    try expectEqualStrings("JTP", jtp.cargo);
-    try expect(jtp.orden == 4);
-    try expect(jtp.puede_dirigir);
-    // the equivalent of the mutual assignability of the TypeScript test:
-    // the deduced type has exactly these fields, with exactly these types
+    try expectEqualStrings("JTP", jtp.cargo.?);
+    try expect(jtp.orden.? == 4);
+    try expect(jtp.puede_dirigir.?);
+    // Equivale a la asignabilidad mutua del test TypeScript: el tipo
+    // deducido tiene exactamente estos campos, con exactamente estos tipos.
     comptime {
         std.debug.assert(fieldNames(Cargo).len == 4);
-        std.debug.assert(@FieldType(Cargo, "cargo") == []const u8);
-        std.debug.assert(@FieldType(Cargo, "denominacion") == []const u8);
-        std.debug.assert(@FieldType(Cargo, "orden") == i64);
-        std.debug.assert(@FieldType(Cargo, "puede_dirigir") == bool);
+        std.debug.assert(@FieldType(Cargo, "cargo") == ?[]const u8);
+        std.debug.assert(@FieldType(Cargo, "denominacion") == ?[]const u8);
+        std.debug.assert(@FieldType(Cargo, "orden") == ?i64);
+        std.debug.assert(@FieldType(Cargo, "puede_dirigir") == ?bool);
     }
 }
 
 test "types record instances anywhere with DefinedType" {
-    // a typed declaration: the anonymous literal is de-anonymized (coerced
-    // and checked) right here, against the declared type
+    // Declaración tipada: el literal anónimo adquiere un tipo concreto
+    // mediante conversión implícita y comprobación contra el tipo declarado, acá mismo.
     const titular: aida.DefinedType(aida.cargo) = .{
         .cargo = "TIT",
         .denominacion = "Titular",
         .orden = 1,
         .puede_dirigir = true,
     };
-    // a valid instance compiles and passes the validation:
+    // Una instancia válida compila y supera la validación:
     try aida.validarCargo(titular);
-    // and the validation logic runs over the typed instance:
+    // Y la lógica de validación se ejecuta sobre la instancia tipada:
     try std.testing.expectError(error.AyudanteNoPuedeDirigir, aida.validarCargo(.{
         .cargo = "AY1",
         .denominacion = "Ayudante de primera",
         .orden = 5,
         .puede_dirigir = true,
     }));
+}
+
+test "a docente with cargo teorico needs at least five years of experience" {
+    try std.testing.expectError(
+        error.TeoricoRequiereCincoAniosExperiencia,
+        aida.validarDocente(.{ .cargo = "teorico", .experiencia = 4 }),
+    );
+    try std.testing.expectError(
+        error.TeoricoRequiereCincoAniosExperiencia,
+        aida.validarDocente(.{ .cargo = "TEORICO", .experiencia = null }),
+    );
+
+    try aida.validarDocente(.{ .cargo = "teorico", .experiencia = 5 });
+    try aida.validarDocente(.{ .cargo = "practico", .experiencia = 2 });
+    try aida.validarDocente(.{ .cargo = null, .experiencia = null });
 }
 
 test "completes a record def into a record info" {
@@ -81,12 +96,12 @@ test "completes preserving the field set, and derives the label from the name" {
     const cargo_info = zigma.completeRecord(aida.cargo);
     try expectEqualStrings("text", cargo_info.cargo.type);
     try expectEqualStrings("integer", cargo_info.orden.type);
-    // '_' becomes ' ' in the derived label:
+    // '_' se convierte en ' ' en el label derivado:
     try expectEqualStrings("puede dirigir", cargo_info.puede_dirigir.label);
     comptime {
-        // the completion preserves the field set (no more, no less), and
-        // every field is a full FieldInfo (label, nullable and description
-        // are no longer optional)
+        // La normalización conserva el conjunto exacto de campos y convierte cada uno
+        // en un FieldInfo completo: label, nullable y description
+        // ya no son opcionales.
         std.debug.assert(fieldNames(@TypeOf(cargo_info)).len == 4);
         std.debug.assert(!@hasField(@TypeOf(cargo_info), "inexistente"));
         std.debug.assert(@FieldType(@TypeOf(cargo_info), "cargo") == zigma.FieldInfo);
@@ -94,7 +109,7 @@ test "completes preserving the field set, and derives the label from the name" {
     }
 }
 
-// aida entities
+// Entidades de aida.
 
 test "keeps the pk names, in order" {
     try expectNames(aida.cursos.pk, &.{ "periodo", "materia" });
@@ -107,11 +122,11 @@ test "extracts the pk fields with their exact types and order" {
         std.debug.assert(fieldNames(@TypeOf(cursos_pk_fields)).len == 2);
         std.debug.assert(eqlComptime(fieldNames(@TypeOf(cursos_pk_fields))[0], "periodo"));
         std.debug.assert(eqlComptime(fieldNames(@TypeOf(cursos_pk_fields))[1], "materia"));
-        // 'docente' is a field of cursos but is not part of the pk:
+        // 'docente' es un campo de cursos, pero no forma parte de la PK:
         std.debug.assert(!@hasField(@TypeOf(cursos_pk_fields), "docente"));
-        // the extracted field defs keep their exact literal type, with the
-        // properties they had in the original record (periodo has a
-        // description, materia does not):
+        // Las definiciones extraídas conservan su tipo literal exacto y las
+        // propiedades del record original: periodo tiene description;
+        // materia no.
         std.debug.assert(@hasField(@TypeOf(cursos_pk_fields.periodo), "description"));
         std.debug.assert(!@hasField(@TypeOf(cursos_pk_fields.materia), "description"));
     }
@@ -120,14 +135,14 @@ test "extracts the pk fields with their exact types and order" {
 }
 
 test "inherits pk fields into other entities" {
-    // curso got all its fields from the periodos, materias and docentes pks:
+    // curso obtuvo todos sus campos de las PKs de periodos, materias y docentes:
     comptime {
         const curso_names = fieldNames(@TypeOf(aida.curso));
         std.debug.assert(curso_names.len == 3);
         std.debug.assert(eqlComptime(curso_names[0], "periodo"));
         std.debug.assert(eqlComptime(curso_names[1], "materia"));
         std.debug.assert(eqlComptime(curso_names[2], "docente"));
-        // clase extends the cursos pk with its own fields:
+        // clase extiende la PK de cursos con sus propios campos:
         const clase_names = fieldNames(@TypeOf(aida.clase));
         std.debug.assert(clase_names.len == 5);
         std.debug.assert(eqlComptime(clase_names[0], "periodo"));
@@ -136,7 +151,7 @@ test "inherits pk fields into other entities" {
         std.debug.assert(eqlComptime(clase_names[3], "fecha"));
         std.debug.assert(eqlComptime(clase_names[4], "tema"));
     }
-    // the inherited fields keep their type:
+    // Los campos heredados conservan su tipo:
     try expectEqualStrings("text", aida.clases.fields.periodo.type);
 }
 
@@ -155,21 +170,21 @@ test "chains pk inheritance (clases → preguntas → opciones)" {
 }
 
 test "merges overlapping pks without repeating (inscripciones + clases)" {
-    // periodo and materia are in both pks and must appear once, in order
+    // periodo y materia están en ambas PKs y deben aparecer una sola vez, en orden.
     const merged = zigma.mergePk(.{ aida.inscripciones.pk, aida.clases.pk });
     try expectNames(merged, &.{ "periodo", "materia", "alumno", "orden" });
-    // presencias uses that merge as its pk:
+    // presencias usa esa combinación como su PK:
     try expectNames(aida.presencias.pk, &.{ "periodo", "materia", "alumno", "orden" });
-    // and the fields merge dedups the shared fields by itself:
+    // Y la combinación de campos elimina por sí misma los campos compartidos duplicados:
     comptime std.debug.assert(fieldNames(@TypeOf(aida.presencia)).len == 4);
-    // the whole chain still deduces the instance type:
+    // Toda la cadena sigue deduciendo el tipo de instancia:
     const Presencia = zigma.RecordInstanceType(aida.type_defs, aida.presencia);
     const una_presencia: Presencia = .{ .periodo = "2026-1c", .materia = "AlgoI", .alumno = "L1234", .orden = 1 };
-    try expectEqualStrings("AlgoI", una_presencia.materia);
-    try expect(una_presencia.orden == 1);
+    try expectEqualStrings("AlgoI", una_presencia.materia.?);
+    try expect(una_presencia.orden.? == 1);
 }
 
-// aida fks, uks and is_name
+// FKs, UKs e is_name de aida.
 
 test "keeps the fks as written (array form)" {
     try expectEqualStrings("inscripciones", aida.presencias.fks.inscripciones.entity);
@@ -192,10 +207,10 @@ test "represents two fks to the same entity (mesas: presidente y vocal)" {
 
 test "marks the is_name field and completes it as false elsewhere" {
     try expect(aida.materia.denominacion.is_name);
-    // at the Def level the other fields do not even have the property
-    // (the equivalent of the @ts-expect-error of the TypeScript test):
+    // A nivel Def, los demás campos ni siquiera tienen la propiedad;
+    // equivale al @ts-expect-error del test TypeScript:
     comptime std.debug.assert(!@hasField(@TypeOf(aida.materia.materia), "is_name"));
-    // the completion makes it explicit everywhere:
+    // La normalización la explicita en todos los campos:
     const materia_info = zigma.completeRecord(aida.materia);
     try expect(!materia_info.materia.is_name);
     try expect(materia_info.denominacion.is_name);
@@ -206,12 +221,12 @@ test "defineTypes accepts the anonymous TypeDef shape too" {
     const Row = zigma.RecordInstanceType(custom_types, zigma.record(custom_types, .{
         .x = .{ .type = "texto" },
     }));
-    comptime std.debug.assert(@FieldType(Row, "x") == []const u8);
+    comptime std.debug.assert(@FieldType(Row, "x") == ?[]const u8);
     const row: Row = .{ .x = "hola" };
-    try expectEqualStrings("hola", row.x);
+    try expectEqualStrings("hola", row.x.?);
 }
 
-// system-level checks (a fk against a uk of the target entity is accepted)
+// Comprobaciones de sistema: se acepta una FK que referencia una UK de la entidad destino.
 
 const apuntes = zigma.defineEntity(.{
     .pk = .{"apunte"},
@@ -224,16 +239,16 @@ const apuntes = zigma.defineEntity(.{
 const mini_system = zigma.defineEntities(.{ .materias = aida.materias, .apuntes = apuntes });
 
 test "cross-checks the fks of the whole system" {
-    // the aida entity_defs already went through defineEntities;
-    // spot-check it kept everything:
+    // entity_defs de aida ya pasó por defineEntities;
+    // se comprueba con algunos casos que conservó todo:
     comptime std.debug.assert(fieldNames(@TypeOf(aida.entity_defs)).len == 11);
     try expectNames(aida.entity_defs.presencias.pk, &.{ "periodo", "materia", "alumno", "orden" });
-    // a fk against a uk of the target entity is accepted (mini_system compiled):
+    // Se acepta una FK que referencia una UK de la entidad destino: mini_system compiló.
     comptime std.debug.assert(fieldNames(@TypeOf(mini_system)).len == 2);
     try expectEqualStrings("denominacion", mini_system.apuntes.fks.materia_por_nombre.fields.denominacion_materia);
 }
 
-// aida entity completion (Def → Info)
+// Normalización de entidades aida: Def → Info.
 
 test "normalizes array-form fks to the source→target map form" {
     const cursos_info = zigma.completeEntity(aida.cursos);
@@ -243,8 +258,8 @@ test "normalizes array-form fks to the source→target map form" {
     try expectEqualStrings("docente", cursos_info.fks.responsable.fields.docente);
     comptime {
         std.debug.assert(!@hasField(@TypeOf(cursos_info.fks), "inexistente"));
-        // after completion the array form is gone: fields is always a map
-        // (a struct, not an indexable list)
+        // Después de normalizar desaparece la forma de array: fields siempre es un mapa,
+        // un struct que no se puede indexar como una lista.
         const FksFields = @TypeOf(cursos_info.fks.periodos.fields);
         std.debug.assert(@typeInfo(FksFields) == .@"struct");
         std.debug.assert(!@typeInfo(FksFields).@"struct".is_tuple);
@@ -259,7 +274,7 @@ test "keeps map-form fks as they are" {
     try expectEqualStrings("materia", mesas_info.fks.cursos.fields.materia);
 }
 
-// periodo and materia appear twice in the concatenation:
+// periodo y materia aparecen dos veces en la concatenación:
 const presencias_alt = zigma.defineEntity(.{
     .pk = aida.inscripciones.pk ++ aida.clases.pk,
     .fields = aida.presencia,
@@ -277,7 +292,7 @@ test "completes the fields and keeps the uks" {
     try expectEqualStrings(materia_info.denominacion.label, materias_info.fields.denominacion.label);
     try expect(materias_info.fields.denominacion.is_name);
     try expectNames(materias_info.uks.denominacion, &.{"denominacion"});
-    // the defaulted empty fks stay explicit and empty:
+    // Las FKs vacías por default siguen siendo explícitas y vacías:
     comptime std.debug.assert(fieldNames(@TypeOf(materias_info.fks)).len == 0);
 }
 

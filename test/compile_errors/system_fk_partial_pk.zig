@@ -1,6 +1,6 @@
-//! expected: do not match the complete pk nor any uk
-//! (a fk that references only a part of a composite pk, and no uk, is
-//! rejected: 'hora' is missing)
+//! Diagnóstico esperado: `do not match the complete pk nor any uk`.
+//! Se rechaza una FK que referencia solo parte de una PK compuesta
+//! y ninguna UK: falta 'hora'.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

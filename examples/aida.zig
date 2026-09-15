@@ -1,4 +1,4 @@
-//! EXAMPLE: the students system (the same aida example of system-design).
+//! EJEMPLO: el sistema de alumnos (el mismo ejemplo aida de system-design).
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -10,8 +10,8 @@ pub const type_defs = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .
     .email = zigma.common_type_defs.text,
 } }));
 
-/// the instance type of a record def, bound to this system's type_defs:
-/// DefinedType(cargo) = struct { cargo: []const u8, orden: i64, ... }
+/// Tipo de instancia de una definición de record, ligado a los type_defs del sistema:
+/// DefinedType(cargo) = struct { cargo: ?[]const u8, orden: ?i64, ... }
 pub fn DefinedType(comptime rec: anytype) type {
     return zigma.RecordInstanceType(type_defs, rec);
 }
@@ -36,6 +36,8 @@ pub const docente = zigma.record(type_defs, .{
     .email = .{ .type = "email" },
     .email_alternativo = .{ .type = "email" },
     .jefe = .{ .type = "text", .description = "jefe de cátedra (otro docente)" },
+    .telefono = .{ .type = "text" },
+    .experiencia = .{ .type = "integer" },
 });
 
 pub const asignacion = zigma.record(type_defs, .{
@@ -48,12 +50,12 @@ pub const periodo = zigma.record(type_defs, .{
     .periodo = .{ .type = "text", .description = "bimestre, cuatrimestre, etc..." },
 });
 
-// entities: plural names wrap the singular record defs
+// Entidades: los nombres plurales envuelven las definiciones de records en singular.
 
 pub const docentes = zigma.defineEntity(.{
     .pk = .{"docente"},
-    // reflexive fk: inside its own definition the entity is referenced by name,
-    // and the source field (jefe) is mapped to the target field (docente)
+    // FK reflexiva: dentro de su definición, la entidad se referencia por nombre
+    // y el campo origen (jefe) se asocia al campo destino (docente).
     .fks = .{ .jefe = .{ .entity = "docentes", .fields = .{ .jefe = "docente" } } },
     .fields = docente,
 });
@@ -139,8 +141,8 @@ pub const inscripciones = zigma.defineEntity(.{
     .fields = inscripcion,
 });
 
-// combined pk: inscripciones and clases share periodo and materia, no
-// repetition; periodo and materia belong to both fks
+// PK combinada: inscripciones y clases comparten periodo y materia, sin
+// repeticiones; periodo y materia pertenecen a ambas FKs.
 
 pub const presencia = zigma.record(type_defs, zigma.merge(.{
     zigma.extractPk(inscripciones),
@@ -156,7 +158,7 @@ pub const presencias = zigma.defineEntity(.{
     .fields = presencia,
 });
 
-// two fks to the same entity, renaming the fields
+// Dos FKs a la misma entidad, con campos renombrados.
 
 pub const mesa = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(cursos), .{
     .fecha = .{ .type = "fecha" },
@@ -190,15 +192,39 @@ pub const record_defs = .{
     .mesa = mesa,
 };
 
-/// A strongly typed business function: the parameter is the concrete
-/// instance type derived from the def, not anytype. An anonymous literal
-/// coerces (and is checked) at the call site; de-anonymizing a runtime value
-/// (e.g. parsed JSON) is the job of an earlier parse/guarantee function,
-/// not of the business functions.
+/// Función de negocio con tipado estricto: el parámetro tiene el tipo concreto
+/// de instancia derivado de la definición, no anytype. Un literal anónimo se
+/// convierte implícitamente y se comprueba en el punto de llamada. Dar un tipo
+/// concreto a un valor de runtime (por ejemplo, JSON parseado) corresponde a una
+/// función previa de parseo y validación, no a las funciones de negocio.
 pub fn validarCargo(cargo_sin_validar: DefinedType(cargo)) error{AyudanteNoPuedeDirigir}!void {
-    if (cargo_sin_validar.puede_dirigir and std.ascii.findIgnoreCase(cargo_sin_validar.denominacion, "ayudante") != null) {
+    if (!(cargo_sin_validar.puede_dirigir orelse false)) return;
+    const denomination = cargo_sin_validar.denominacion orelse return;
+    if (std.ascii.findIgnoreCase(denomination, "ayudante") != null) {
         return error.AyudanteNoPuedeDirigir;
     }
+}
+
+/// Acá se representan solo los campos que intervienen en la regla de negocio de docente.
+/// Son opcionales porque los metadatos actuales de la base permiten null en ambas
+/// columnas. Un cargo null no activa la regla; un docente teórico debe tener un
+/// valor de experiencia conocido y de al menos cinco años.
+pub const DocenteBusinessState = struct {
+    cargo: ?[]const u8,
+    experiencia: ?i64,
+};
+
+pub const DocenteValidationError = error{TeoricoRequiereCincoAniosExperiencia};
+
+pub fn validarDocente(value: DocenteBusinessState) DocenteValidationError!void {
+    const cargo_value = value.cargo orelse return;
+    const normalized_cargo = std.mem.trim(u8, cargo_value, " \t\r\n");
+    if (!std.ascii.eqlIgnoreCase(normalized_cargo, "teorico")) return;
+
+    const experiencia = value.experiencia orelse
+        return error.TeoricoRequiereCincoAniosExperiencia;
+    if (experiencia < 5)
+        return error.TeoricoRequiereCincoAniosExperiencia;
 }
 
 pub const entity_defs = zigma.defineEntities(.{
@@ -214,3 +240,6 @@ pub const entity_defs = zigma.defineEntities(.{
     .presencias = presencias,
     .mesas = mesas,
 });
+
+/// Modelo normalizado compartido por REST, PostgreSQL y los tipos de aplicación.
+pub const Model = zigma.System(type_defs, entity_defs);

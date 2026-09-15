@@ -1,18 +1,19 @@
-//! zigma-definition: the descriptive part of the SSOTIGAD framework, in Zig.
-//! Definitions are comptime values; the static types (the record instance
-//! type, the Info side of a Def) are derived from those values with comptime
-//! functions, so the fields are written only once.
+//! zigma-definition: la parte descriptiva del framework SSOTIGAD, en Zig.
+//! Las definiciones son valores comptime. Los tipos estáticos (el tipo de instancia
+//! de un record y el lado Info de una Def) se derivan de esos valores mediante
+//! funciones comptime, de modo que los campos se escriben una sola vez.
 //!
-//! Naming convention (inherited from the TypeScript system-design module):
-//! a Def is what the human writes (only what is semantically needed, the
-//! rest has defaults); an Info is the Def completed with every default made
-//! explicit. Both are plain serializable values: special behaviors are
-//! referenced by name and resolved against implementations registered apart.
+//! Convención de nombres heredada del módulo TypeScript system-design:
+//! una Def es lo que escribe la persona, solo lo semánticamente necesario;
+//! el resto tiene defaults. Una Info es la Def completada con todos los defaults
+//! explícitos. La Info de entidades contiene valores simples serializables: los comportamientos
+//! especiales se referencian por nombre y se resuelven contra implementaciones registradas
+//! aparte.
 
 const std = @import("std");
 
-/// A domain type: carries the Zig type used in record instances.
-/// Each system defines its own type collection extending `common_type_defs`.
+/// Tipo de dominio: contiene el tipo Zig usado en las instancias de records.
+/// Cada sistema define su colección de tipos extendiendo `common_type_defs`.
 pub const TypeDef = struct {
     Type: type,
 };
@@ -25,8 +26,8 @@ pub const common_type_defs = defineTypes(.{
 
 fn isTypeDefLike(comptime T: type) bool {
     if (T == TypeDef) return true;
-    // an anonymous struct with exactly the shape of TypeDef is also accepted,
-    // like a structural `satisfies` would
+    // También se acepta un struct anónimo con la forma exacta de TypeDef,
+    // como haría un `satisfies` estructural.
     const info = @typeInfo(T);
     if (info != .@"struct" or info.@"struct".is_tuple) return false;
     if (info.@"struct".field_names.len != 1) return false;
@@ -41,18 +42,20 @@ fn checkTypeDefs(comptime type_defs: anytype) void {
     inline for (info.@"struct".field_names) |type_name| {
         if (!isTypeDefLike(@TypeOf(@field(type_defs, type_name))))
             @compileError("type '" ++ type_name ++ "': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })");
+        if (@typeInfo(@field(type_defs, type_name).Type) == .optional)
+            @compileError("type '" ++ type_name ++ "': domain types must be non-optional; use field 'nullable'");
     }
 }
 
-/// The declaration-site check of a type collection: checks that every field
-/// is a TypeDef and returns the collection unchanged. Without it, a malformed
-/// collection would only fail where it is first used, far from the mistake.
+/// Comprobación de una colección de tipos en su declaración: verifica que cada
+/// campo sea un TypeDef y devuelve la colección sin cambios. Sin ella, una
+/// colección mal formada fallaría en su primer uso, lejos del error original.
 pub fn defineTypes(comptime type_defs: anytype) @TypeOf(type_defs) {
     comptime checkTypeDefs(type_defs);
     return type_defs;
 }
 
-/// The Info side of a field definition: everything explicit.
+/// El lado Info de la definición de un campo: todo explícito.
 pub const FieldInfo = struct {
     type: []const u8,
     is_name: bool,
@@ -118,32 +121,24 @@ fn checkRecord(comptime type_defs: anytype, comptime rec: anytype) void {
     }
 }
 
-/// The `satisfies` of the framework: checks that `rec` is a well formed
-/// record definition over `type_defs` and returns it unchanged, keeping its
-/// exact literal type (which properties are present in each field def).
+/// El `satisfies` del framework: comprueba que `rec` sea una definición de record
+/// bien formada sobre `type_defs` y la devuelve sin cambios, conservando su tipo
+/// literal exacto: qué propiedades están presentes en cada definición de campo.
 pub fn record(comptime type_defs: anytype, comptime rec: anytype) @TypeOf(rec) {
     comptime checkRecord(type_defs, rec);
     return rec;
 }
 
-/// The type of a row of the record: each field gets the Zig type of its
-/// domain type. Field order is preserved.
+/// Instancia del record: cada campo recibe T o ?T según su nulabilidad.
+/// Se conserva el orden y no se aplican las restricciones de una entidad.
 pub fn RecordInstanceType(comptime type_defs: anytype, comptime rec: anytype) type {
+    comptime checkTypeDefs(type_defs);
     comptime checkRecord(type_defs, rec);
-    const rec_names = @typeInfo(@TypeOf(rec)).@"struct".field_names;
-    var types: [rec_names.len]type = undefined;
-    var names: [rec_names.len][]const u8 = undefined;
-    for (rec_names, 0..) |name, i| {
-        names[i] = name;
-        types[i] = @field(type_defs, @field(rec, name).type).Type;
-    }
-    const frozen_names = names;
-    const frozen = types;
-    return @Struct(.auto, null, &frozen_names, &frozen, &@splat(.{}));
+    return selectedType(type_defs, completeRecord(rec), @typeInfo(@TypeOf(rec)).@"struct".field_names);
 }
 
-/// The Info type corresponding to a record Def type: same field names, every
-/// field a `FieldInfo`.
+/// Tipo Info correspondiente al tipo Def de un record: los mismos nombres
+/// de campos, cada uno con tipo `FieldInfo`.
 pub fn RecordInfoOf(comptime RecordDefType: type) type {
     const rec_names = @typeInfo(RecordDefType).@"struct".field_names;
     var names: [rec_names.len][]const u8 = undefined;
@@ -167,9 +162,9 @@ fn fieldLabel(comptime field_def: anytype, comptime name: [:0]const u8) []const 
     return &LabelHolder(name).label;
 }
 
-/// Completes a record Def into its Info: every default made explicit
-/// (is_name: false, nullable: true, description: '', label derived from the
-/// field name replacing '_' with ' ').
+/// Completa la Def de un record en su Info y explicita todos los defaults:
+/// is_name: false, nullable: true, description: '', y label derivado del
+/// nombre del campo, reemplazando '_' por ' '.
 pub fn completeRecord(comptime rec: anytype) RecordInfoOf(@TypeOf(rec)) {
     var result: RecordInfoOf(@TypeOf(rec)) = undefined;
     inline for (@typeInfo(@TypeOf(rec)).@"struct".field_names) |name| {
@@ -186,7 +181,7 @@ pub fn completeRecord(comptime rec: anytype) RecordInfoOf(@TypeOf(rec)) {
     return result;
 }
 
-fn containsName(comptime names: []const [:0]const u8, comptime name: []const u8) bool {
+fn containsName(comptime names: anytype, comptime name: []const u8) bool {
     for (names) |n| {
         if (eql(n, name)) return true;
     }
@@ -212,9 +207,9 @@ fn lastPartWith(comptime Parts: type, comptime name: []const u8) [:0]const u8 {
     return result.?;
 }
 
-/// The type of `merge(parts)`: field names in first-appearance order, the
-/// type (and later the value) of a repeated field comes from the last part
-/// that has it, like the spread of object literals in TypeScript.
+/// Tipo de `merge(parts)`: nombres de campos en orden de primera aparición.
+/// El tipo, y luego el valor, de un campo repetido proviene de la última parte
+/// que lo contiene, como el spread de objetos literales en TypeScript.
 pub fn Merged(comptime Parts: type) type {
     const names = mergedFieldNames(Parts);
     var types: [names.len]type = undefined;
@@ -225,8 +220,8 @@ pub fn Merged(comptime Parts: type) type {
     return @Struct(.auto, null, names, &frozen, &@splat(.{}));
 }
 
-/// Merges structs (record defs, type collections): the equivalent of the
-/// TypeScript spread `{...a, ...b}`. `parts` is a tuple of structs.
+/// Combina structs (definiciones de records o colecciones de tipos): equivale
+/// al spread de TypeScript `{...a, ...b}`. `parts` es una tupla de structs.
 pub fn merge(comptime parts: anytype) Merged(@TypeOf(parts)) {
     var result: Merged(@TypeOf(parts)) = undefined;
     inline for (@typeInfo(Merged(@TypeOf(parts))).@"struct".field_names) |name| {
@@ -263,12 +258,12 @@ fn normalizedPk(comptime pk: anytype) [lenOfListType(@TypeOf(pk))][:0]const u8 {
     return result;
 }
 
-/// fks reference the target entity BY NAME (a string, not the object): that
-/// keeps the defs serializable and makes circular and reflexive fks
-/// representable. The counterpart is that the target side can only be checked
-/// at the system level: see `defineEntities`.
-/// `fields` has two forms: a list of names when source and target fields are
-/// named the same (`.fields = cursos.pk`), or a source→target map when not
+/// Las FKs referencian la entidad destino POR NOMBRE: un string, no el objeto.
+/// Así las definiciones son serializables y se pueden representar FKs circulares
+/// y reflexivas. A cambio, el destino solo se puede comprobar a nivel de sistema:
+/// ver `defineEntities`.
+/// `fields` tiene dos formas: una lista cuando los campos de origen y destino
+/// se llaman igual (`.fields = cursos.pk`), o un mapa origen→destino si difieren
 /// (`.fields = .{ .jefe = "docente" }`).
 fn checkFkDef(comptime fk: anytype, comptime fk_name: []const u8, comptime fields: anytype) void {
     const FkType = @TypeOf(fk);
@@ -296,11 +291,12 @@ fn checkEntityDef(comptime def: anytype) void {
     if (info != .@"struct" or info.@"struct".is_tuple)
         @compileError("an entity definition must be a struct like .{ .pk = ..., .fields = ... }");
     inline for (info.@"struct".field_names) |prop_name| {
-        if (!eql(prop_name, "fields") and !eql(prop_name, "pk") and !eql(prop_name, "fks") and !eql(prop_name, "uks"))
+        if (!eql(prop_name, "fields") and !eql(prop_name, "pk") and !eql(prop_name, "fks") and !eql(prop_name, "uks") and !eql(prop_name, "rules"))
             @compileError("entity definition: unknown property '" ++ prop_name ++ "'");
     }
     if (!@hasField(DefType, "fields")) @compileError("an entity definition needs 'fields'");
     if (!@hasField(DefType, "pk")) @compileError("an entity definition needs 'pk'");
+    if (@hasField(DefType, "rules")) checkRules(def.rules, def.fields);
     const pk_names = nameListSlice(def.pk);
     for (pk_names) |name| {
         if (!@hasField(@TypeOf(def.fields), name))
@@ -328,14 +324,15 @@ fn DefinedEntity(comptime Def: type) type {
         pk: [lenOfListType(@FieldType(Def, "pk"))][:0]const u8,
         fks: (if (@hasField(Def, "fks")) @FieldType(Def, "fks") else @TypeOf(.{})),
         uks: (if (@hasField(Def, "uks")) @FieldType(Def, "uks") else @TypeOf(.{})),
+        rules: (if (@hasField(Def, "rules")) @FieldType(Def, "rules") else @TypeOf(.{})),
     };
 }
 
-/// The container level: an entity is the unit representable as a grid.
-/// Checks what is local to the entity (pk, uk and fk source fields exist in
-/// `fields`); the target side of the fks is checked by `defineEntities`.
-/// At runtime it is essentially the identity: it only normalizes the pk and
-/// defaults fks and uks to empty.
+/// Nivel contenedor: una entidad es la unidad representable como una grilla.
+/// Comprueba lo local a la entidad: que PK, UK y campos origen de FK existan
+/// en `fields`. `defineEntities` comprueba el destino de las FKs.
+/// En runtime es esencialmente la identidad: solo normaliza la PK y
+/// completa FKs, UKs y reglas omitidas con colecciones vacías.
 pub fn defineEntity(comptime def: anytype) DefinedEntity(@TypeOf(def)) {
     comptime checkEntityDef(def);
     return .{
@@ -343,6 +340,7 @@ pub fn defineEntity(comptime def: anytype) DefinedEntity(@TypeOf(def)) {
         .pk = normalizedPk(def.pk),
         .fks = if (@hasField(@TypeOf(def), "fks")) def.fks else .{},
         .uks = if (@hasField(@TypeOf(def), "uks")) def.uks else .{},
+        .rules = if (@hasField(@TypeOf(def), "rules")) def.rules else .{},
     };
 }
 
@@ -355,9 +353,9 @@ fn ExtractedPk(comptime entity: anytype) type {
     return @Struct(.auto, null, &entity.pk, &frozen, &@splat(.{}));
 }
 
-/// The pk fields of an entity as a record def, to inherit them into another
-/// entity with `merge` (the good semantic repetition of the SSOTIGAD
-/// document): `merge(.{ extractPk(cursos), .{ .orden = ... } })`.
+/// Campos PK de una entidad como definición de record, para heredarlos en otra
+/// entidad con `merge`: la repetición semántica útil del documento SSOTIGAD.
+/// Ejemplo: `merge(.{ extractPk(cursos), .{ .orden = ... } })`.
 pub fn extractPk(comptime entity: anytype) ExtractedPk(entity) {
     var result: ExtractedPk(entity) = undefined;
     inline for (entity.pk) |name| {
@@ -366,9 +364,9 @@ pub fn extractPk(comptime entity: anytype) ExtractedPk(entity) {
     return result;
 }
 
-/// A container-level const is always evaluated in a comptime scope, without
-/// needing the `comptime` keyword (which would be an error when the caller is
-/// already comptime); this makes the merged names usable from both contexts.
+/// Una const a nivel de contenedor siempre se evalúa en scope comptime sin
+/// necesitar la palabra clave `comptime`, que sería un error si quien llama
+/// ya está en comptime. Así los nombres combinados se pueden usar en ambos contextos.
 fn PkMerge(comptime pks: anytype) type {
     return struct {
         const names: []const [:0]const u8 = blk: {
@@ -387,13 +385,13 @@ fn PkMerge(comptime pks: anytype) type {
     };
 }
 
-/// Joins pks that may overlap, without repeating names, preserving the order
-/// of first appearance. For combined pks like
-/// `mergePk(.{ inscripciones.pk, clases.pk })`; for the fields the `merge`
-/// already dedups keys by itself.
-/// (`PkMerge(pks).names` is spelled instead of taking it through a helper
-/// function: a decl access is comptime-known in a runtime context too, which
-/// an equivalent function call is not.)
+/// Une PKs que pueden solaparse, sin repetir nombres y conservando el orden
+/// de primera aparición. Sirve para PKs combinadas como
+/// `mergePk(.{ inscripciones.pk, clases.pk })`; para los campos, `merge`
+/// ya elimina por sí mismo las claves duplicadas.
+/// Se escribe `PkMerge(pks).names` en vez de usar una función auxiliar: acceder
+/// a una declaración es comptime-known incluso en contexto runtime,
+/// mientras que una llamada a función equivalente no lo es.
 pub fn mergePk(comptime pks: anytype) [PkMerge(pks).names.len][:0]const u8 {
     var result: [PkMerge(pks).names.len][:0]const u8 = undefined;
     inline for (PkMerge(pks).names, 0..) |name, i| {
@@ -408,25 +406,25 @@ fn fkSourceNames(comptime fk: anytype) []const [:0]const u8 {
     return nameListSlice(fk.fields);
 }
 
-/// Same trick as PkMerge: a decl access to make the source names
-/// comptime-known also when completing an entity in a runtime context.
+/// El mismo recurso que PkMerge: acceder a una declaración hace que los nombres
+/// origen sean comptime-known incluso al completar una entidad en contexto runtime.
 fn FkSources(comptime fk: anytype) type {
     return struct {
         const names: []const [:0]const u8 = fkSourceNames(fk);
     };
 }
 
-fn fkTargetNames(comptime fk: anytype) []const [:0]const u8 {
+fn fkTargetNames(comptime fk: anytype) []const []const u8 {
     const info = @typeInfo(@TypeOf(fk.fields));
     if (info == .@"struct" and !info.@"struct".is_tuple) {
-        comptime var names: []const [:0]const u8 = &.{};
+        comptime var names: []const []const u8 = &.{};
         inline for (info.@"struct".field_names) |source| {
-            const target: [:0]const u8 = @field(fk.fields, source);
-            names = names ++ [_][:0]const u8{target};
+            const target: []const u8 = @field(fk.fields, source);
+            names = names ++ [_][]const u8{target};
         }
         return names;
     }
-    return nameListSlice(fk.fields);
+    return &NameList(fk.fields).names;
 }
 
 fn fkTargetName(comptime fk: anytype, comptime source: [:0]const u8) []const u8 {
@@ -435,8 +433,8 @@ fn fkTargetName(comptime fk: anytype, comptime source: [:0]const u8) []const u8 
     return source;
 }
 
-/// The Info side of a fk: the array shorthand is gone, `fields` is always
-/// the source→target map.
+/// El lado Info de una FK: desaparece la forma abreviada de array;
+/// `fields` siempre es el mapa origen→destino.
 fn FkInfoOf(comptime fk: anytype) type {
     const sources = fkSourceNames(fk);
     const MapType = @Struct(.auto, null, sources, &@splat([]const u8), &@splat(.{}));
@@ -480,23 +478,28 @@ fn CompletedEntity(comptime entity: anytype) type {
         pk: [PkMerge(.{entity.pk}).names.len][:0]const u8,
         fks: CompletedFksType(entity.fks),
         uks: @TypeOf(entity.uks),
+        rules: RulesInfo(@TypeOf(entity.rules)),
     };
 }
 
-/// The Info side of an entity: everything explicit, and in only one form.
-/// The fks lose the array shorthand: `fields` is always the source→target
-/// map. The pk is deduplicated, so overlapping pks can be concatenated in the
-/// Def without `mergePk`.
+/// El lado Info de una entidad: todo explícito y en una sola forma.
+/// Las FKs pierden la forma abreviada de array: `fields` siempre es el mapa
+/// origen→destino. La PK queda sin duplicados, por lo que se pueden concatenar
+/// PKs solapadas en la Def sin usar `mergePk`. Sus campos quedan no-null
+/// sin modificar el record original; las reglas conservan solo sus dependencias.
 pub fn completeEntity(comptime entity: anytype) CompletedEntity(entity) {
+    var fields = completeRecord(entity.fields);
+    inline for (PkMerge(.{entity.pk}).names) |name| @field(fields, name).nullable = false;
     return .{
-        .fields = completeRecord(entity.fields),
+        .fields = fields,
         .pk = mergePk(.{entity.pk}),
         .fks = completeFks(entity.fks),
         .uks = entity.uks,
+        .rules = completeRules(entity.rules),
     };
 }
 
-fn sameNameSet(comptime a: []const [:0]const u8, comptime b: []const [:0]const u8) bool {
+fn sameNameSet(comptime a: anytype, comptime b: anytype) bool {
     if (a.len != b.len) return false;
     for (a) |name| {
         if (!containsName(b, name)) return false;
@@ -504,8 +507,8 @@ fn sameNameSet(comptime a: []const [:0]const u8, comptime b: []const [:0]const u
     return true;
 }
 
-fn fkMatchesTargetKey(comptime target_fields: []const [:0]const u8, comptime target: anytype) bool {
-    if (sameNameSet(target_fields, &target.pk)) return true;
+fn fkMatchesTargetKey(comptime target_fields: anytype, comptime target: anytype) bool {
+    if (sameNameSet(target_fields, PkMerge(.{target.pk}).names)) return true;
     inline for (@typeInfo(@TypeOf(target.uks)).@"struct".field_names) |uk_name| {
         if (sameNameSet(target_fields, nameListSlice(@field(target.uks, uk_name)))) return true;
     }
@@ -526,10 +529,196 @@ fn checkEntities(comptime entity_defs: anytype) void {
     }
 }
 
-/// The system level, where all the entities are known: every fk must point
-/// to an entity of the system, and its target fields must be the complete pk
-/// or one of the uks of it. Returns the entities unchanged.
+/// Nivel de sistema, donde se conocen todas las entidades: cada FK debe apuntar
+/// a una entidad del sistema y sus campos destino deben ser la PK completa
+/// o una de sus UKs. Devuelve las entidades sin cambios.
 pub fn defineEntities(comptime entity_defs: anytype) @TypeOf(entity_defs) {
     comptime checkEntities(entity_defs);
     return entity_defs;
+}
+
+fn checkRules(comptime rules: anytype, comptime fields: anytype) void {
+    const info = @typeInfo(@TypeOf(rules));
+    if (info != .@"struct" or (info.@"struct".is_tuple and info.@"struct".field_names.len != 0))
+        @compileError("entity definition: 'rules' must be a struct of rule definitions");
+    for (info.@"struct".field_names) |name| {
+        const rule = @field(rules, name);
+        const rule_info = @typeInfo(@TypeOf(rule));
+        if (rule_info != .@"struct" or (rule_info.@"struct".is_tuple and rule_info.@"struct".field_names.len != 0))
+            @compileError("rule '" ++ name ++ "': must be a struct with a 'fields' list");
+        for (rule_info.@"struct".field_names) |property| {
+            if (!eql(property, "fields"))
+                @compileError("rule '" ++ name ++ "': unknown property '" ++ property ++ "'");
+        }
+        if (!@hasField(@TypeOf(rule), "fields")) @compileError("rule '" ++ name ++ "': missing 'fields'");
+        const list_info = @typeInfo(@TypeOf(rule.fields));
+        if (list_info != .array and !(list_info == .@"struct" and (list_info.@"struct".is_tuple or list_info.@"struct".field_names.len == 0)))
+            @compileError("rule '" ++ name ++ "': 'fields' must be a list of field names");
+        for (rule.fields, 0..) |field, i| {
+            if (!isStringType(@TypeOf(field)))
+                @compileError("rule '" ++ name ++ "': 'fields' must be a list of field names");
+            if (!@hasField(@TypeOf(fields), field))
+                @compileError("rule '" ++ name ++ "': field '" ++ field ++ "' is not a field of the entity");
+            for (0..i) |j| {
+                if (eql(field, rule.fields[j])) @compileError("rule '" ++ name ++ "': duplicate field '" ++ field ++ "'");
+            }
+        }
+    }
+}
+
+/// Dependencias serializables; las implementaciones de reglas viven fuera del contrato.
+pub const RuleInfo = struct { fields: []const []const u8 };
+
+fn RulesInfo(comptime Rules: type) type {
+    return @Struct(.auto, null, @typeInfo(Rules).@"struct".field_names, &@splat(RuleInfo), &@splat(.{}));
+}
+
+fn NameList(comptime fields: anytype) type {
+    return struct {
+        const names: [fields.len][]const u8 = blk: {
+            var result: [fields.len][]const u8 = undefined;
+            for (fields, 0..) |name, i| result[i] = name;
+            break :blk result;
+        };
+    };
+}
+
+fn completeRules(comptime rules: anytype) RulesInfo(@TypeOf(rules)) {
+    var result: RulesInfo(@TypeOf(rules)) = undefined;
+    inline for (@typeInfo(@TypeOf(rules)).@"struct".field_names) |name| {
+        @field(result, name) = .{ .fields = &NameList(@field(rules, name).fields).names };
+    }
+    return result;
+}
+
+fn fieldType(comptime type_defs: anytype, comptime field: FieldInfo) type {
+    const T = @field(type_defs, field.type).Type;
+    return if (field.nullable) ?T else T;
+}
+
+fn selectedType(comptime type_defs: anytype, comptime fields: anytype, comptime names: anytype) type {
+    var types: [names.len]type = undefined;
+    var field_names: [names.len][]const u8 = undefined;
+    for (names, 0..) |name, i| {
+        field_names[i] = name;
+        types[i] = fieldType(type_defs, @field(fields, name));
+    }
+    const frozen_names = field_names;
+    const frozen_types = types;
+    return @Struct(.auto, null, &frozen_names, &frozen_types, &@splat(.{}));
+}
+
+fn FieldUpdate(comptime T: type) type {
+    return union(enum) { unset, set: T };
+}
+
+fn DefaultValue(comptime T: type, comptime value: T) type {
+    return struct {
+        const default: T = value;
+    };
+}
+
+fn SystemInfo(comptime entity_defs: anytype) type {
+    @setEvalBranchQuota(1_000_000);
+    const names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
+    var types: [names.len]type = undefined;
+    for (names, 0..) |name, i| types[i] = CompletedEntity(defineEntity(@field(entity_defs, name)));
+    const frozen = types;
+    return @Struct(.auto, null, names, &frozen, &@splat(.{}));
+}
+
+/// Interpretación única del contrato. Los tipos Zig quedan en este namespace;
+/// `info` contiene solamente metadatos serializables para los consumidores.
+pub fn System(comptime type_defs: anytype, comptime entity_defs: anytype) type {
+    @setEvalBranchQuota(1_000_000);
+    checkTypeDefs(type_defs);
+    const Model = struct {
+        pub const info: SystemInfo(entity_defs) = blk: {
+            @setEvalBranchQuota(1_000_000);
+            var result: SystemInfo(entity_defs) = undefined;
+            for (@typeInfo(@TypeOf(entity_defs)).@"struct".field_names) |name| {
+                const entity = defineEntity(@field(entity_defs, name));
+                checkRecord(type_defs, entity.fields);
+                @field(result, name) = completeEntity(entity);
+            }
+            checkEntities(result);
+            break :blk result;
+        };
+
+        fn entityInfo(comptime entity: []const u8) @FieldType(@TypeOf(info), checkedEntity(entity)) {
+            return @field(info, entity);
+        }
+
+        fn checkedEntity(comptime entity: []const u8) []const u8 {
+            if (!@hasField(@TypeOf(info), entity)) @compileError("system: unknown entity '" ++ entity ++ "'");
+            return entity;
+        }
+
+        /// Fila completa sin defaults; las PK son obligatorias aunque el record admita null.
+        pub fn Row(comptime entity: []const u8) type {
+            const fields = entityInfo(entity).fields;
+            return selectedType(type_defs, fields, @typeInfo(@TypeOf(fields)).@"struct".field_names);
+        }
+
+        /// Selección de campos en el orden pedido.
+        pub fn Projection(comptime entity: []const u8, comptime names: anytype) type {
+            const fields = entityInfo(entity).fields;
+            for (names, 0..) |name, i| {
+                if (!@hasField(@TypeOf(fields), name))
+                    @compileError("entity '" ++ entity ++ "': projection field '" ++ name ++ "' is not a field of the entity");
+                for (0..i) |j| {
+                    if (eql(name, names[j])) @compileError("entity '" ++ entity ++ "': duplicate projection field '" ++ name ++ "'");
+                }
+            }
+            return selectedType(type_defs, fields, names);
+        }
+
+        /// Modificación parcial: omitir un campo es distinto de asignarle null.
+        pub fn Patch(comptime entity: []const u8) type {
+            const definition = entityInfo(entity);
+            const all_names = @typeInfo(@TypeOf(definition.fields)).@"struct".field_names;
+            const count = all_names.len - definition.pk.len;
+            var names: [count][]const u8 = undefined;
+            var types: [count]type = undefined;
+            var attrs: [count]std.lang.Type.Struct.FieldAttributes = undefined;
+            var i: usize = 0;
+            for (all_names) |name| {
+                if (containsName(&definition.pk, name)) continue;
+                names[i] = name;
+                const T = FieldUpdate(fieldType(type_defs, @field(definition.fields, name)));
+                types[i] = T;
+                attrs[i] = .{ .default_value_ptr = &DefaultValue(T, .unset).default };
+                i += 1;
+            }
+            const frozen_names = names;
+            const frozen_types = types;
+            const frozen_attrs = attrs;
+            return @Struct(.auto, null, &frozen_names, &frozen_types, &frozen_attrs);
+        }
+
+        /// Filtros de igualdad: null significa ausencia del filtro.
+        pub fn Filters(comptime entity: []const u8) type {
+            const fields = entityInfo(entity).fields;
+            const names = @typeInfo(@TypeOf(fields)).@"struct".field_names;
+            var types: [names.len]type = undefined;
+            var attrs: [names.len]std.lang.Type.Struct.FieldAttributes = undefined;
+            for (names, 0..) |name, i| {
+                const T = ?@field(type_defs, @field(fields, name).type).Type;
+                types[i] = T;
+                attrs[i] = .{ .default_value_ptr = &DefaultValue(T, null).default };
+            }
+            const frozen_types = types;
+            const frozen_attrs = attrs;
+            return @Struct(.auto, null, names, &frozen_types, &frozen_attrs);
+        }
+
+        pub fn RuleInput(comptime entity: []const u8, comptime rule: []const u8) type {
+            const rules = entityInfo(entity).rules;
+            if (!@hasField(@TypeOf(rules), rule)) @compileError("entity '" ++ entity ++ "': unknown rule '" ++ rule ++ "'");
+            return Projection(entity, @field(rules, rule).fields);
+        }
+    };
+    // Dicha asignacion Fuerza la validación aun cuando todavía no se solicite ningún tipo generado.
+    _ = Model.info;
+    return Model;
 }

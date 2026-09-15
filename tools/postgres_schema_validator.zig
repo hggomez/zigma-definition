@@ -1,16 +1,20 @@
-//! Database-backed proof that a migrated schema equals the current AIDA SSOT.
+//! Comprobación en base de datos de que un schema migrado coincide con la SSOT actual de AIDA.
 //!
-//! It creates a temporary expected schema from the compile-time baseline DDL,
-//! compares PostgreSQL catalog structures, and always attempts to remove the
-//! temporary schema. It never changes objects in the actual schema.
+//! Crea un schema esperado temporal a partir del DDL baseline comptime,
+//! compara las estructuras del catálogo PostgreSQL y siempre intenta eliminar
+//! el schema temporal. Nunca modifica objetos del schema real.
 
 const std = @import("std");
 const postgres = @import("aida_postgres");
 const libpq = @import("zigma_postgres_libpq");
 
+// El nombre privado fijo es seguro porque el validador impide usarlo como
+// destino real y siempre intenta limpiar antes de retornar.
 const expected_schema = "_zigma_expected_validation";
 
 pub fn main(init: std.process.Init) !void {
+    // Adoptar el baseline agrega una comprobación de seguridad sobre el historial
+    // Liquibase; el modo normal comprueba solo la equivalencia estructural del catálogo.
     var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, init.gpa);
     defer args.deinit();
     _ = args.next();
@@ -25,6 +29,8 @@ pub fn main(init: std.process.Init) !void {
         return error.MissingDatabaseUrl;
     };
     const actual_schema = init.environ_map.get("ZIGMA_ACTUAL_SCHEMA") orelse "public";
+    // El nombre de schema se interpola en SQL confiable del validador: solo se
+    // acepta una gramática acotada de identificadores y el límite PostgreSQL de 63 bytes.
     if (!validIdentifier(actual_schema) or std.mem.eql(u8, actual_schema, expected_schema))
         return error.InvalidSchemaName;
 
@@ -35,6 +41,8 @@ pub fn main(init: std.process.Init) !void {
         return err;
     };
 
+    // Materializa la SSOT esperada en un schema aislado usando el baseline comptime.
+    // El schema destino real se mantiene de solo lectura durante toda la validación.
     const setup_sql = try std.fmt.allocPrint(
         init.gpa,
         "CREATE SCHEMA \"{s}\"; SET search_path TO \"{s}\", pg_catalog;\n{s}",
@@ -45,8 +53,12 @@ pub fn main(init: std.process.Init) !void {
         printDatabaseError(&connection, err);
         return err;
     };
+    // Se intenta limpiar en cada salida posterior. CASCADE se limita estrictamente
+    // al schema temporal del validador, nunca al destino configurado.
     defer connection.exec("DROP SCHEMA \"_zigma_expected_validation\" CASCADE") catch {};
 
+    // PostgreSQL compara las relaciones de catálogo y lanza un error ante la primera
+    // diferencia estructural. La herramienta expone así una API simple de éxito o error.
     const comparison_sql = try catalogComparisonSql(init.gpa, actual_schema);
     defer init.gpa.free(comparison_sql);
     connection.exec(comparison_sql) catch |err| {
@@ -65,15 +77,21 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn validIdentifier(value: []const u8) bool {
+    // Este subconjunto conservador evita una segunda implementación de escape de
+    // identificadores SQL en una herramienta administrativa sensible a la seguridad.
     if (value.len == 0 or value.len > 63) return false;
     for (value) |byte| if (!std.ascii.isAlphanumeric(byte) and byte != '_') return false;
     return true;
 }
 
 fn catalogComparisonSql(allocator: std.mem.Allocator, actual: []const u8) ![]u8 {
+    // Cada par de CTEs proyecta el schema real y el esperado a la misma relación
+    // canónica. EXCEPT simétrico detecta agregados y eliminaciones.
     return std.fmt.allocPrint(allocator,
         \\DO $$
         \\BEGIN
+        // Primero compara el conjunto de tablas gestionadas. Las dos tablas de control
+        // de Liquibase quedan fuera del modelo de estado deseado de Zigma.
         \\  IF EXISTS (
         \\    WITH actual AS (
         \\      SELECT c.relname
@@ -90,6 +108,8 @@ fn catalogComparisonSql(allocator: std.mem.Allocator, actual: []const u8) ![]u8 
         \\    (SELECT * FROM expected EXCEPT SELECT * FROM actual)
         \\  ) THEN RAISE EXCEPTION 'Zigma schema validation: table set differs'; END IF;
         \\
+        // attnum conserva el orden físico de columnas; los OIDs y modificadores de tipos
+        // PostgreSQL, la nulabilidad y la collation cubren la estructura de columna modelada.
         \\  IF EXISTS (
         \\    WITH actual AS (
         \\      SELECT c.relname AS table_name, a.attnum, a.attname, a.atttypid, a.atttypmod, a.attnotnull, a.attcollation
@@ -110,6 +130,8 @@ fn catalogComparisonSql(allocator: std.mem.Allocator, actual: []const u8) ![]u8 
         \\    (SELECT * FROM expected EXCEPT SELECT * FROM actual)
         \\  ) THEN RAISE EXCEPTION 'Zigma schema validation: columns, order, type, or nullability differ'; END IF;
         \\
+        // La comparación de restricciones incluye nombres deterministas, clases,
+        // campos locales ordenados y la secuencia de tabla y campos gestionados referenciados.
         \\  IF EXISTS (
         \\    WITH actual AS (
         \\      SELECT src.relname AS table_name, con.conname, con.contype,
@@ -156,6 +178,8 @@ fn catalogComparisonSql(allocator: std.mem.Allocator, actual: []const u8) ![]u8 
 }
 
 fn baselineHistorySql(allocator: std.mem.Allocator, actual: []const u8) ![]u8 {
+    // Las bases existentes se pueden marcar en el baseline solo si no tienen changelog,
+    // está vacío o contiene exactamente ese changeset inicial de Zigma.
     return std.fmt.allocPrint(allocator,
         \\DO $$
         \\DECLARE invalid_history boolean;
@@ -175,6 +199,8 @@ fn baselineHistorySql(allocator: std.mem.Allocator, actual: []const u8) ![]u8 {
 }
 
 fn printDatabaseError(connection: *const libpq.Connection, err: anyerror) void {
+    // Conserva el error Zig estable y agrega el último diagnóstico de libpq
+    // para quien ejecuta este comando administrativo.
     if (connection.lastError()) |message|
         std.debug.print("PostgreSQL {t}: {s}\n", .{ err, message })
     else

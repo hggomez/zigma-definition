@@ -1,5 +1,5 @@
-//! expected: an error at the call below (a missing field is rejected:
-//! puede_dirigir is not given and the instance type has no defaults)
+//! Se espera un error en la llamada siguiente por un campo faltante:
+//! no se aporta puede_dirigir y el tipo de instancia no tiene defaults.
 const aida = @import("aida");
 
 comptime {

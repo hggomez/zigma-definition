@@ -1,5 +1,5 @@
-//! Test-only AIDA REST process. The surrounding integration script owns DDL
-//! setup and teardown so this executable exercises only libpq + REST + HTTP.
+//! Proceso REST de AIDA exclusivo de tests. El script de integración gestiona
+//! la preparación y limpieza del DDL; este ejecutable prueba solo libpq + REST + HTTP.
 
 const std = @import("std");
 const aida = @import("aida");
@@ -18,7 +18,7 @@ pub fn main(init: std.process.Init) !void {
     try connection.connect(database_url);
 
     var api = aida_rest.Api.init(.{ .max_body_bytes = 256 });
-    var repository = crud.Repository(aida.entity_defs).init(&connection);
+    var repository = crud.Repository(aida.Model).init(&connection);
     std.debug.print("ready {d}\n", .{port});
     try std_http.serve(init.io, init.gpa, &api, &repository, .{
         .port = port,

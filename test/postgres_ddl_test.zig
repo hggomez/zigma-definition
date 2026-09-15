@@ -66,7 +66,7 @@ test "defines PostgreSQL mappings separately from domain types" {
 }
 
 test "creates a table with nullability, pk and uk" {
-    const actual = postgres_ddl.createTableDdl(aida.entity_defs, "materias", type_mappings);
+    const actual = postgres_ddl.createTableDdl(aida.Model, "materias", type_mappings);
     const expected =
         \\CREATE TABLE IF NOT EXISTS "materias" (
         \\    "materia" TEXT NOT NULL,
@@ -80,7 +80,7 @@ test "creates a table with nullability, pk and uk" {
 }
 
 test "creates composite and renamed foreign keys with stable names" {
-    const actual = postgres_ddl.createTableDdl(aida.entity_defs, "mesas", type_mappings);
+    const actual = postgres_ddl.createTableDdl(aida.Model, "mesas", type_mappings);
     const expected =
         \\CREATE TABLE IF NOT EXISTS "mesas" (
         \\    "periodo" TEXT NOT NULL,
@@ -99,7 +99,7 @@ test "creates composite and renamed foreign keys with stable names" {
 }
 
 test "creates a reflexive foreign key inline" {
-    const actual = postgres_ddl.createTableDdl(aida.entity_defs, "docentes", type_mappings);
+    const actual = postgres_ddl.createTableDdl(aida.Model, "docentes", type_mappings);
     const expected =
         \\CREATE TABLE IF NOT EXISTS "docentes" (
         \\    "docente" TEXT NOT NULL,
@@ -109,6 +109,8 @@ test "creates a reflexive foreign key inline" {
         \\    "email" TEXT,
         \\    "email_alternativo" TEXT,
         \\    "jefe" TEXT,
+        \\    "telefono" TEXT,
+        \\    "experiencia" BIGINT,
         \\    CONSTRAINT "pk_docentes" PRIMARY KEY ("docente"),
         \\    CONSTRAINT "fk_docentes_jefe" FOREIGN KEY ("jefe") REFERENCES "docentes" ("docente")
         \\);
@@ -118,7 +120,7 @@ test "creates a reflexive foreign key inline" {
 }
 
 test "escapes PostgreSQL identifiers" {
-    const actual = postgres_ddl.createTableDdl(quoted_entity_defs, "quoted\"table", type_mappings);
+    const actual = postgres_ddl.createTableDdl(QuotedModel, "quoted\"table", type_mappings);
     const expected =
         \\CREATE TABLE IF NOT EXISTS "quoted""table" (
         \\    "quoted""field" TEXT NOT NULL,
@@ -130,7 +132,7 @@ test "escapes PostgreSQL identifiers" {
 }
 
 test "adding a field only changes the complete create table statement" {
-    const actual = postgres_ddl.createTableDdl(extended_entity_defs, "things", type_mappings);
+    const actual = postgres_ddl.createTableDdl(ExtendedModel, "things", type_mappings);
     const expected =
         \\CREATE TABLE IF NOT EXISTS "things" (
         \\    "thing" TEXT NOT NULL,
@@ -144,7 +146,7 @@ test "adding a field only changes the complete create table statement" {
 }
 
 test "places referenced tables before dependants regardless of declaration order" {
-    const actual = postgres_ddl.createSchemaDdl(reverse_dependency_defs, type_mappings);
+    const actual = postgres_ddl.createSchemaDdl(ReverseDependencyModel, type_mappings);
     const expected =
         \\CREATE TABLE IF NOT EXISTS "parents" (
         \\    "parent" TEXT NOT NULL,
@@ -163,7 +165,7 @@ test "places referenced tables before dependants regardless of declaration order
 }
 
 test "creates the complete AIDA schema in dependency order" {
-    const actual = postgres_ddl.createSchemaDdl(aida.entity_defs, type_mappings);
+    const actual = postgres_ddl.createSchemaDdl(aida.Model, type_mappings);
     const expected =
         \\CREATE TABLE IF NOT EXISTS "docentes" (
         \\    "docente" TEXT NOT NULL,
@@ -173,6 +175,8 @@ test "creates the complete AIDA schema in dependency order" {
         \\    "email" TEXT,
         \\    "email_alternativo" TEXT,
         \\    "jefe" TEXT,
+        \\    "telefono" TEXT,
+        \\    "experiencia" BIGINT,
         \\    CONSTRAINT "pk_docentes" PRIMARY KEY ("docente"),
         \\    CONSTRAINT "fk_docentes_jefe" FOREIGN KEY ("jefe") REFERENCES "docentes" ("docente")
         \\);
@@ -274,3 +278,9 @@ test "creates the complete AIDA schema in dependency order" {
     ;
     try expectEqualStrings(expected, actual);
 }
+
+const QuotedModel = zigma.System(aida.type_defs, quoted_entity_defs);
+
+const ExtendedModel = zigma.System(aida.type_defs, extended_entity_defs);
+
+const ReverseDependencyModel = zigma.System(aida.type_defs, reverse_dependency_defs);

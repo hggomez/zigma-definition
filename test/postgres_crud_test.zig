@@ -53,7 +53,7 @@ const FakeConnection = struct {
     }
 };
 
-const Repository = postgres_crud.Repository(entity_defs);
+const Repository = postgres_crud.Repository(Model);
 
 fn expectParameter(actual: ?[]const u8, expected: ?[]const u8) !void {
     if (expected) |bytes| {
@@ -179,3 +179,5 @@ test "SQLSTATE class 23 maps to conflict and connection failure to unavailable" 
         repository.select(arena.allocator(), "things", &.{}),
     );
 }
+
+const Model = zigma.System(zigma.common_type_defs, entity_defs);

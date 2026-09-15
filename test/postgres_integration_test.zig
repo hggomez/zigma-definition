@@ -2,7 +2,7 @@ const std = @import("std");
 const zigma = @import("zigma");
 const aida = @import("aida");
 const postgres_ddl = @import("zigma_postgres_ddl");
-const postgres_executor = @import("zigma_postgres_executor");
+const postgres_executor_ddl = @import("zigma_postgres_executor_ddl");
 const postgres_libpq = @import("zigma_postgres_libpq");
 
 const type_mappings = postgres_ddl.defineTypeMappings(zigma.merge(.{
@@ -13,7 +13,16 @@ const type_mappings = postgres_ddl.defineTypeMappings(zigma.merge(.{
     },
 }));
 
-const schema_ddl = postgres_ddl.createSchemaDdl(aida.entity_defs, type_mappings);
+// El conteo acompaña al contrato y las comprobaciones de catálogo verifican su proyección real.
+const expected_column_count = blk: {
+    var count: usize = 0;
+    for (@typeInfo(@TypeOf(aida.Model.info)).@"struct".field_names) |name| {
+        count += @typeInfo(@TypeOf(@field(aida.Model.info, name).fields)).@"struct".field_names.len;
+    }
+    break :blk count;
+};
+
+const schema_ddl = postgres_ddl.createSchemaDdl(aida.Model, type_mappings);
 
 fn environmentValue(comptime name: [:0]const u8) ![]const u8 {
     const value = std.c.getenv(name) orelse return error.MissingIntegrationEnvironment;
@@ -60,7 +69,7 @@ test "executes and verifies the complete AIDA schema in PostgreSQL" {
     defer allocator.free(cleanup_sql);
     defer connection.exec(cleanup_sql) catch {};
 
-    try postgres_executor.executeSchema(&connection, schema_ddl);
+    try postgres_executor_ddl.executeSchema(&connection, schema_ddl);
 
     const catalog_assertions =
         \\DO $$
@@ -79,7 +88,8 @@ test "executes and verifies the complete AIDA schema in PostgreSQL" {
         \\        RAISE EXCEPTION 'unexpected tables: %', actual_tables;
         \\    END IF;
         \\    IF (SELECT count(*) FROM information_schema.columns
-        \\         WHERE table_schema = current_schema()) <> 47 THEN
+        \\         WHERE table_schema = current_schema()) <>
+    ++ std.fmt.comptimePrint(" {d} THEN\n", .{expected_column_count}) ++
         \\        RAISE EXCEPTION 'unexpected column count';
         \\    END IF;
         \\    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
@@ -91,6 +101,16 @@ test "executes and verifies the complete AIDA schema in PostgreSQL" {
         \\        WHERE table_schema = current_schema() AND table_name = 'docentes'
         \\          AND column_name = 'email' AND data_type = 'text' AND is_nullable = 'YES') THEN
         \\        RAISE EXCEPTION 'docentes.email metadata mismatch';
+        \\    END IF;
+        \\    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+        \\        WHERE table_schema = current_schema() AND table_name = 'docentes'
+        \\          AND column_name = 'telefono' AND data_type = 'text' AND is_nullable = 'YES') THEN
+        \\        RAISE EXCEPTION 'docentes.telefono metadata mismatch';
+        \\    END IF;
+        \\    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+        \\        WHERE table_schema = current_schema() AND table_name = 'docentes'
+        \\          AND column_name = 'experiencia' AND data_type = 'bigint' AND is_nullable = 'YES') THEN
+        \\        RAISE EXCEPTION 'docentes.experiencia metadata mismatch';
         \\    END IF;
         \\    IF NOT EXISTS (SELECT 1 FROM information_schema.columns
         \\        WHERE table_schema = current_schema() AND table_name = 'clases'
@@ -141,8 +161,8 @@ test "executes and verifies the complete AIDA schema in PostgreSQL" {
 
     try connection.exec(catalog_assertions);
 
-    // CREATE TABLE IF NOT EXISTS makes the initial schema bootstrap idempotent.
-    try postgres_executor.executeSchema(&connection, schema_ddl);
+    // CREATE TABLE IF NOT EXISTS hace idempotente la inicialización del schema.
+    try postgres_executor_ddl.executeSchema(&connection, schema_ddl);
     try connection.exec(catalog_assertions);
 
     try connection.exec("CREATE TABLE query_probe (id BIGINT PRIMARY KEY, value TEXT)");
@@ -194,7 +214,7 @@ test "executes and verifies the complete AIDA schema in PostgreSQL" {
     ;
     try expectPostgresError(
         &connection,
-        postgres_executor.executeSchema(&connection, invalid_ddl),
+        postgres_executor_ddl.executeSchema(&connection, invalid_ddl),
     );
 
     try connection.exec(

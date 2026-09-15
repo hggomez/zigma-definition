@@ -1,32 +1,34 @@
 const std = @import("std");
 
-/// The error must be AT the marked expression of this fragment: its path, as
-/// the compiler prints it, is the start of the error line. Used for the native
-/// compiler messages, whose tail is not stable (it can end in the mangled name
-/// of an anonymous struct) and cannot be matched verbatim. The separator is
-/// the one of the host (`/` on posix, `\` on windows), which is how the
-/// compiler prints it, so the cases match on either system; it is a comptime
-/// constant, so the whole path is concatenated at compile time.
+/// El error debe estar EN la expresión marcada de este fragmento: su ruta,
+/// tal como la imprime el compilador, debe iniciar la línea del error. Se usa
+/// para mensajes nativos cuyo final no es estable (puede incluir el nombre
+/// interno de un struct anónimo) y no admite una comparación literal. El
+/// separador es el del sistema anfitrión (`/` en POSIX, `\` en Windows), como
+/// lo imprime el compilador, para que los casos funcionen en ambos sistemas.
+/// Es una constante comptime: toda la ruta se concatena en compilación.
 fn at(comptime file: []const u8) []const u8 {
     const sep = std.fs.path.sep_str;
     return "test" ++ sep ++ "compile_errors" ++ sep ++ file ++ ":/?/";
 }
 
-/// Expected-compile-error cases: each file in test/compile_errors must FAIL
-/// to compile with a matching error (see Step.Compile.expect_errors). The
-/// match is per line: a plain string must be the END of some error line; with
-/// the /?/ wildcard the text before it must be the start of the line and the
-/// text after it the end (only the first /?/ of the line is a wildcard, and
-/// there is no regex: those two forms are the whole vocabulary). For the
-/// messages of the framework, which are ours and therefore stable, the full
-/// message is used; for the native ones, `at` (see above).
-const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }{
+/// Casos de error de compilación esperado: cada archivo de test/compile_errors
+/// debe FALLAR al compilar con el error indicado (ver Step.Compile.expect_errors).
+/// La comparación es por línea: un string sin comodín debe ser el FINAL de una
+/// línea de error. Con /?/, el texto anterior debe iniciar la línea y el posterior
+/// debe terminarla. Solo el primer /?/ es un comodín; no hay expresiones regulares:
+/// esas dos formas son todo el vocabulario. Para los mensajes del framework,
+/// que controlamos y por eso son estables, se usa el mensaje completo; para los
+/// nativos se usa `at` (ver arriba).
+const CompileErrorCase = struct { file: []const u8, expected: []const u8 };
+
+const compile_error_cases = [_]CompileErrorCase{
     .{ .file = "types_not_a_typedef.zig", .expected = "type 'text': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
     .{ .file = "types_extra_property.zig", .expected = "type 'fecha': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
     .{ .file = "record_unknown_type.zig", .expected = "unknown type 'inexistente'" },
     .{ .file = "record_unknown_property.zig", .expected = "unknown property 'colour'" },
     .{ .file = "record_is_name_false.zig", .expected = "is_name only admits true in a definition (false is the default)" },
-    .{ .file = "instance_wrong_value_type.zig", .expected = "expected type 'i64', found '*const [6:0]u8'" },
+    .{ .file = "instance_wrong_value_type.zig", .expected = "expected type '?i64', found '*const [6:0]u8'" },
     .{ .file = "instance_unknown_field.zig", .expected = at("instance_unknown_field.zig") },
     .{ .file = "entity_pk_not_in_fields.zig", .expected = "pk field 'inexistente' is not a field of the entity" },
     .{ .file = "entity_pk_partially_wrong.zig", .expected = "pk field 'inexistente' is not a field of the entity" },
@@ -37,7 +39,7 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "system_fk_unknown_entity.zig", .expected = "unknown target entity 'inexistentes'" },
     .{ .file = "system_fk_partial_pk.zig", .expected = "target fields do not match the complete pk nor any uk of entity 'franjas'" },
     .{ .file = "info_fks_no_array_form.zig", .expected = at("info_fks_no_array_form.zig") },
-    .{ .file = "defined_type_wrong_field_type.zig", .expected = "expected type 'i64', found '*const [1:0]u8'" },
+    .{ .file = "defined_type_wrong_field_type.zig", .expected = "expected type '?i64', found '*const [1:0]u8'" },
     .{ .file = "validar_cargo_missing_field.zig", .expected = at("validar_cargo_missing_field.zig") },
     .{ .file = "defined_type_no_field.zig", .expected = at("defined_type_no_field.zig") },
     .{ .file = "postgres_ddl_mapping_missing.zig", .expected = "entity 'clases', field 'fecha': missing PostgreSQL type mapping for domain type 'fecha'" },
@@ -45,9 +47,33 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "postgres_ddl_unknown_table.zig", .expected = "PostgreSQL DDL: unknown entity 'inexistentes'" },
     .{ .file = "postgres_ddl_identifier_too_long.zig", .expected = "PostgreSQL identifier 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' exceeds 63 bytes" },
     .{ .file = "postgres_ddl_fk_cycle.zig", .expected = "PostgreSQL DDL: foreign key cycle involving entity 'lefts' cannot be generated with inline constraints" },
-    .{ .file = "postgres_migrations_snapshot_stale.zig", .expected = "PostgreSQL schema differs from db/schema.snapshot.json; run 'zig build migration -Dname=<name>'" },
+    .{ .file = "postgres_migrations_snapshot_stale.zig", .expected = "PostgreSQL schema differs from db/schema.snapshot.json; run 'zig build migration'" },
     .{ .file = "rest_codec_missing.zig", .expected = "entity 'events', field 'when': missing REST codec for domain type 'fecha'" },
     .{ .file = "rest_codec_invalid.zig", .expected = "REST codec 'text': must be a zigma_rest.Codec" },
+    .{ .file = "rest_business_validator_unknown_entity.zig", .expected = "REST business validator 'missing': unknown entity" },
+    .{ .file = "rest_business_validator_invalid.zig", .expected = "REST business validator 'things': must be a zigma_rest.BusinessValidator" },
+};
+
+// Los tests de contrato de la primera etapa también tienen el paso `test-model`.
+// Se compara el diagnóstico esperado para que un fallo de compilación ajeno al
+// caso no haga pasar un test de rechazo mientras falta implementar la nueva API.
+const model_compile_error_cases = [_]CompileErrorCase{
+    .{ .file = "types_optional_domain.zig", .expected = "type 'optional_integer': domain types must be non-optional; use field 'nullable'" },
+    .{ .file = "record_optional_domain.zig", .expected = "type 'optional_integer': domain types must be non-optional; use field 'nullable'" },
+    .{ .file = "system_optional_domain.zig", .expected = "type 'optional_integer': domain types must be non-optional; use field 'nullable'" },
+    .{ .file = "system_row_unknown_entity.zig", .expected = "system: unknown entity 'missing'" },
+    .{ .file = "system_projection_unknown_field.zig", .expected = "entity 'things': projection field 'missing' is not a field of the entity" },
+    .{ .file = "system_projection_duplicate_field.zig", .expected = "entity 'things': duplicate projection field 'note'" },
+    .{ .file = "system_rule_unknown_field.zig", .expected = "rule 'display': field 'missing' is not a field of the entity" },
+    .{ .file = "system_rule_duplicate_field.zig", .expected = "rule 'display': duplicate field 'note'" },
+    .{ .file = "system_rule_unknown_name.zig", .expected = "entity 'things': unknown rule 'missing'" },
+    .{ .file = "entity_rules_invalid.zig", .expected = "entity definition: 'rules' must be a struct of rule definitions" },
+    .{ .file = "entity_rule_invalid.zig", .expected = "rule 'display': must be a struct with a 'fields' list" },
+    .{ .file = "entity_rule_missing_fields.zig", .expected = "rule 'display': missing 'fields'" },
+    .{ .file = "entity_rule_invalid_fields.zig", .expected = "rule 'display': 'fields' must be a list of field names" },
+    .{ .file = "entity_rule_unknown_property.zig", .expected = "rule 'display': unknown property 'field'" },
+    .{ .file = "system_row_missing_nullable.zig", .expected = "missing struct field: note" },
+    .{ .file = "system_patch_required_null.zig", .expected = "expected type 'bool', found '@TypeOf(null)'" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -55,7 +81,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const zigma_mod = b.addModule("zigma", .{
-        .root_source_file = b.path("src/zigma.zig"),
+        .root_source_file = b.path("src/framework/zigma.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -70,7 +96,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const rest_mod = b.addModule("zigma_rest", .{
-        .root_source_file = b.path("src/rest.zig"),
+        .root_source_file = b.path("src/rest/api.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -79,7 +105,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const postgres_crud_mod = b.addModule("zigma_postgres_crud", .{
-        .root_source_file = b.path("src/postgres_crud.zig"),
+        .root_source_file = b.path("src/postgres/crud.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -89,7 +115,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const std_http_mod = b.addModule("zigma_std_http", .{
-        .root_source_file = b.path("src/std_http.zig"),
+        .root_source_file = b.path("src/rest/std_http.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -109,7 +135,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const postgres_ddl_mod = b.addModule("zigma_postgres_ddl", .{
-        .root_source_file = b.path("src/postgres_ddl.zig"),
+        .root_source_file = b.path("src/postgres/ddl.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -117,14 +143,14 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const postgres_executor_mod = b.addModule("zigma_postgres_executor", .{
-        .root_source_file = b.path("src/postgres_executor.zig"),
+    const postgres_executor_ddl_mod = b.addModule("zigma_postgres_executor_ddl", .{
+        .root_source_file = b.path("src/postgres/executor_ddl.zig"),
         .target = target,
         .optimize = optimize,
     });
 
     const postgres_migrations_mod = b.addModule("zigma_postgres_migrations", .{
-        .root_source_file = b.path("src/postgres_migrations.zig"),
+        .root_source_file = b.path("src/postgres/migrations/schema.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -134,7 +160,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const liquibase_runner_mod = b.addModule("zigma_liquibase_runner", .{
-        .root_source_file = b.path("src/liquibase_runner.zig"),
+        .root_source_file = b.path("src/postgres/migrations/liquibase_runner.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -176,9 +202,9 @@ pub fn build(b: *std.Build) void {
 
     const run_create_migration = b.addRunArtifact(migration_tool);
     run_create_migration.addArg("draft");
-    if (b.option([]const u8, "name", "Migration name using letters, digits, and underscores")) |name|
+    if (b.option([]const u8, "name", "Optional migration name override using letters, digits, and underscores")) |name|
         run_create_migration.addArg(name);
-    const migration_step = b.step("migration", "Create a Liquibase SQL draft for the current entity changes");
+    const migration_step = b.step("migration", "Create an automatically named Liquibase SQL draft for the current entity changes");
     migration_step.dependOn(&run_create_migration.step);
 
     const schema_guard_mod = b.createModule(.{
@@ -204,7 +230,7 @@ pub fn build(b: *std.Build) void {
         "Prefix containing the libpq include/ and lib/ directories",
     );
     const postgres_libpq_translate = b.addTranslateC(.{
-        .root_source_file = b.path("src/postgres_libpq.h"),
+        .root_source_file = b.path("src/postgres/libpq.h"),
         .target = target,
         .optimize = optimize,
     });
@@ -218,11 +244,11 @@ pub fn build(b: *std.Build) void {
     }
 
     const postgres_libpq_mod = b.addModule("zigma_postgres_libpq", .{
-        .root_source_file = b.path("src/postgres_libpq.zig"),
+        .root_source_file = b.path("src/postgres/libpq.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "zigma_postgres_executor", .module = postgres_executor_mod },
+            .{ .name = "zigma_postgres_executor_ddl", .module = postgres_executor_ddl_mod },
             .{ .name = "libpq", .module = postgres_libpq_bindings_mod },
         },
     });
@@ -282,6 +308,34 @@ pub fn build(b: *std.Build) void {
     });
     const run_tests = b.addRunArtifact(tests);
 
+    const model_test_step = b.step("test-model", "Test normalized contract metadata and generated model types");
+    for ([_][]const u8{
+        "model_nullability_test.zig",
+        "system_model_test.zig",
+        "aida_nullable_test.zig",
+        "model_consumers_test.zig",
+        "aida_schema_reference_test.zig",
+    }) |file| {
+        const model_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(b.fmt("test/{s}", .{file})),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "zigma", .module = zigma_mod },
+                    .{ .name = "aida", .module = aida_mod },
+                    .{ .name = "aida_postgres", .module = aida_postgres_mod },
+                    .{ .name = "zigma_rest", .module = rest_mod },
+                    .{ .name = "zigma_postgres_ddl", .module = postgres_ddl_mod },
+                    .{ .name = "zigma_postgres_migrations", .module = postgres_migrations_mod },
+                    .{ .name = "zigma_postgres_crud", .module = postgres_crud_mod },
+                },
+            }),
+        });
+        const run_model_tests = b.addRunArtifact(model_tests);
+        model_test_step.dependOn(&run_model_tests.step);
+    }
+
     const postgres_ddl_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/postgres_ddl_test.zig"),
@@ -296,20 +350,20 @@ pub fn build(b: *std.Build) void {
     });
     const run_postgres_ddl_tests = b.addRunArtifact(postgres_ddl_tests);
 
-    const postgres_executor_tests = b.addTest(.{
+    const postgres_executor_ddl_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("test/postgres_executor_test.zig"),
+            .root_source_file = b.path("test/postgres_executor_ddl_test.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zigma", .module = zigma_mod },
                 .{ .name = "aida", .module = aida_mod },
                 .{ .name = "zigma_postgres_ddl", .module = postgres_ddl_mod },
-                .{ .name = "zigma_postgres_executor", .module = postgres_executor_mod },
+                .{ .name = "zigma_postgres_executor_ddl", .module = postgres_executor_ddl_mod },
             },
         }),
     });
-    const run_postgres_executor_tests = b.addRunArtifact(postgres_executor_tests);
+    const run_postgres_executor_ddl_tests = b.addRunArtifact(postgres_executor_ddl_tests);
 
     const postgres_migrations_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -326,6 +380,19 @@ pub fn build(b: *std.Build) void {
     });
     const run_postgres_migrations_tests = b.addRunArtifact(postgres_migrations_tests);
 
+    const postgres_migration_tool_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tools/postgres_migration_tool.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida_postgres", .module = aida_postgres_mod },
+                .{ .name = "zigma_postgres_migrations", .module = postgres_migrations_mod },
+            },
+        }),
+    });
+    const run_postgres_migration_tool_tests = b.addRunArtifact(postgres_migration_tool_tests);
+
     const liquibase_runner_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/liquibase_runner_test.zig"),
@@ -337,6 +404,16 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_liquibase_runner_tests = b.addRunArtifact(liquibase_runner_tests);
+    inline for (.{
+        "LIQUIBASE_BIN",
+        "LIQUIBASE_CHANGELOG",
+        "LIQUIBASE_PASSWORD",
+        "LIQUIBASE_SCHEMA",
+        "LIQUIBASE_URL",
+        "LIQUIBASE_USERNAME",
+    }) |application_variable| {
+        run_liquibase_runner_tests.setEnvironmentVariable(application_variable, "must-not-reach-liquibase");
+    }
 
     const rest_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -372,16 +449,19 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "aida_rest", .module = aida_rest_mod },
+                .{ .name = "zigma_rest", .module = rest_mod },
             },
         }),
     });
     const run_aida_rest_tests = b.addRunArtifact(aida_rest_tests);
 
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
+    test_step.dependOn(model_test_step);
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_postgres_ddl_tests.step);
-    test_step.dependOn(&run_postgres_executor_tests.step);
+    test_step.dependOn(&run_postgres_executor_ddl_tests.step);
     test_step.dependOn(&run_postgres_migrations_tests.step);
+    test_step.dependOn(&run_postgres_migration_tool_tests.step);
     test_step.dependOn(&run_liquibase_runner_tests.step);
     test_step.dependOn(&run_rest_tests.step);
     test_step.dependOn(&run_postgres_crud_tests.step);
@@ -398,7 +478,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zigma", .module = zigma_mod },
                 .{ .name = "aida", .module = aida_mod },
                 .{ .name = "zigma_postgres_ddl", .module = postgres_ddl_mod },
-                .{ .name = "zigma_postgres_executor", .module = postgres_executor_mod },
+                .{ .name = "zigma_postgres_executor_ddl", .module = postgres_executor_ddl_mod },
                 .{ .name = "zigma_postgres_libpq", .module = postgres_libpq_mod },
             },
         }),
@@ -414,7 +494,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zigma", .module = zigma_mod },
                 .{ .name = "aida", .module = aida_mod },
                 .{ .name = "zigma_postgres_ddl", .module = postgres_ddl_mod },
-                .{ .name = "zigma_postgres_executor", .module = postgres_executor_mod },
+                .{ .name = "zigma_postgres_executor_ddl", .module = postgres_executor_ddl_mod },
                 .{ .name = "zigma_postgres_libpq", .module = postgres_libpq_mod },
                 .{ .name = "aida_schema_guard", .module = schema_guard_mod },
             },
@@ -484,7 +564,7 @@ pub fn build(b: *std.Build) void {
     const liquibase_bin = b.option([]const u8, "liquibase-bin", "Path to the pinned Liquibase 5.0.4 CLI") orelse "liquibase";
 
     const accept_migration = b.addSystemCommand(&.{"sh"});
-    accept_migration.addFileArg(b.path("test/integration/accept_migration.sh"));
+    accept_migration.addFileArg(b.path("tools/accept_migration.sh"));
     accept_migration.addArtifactArg(migration_tool);
     accept_migration.addArtifactArg(schema_validator);
     accept_migration.addArg(liquibase_bin);
@@ -493,7 +573,7 @@ pub fn build(b: *std.Build) void {
     accept_migration_step.dependOn(&accept_migration.step);
 
     const baseline_existing = b.addSystemCommand(&.{"sh"});
-    baseline_existing.addFileArg(b.path("test/integration/baseline_existing.sh"));
+    baseline_existing.addFileArg(b.path("tools/baseline_existing.sh"));
     baseline_existing.addArtifactArg(schema_validator);
     baseline_existing.addArg(liquibase_bin);
     baseline_existing.addDirectoryArg(b.path("."));
@@ -504,13 +584,13 @@ pub fn build(b: *std.Build) void {
     run_migration_tests.addFileArg(b.path("test/integration/run_migrations.sh"));
     run_migration_tests.addArtifactArg(schema_validator);
     run_migration_tests.addArtifactArg(postgres_liquibase_bootstrap);
-    run_migration_tests.addFileArg(b.path("test/integration/baseline_existing.sh"));
+    run_migration_tests.addFileArg(b.path("tools/baseline_existing.sh"));
     run_migration_tests.addArg(liquibase_bin);
     run_migration_tests.addDirectoryArg(b.path("."));
     const migration_test_step = b.step("test-migrations", "Run Liquibase migration tests against disposable PostgreSQL");
     migration_test_step.dependOn(&run_migration_tests.step);
 
-    for (compile_error_cases) |case| {
+    for (compile_error_cases ++ model_compile_error_cases) |case| {
         const case_obj = b.addObject(.{
             .name = case.file[0 .. case.file.len - 4],
             .root_module = b.createModule(.{
@@ -528,5 +608,9 @@ pub fn build(b: *std.Build) void {
         });
         case_obj.expect_errors = .{ .contains = case.expected };
         test_step.dependOn(&case_obj.step);
+        for (model_compile_error_cases) |model_case| {
+            if (std.mem.eql(u8, case.file, model_case.file))
+                model_test_step.dependOn(&case_obj.step);
+        }
     }
 }

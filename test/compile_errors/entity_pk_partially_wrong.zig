@@ -1,5 +1,5 @@
-//! expected: pk field 'inexistente' is not a field
-//! (a wrong key among valid ones is also rejected)
+//! Diagnóstico esperado: `pk field 'inexistente' is not a field`.
+//! También se rechaza una clave incorrecta entre otras válidas.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

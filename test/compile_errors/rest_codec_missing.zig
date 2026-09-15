@@ -10,5 +10,7 @@ const entity = zigma.defineEntity(.{ .pk = .{"when"}, .fields = fields });
 const entities = zigma.defineEntities(.{ .events = entity });
 
 comptime {
-    _ = rest.Api(entities, rest.common_codecs);
+    _ = rest.Api(Model, rest.common_codecs);
 }
+
+const Model = zigma.System(type_defs, entities);

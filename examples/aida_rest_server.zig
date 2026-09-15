@@ -1,5 +1,5 @@
-//! Complete Phase 3 composition: accepted Liquibase history first, then one
-//! libpq connection and the generated AIDA REST API.
+//! Composición completa de la fase 3: primero el historial aceptado de Liquibase;
+//! después, una conexión libpq y la API REST generada de AIDA.
 
 const std = @import("std");
 const aida = @import("aida");
@@ -11,10 +11,14 @@ const std_http = @import("zigma_std_http");
 const schema_guard = @import("aida_schema_guard");
 
 comptime {
+    // Referenciar el guard basta para evaluar su comprobación del snapshot
+    // aceptado durante la compilación de este ejecutable.
     _ = schema_guard;
 }
 
 pub fn main(init: std.process.Init) !void {
+    // La URL nativa de libpq y la URL JDBC de Liquibase describen la misma base
+    // de datos con los formatos que entiende cada cliente.
     const database_url = init.environ_map.get("DATABASE_URL") orelse {
         std.debug.print("DATABASE_URL is required (for example postgresql://user:password@localhost:5432/zigma_dev)\n", .{});
         return error.MissingDatabaseUrl;
@@ -25,6 +29,8 @@ pub fn main(init: std.process.Init) !void {
     };
     const schema_name = init.environ_map.get("LIQUIBASE_SCHEMA") orelse "public";
 
+    // Aplica el historial aceptado antes de recibir tráfico. Si falla una migración,
+    // el arranque termina: ninguna solicitud observa una aplicación actualizada a medias.
     try liquibase.update(init.gpa, .{
         .executable = init.environ_map.get("LIQUIBASE_BIN") orelse "liquibase",
         .changelog_file = init.environ_map.get("LIQUIBASE_CHANGELOG") orelse "db/changelog-root.yaml",
@@ -34,6 +40,8 @@ pub fn main(init: std.process.Init) !void {
         .schema_name = schema_name,
     });
 
+    // Los recursos de runtime se crean solo después de superar tanto la comprobación
+    // del schema en compilación como el paso de migración en runtime.
     var connection = libpq.Connection.init(init.gpa);
     defer connection.deinit();
     try connection.connect(database_url);
@@ -45,8 +53,10 @@ pub fn main(init: std.process.Init) !void {
         8080;
     const address = init.environ_map.get("HTTP_ADDRESS") orelse "127.0.0.1";
 
+    // Api aporta routing y validación; Repository, SQL; y std_http, sockets.
+    // Sus interfaces estructurales permiten reemplazar cada componente.
     var api = aida_rest.Api.init(.{});
-    var repository = crud.Repository(aida.entity_defs).init(&connection);
+    var repository = crud.Repository(aida.Model).init(&connection);
     std.debug.print("AIDA REST listening on http://{s}:{d}\n", .{ address, port });
     try std_http.serve(init.io, init.gpa, &api, &repository, .{
         .address = address,
@@ -59,6 +69,8 @@ fn setSearchPath(
     connection: *libpq.Connection,
     schema_name: []const u8,
 ) !void {
+    // Los nombres de schema son identificadores y no pueden ser parámetros de valor
+    // de libpq. Se delimitan como identificadores SQL y se duplican sus comillas internas.
     var sql: std.ArrayList(u8) = .empty;
     defer sql.deinit(allocator);
     try sql.appendSlice(allocator, "SET search_path TO \"");

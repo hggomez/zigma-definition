@@ -1,5 +1,6 @@
 const std = @import("std");
 const aida_rest = @import("aida_rest");
+const rest = @import("zigma_rest");
 
 test "AIDA fecha codec accepts real ISO dates" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -25,4 +26,21 @@ test "AIDA email deliberately aliases the text codec" {
         "not-validated-yet",
         try aida_rest.codecs.email.queryToPostgres(arena.allocator(), "not-validated-yet"),
     );
+}
+
+test "AIDA REST docente adapter reports the domain business violation" {
+    const values = [_]rest.FieldValue{
+        .{ .name = "docente", .value = "d1" },
+        .{ .name = "apellido", .value = null },
+        .{ .name = "nombres", .value = "Ada" },
+        .{ .name = "cargo", .value = "teorico" },
+        .{ .name = "email", .value = null },
+        .{ .name = "email_alternativo", .value = null },
+        .{ .name = "jefe", .value = null },
+        .{ .name = "telefono", .value = null },
+        .{ .name = "experiencia", .value = "4" },
+    };
+
+    const violation = (try aida_rest.business_validators.docentes.validate(&values)).?;
+    try std.testing.expectEqualStrings("teorico_requires_five_years_experience", violation.code);
 }

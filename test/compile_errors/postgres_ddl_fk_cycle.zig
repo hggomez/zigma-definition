@@ -1,4 +1,5 @@
-//! expected: cross-table foreign key cycles require a later ALTER TABLE phase
+//! Se espera un rechazo: los ciclos de claves foráneas entre tablas
+//! requieren una fase posterior de ALTER TABLE.
 const zigma = @import("zigma");
 const ddl = @import("zigma_postgres_ddl");
 
@@ -22,5 +23,6 @@ comptime {
         .fields = right_fields,
     });
     const entities = zigma.defineEntities(.{ .lefts = lefts, .rights = rights });
-    _ = ddl.createSchemaDdl(entities, ddl.common_type_mappings);
+    const Model = zigma.System(zigma.common_type_defs, entities);
+    _ = ddl.createSchemaDdl(Model, ddl.common_type_mappings);
 }

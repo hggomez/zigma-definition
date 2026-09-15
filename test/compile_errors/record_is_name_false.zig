@@ -1,6 +1,6 @@
-//! expected: is_name only admits true
-//! (in a Def only `.is_name = true` can be written; false is the default and
-//! it is made explicit by the completion, like `isName?: true` in TypeScript)
+//! Diagnóstico esperado: `is_name only admits true`.
+//! En una Def solo se puede escribir `.is_name = true`; false es el default
+//! y la normalización lo explicita, como `isName?: true` en TypeScript.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

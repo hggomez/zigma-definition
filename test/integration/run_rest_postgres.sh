@@ -97,7 +97,7 @@ fi
 
 request --request POST --header 'content-type: application/json' \
     --data '{"docente":"d1","nombres":"Ada"}' "$base_url/docentes"
-expect_response 201 '{"docente":"d1","apellido":null,"nombres":"Ada","cargo":null,"email":null,"email_alternativo":null,"jefe":null}'
+expect_response 201 '{"docente":"d1","apellido":null,"nombres":"Ada","cargo":null,"email":null,"email_alternativo":null,"jefe":null,"telefono":null,"experiencia":null}'
 
 request --request POST --header 'content-type: application/json' \
     --data '{"materia":"m1","denominacion":"Álgebra"}' "$base_url/materias"

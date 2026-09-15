@@ -1,6 +1,6 @@
-//! expected: expected type
-//! (after completion the array form is gone: fields is always the
-//! source→target map, it cannot be used as a list)
+//! Diagnóstico esperado: `expected type`.
+//! Después de normalizar desaparece la forma de array: fields siempre es
+//! el mapa origen→destino y no se puede usar como una lista.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

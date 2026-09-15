@@ -6,5 +6,7 @@ const entity = zigma.defineEntity(.{ .pk = .{"name"}, .fields = fields });
 const entities = zigma.defineEntities(.{ .things = entity });
 
 comptime {
-    _ = rest.Api(entities, .{ .text = 42 });
+    _ = rest.Api(Model, .{ .text = 42 });
 }
+
+const Model = zigma.System(zigma.common_type_defs, entities);

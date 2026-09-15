@@ -1,4 +1,4 @@
-//! expected: uk field 'inexistente' is not a field
+//! Diagnóstico esperado: `uk field 'inexistente' is not a field`.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

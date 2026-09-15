@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+# Developer workflow: validate a schema created before Liquibase adoption, then
+# mark only the initial baseline as executed without replaying its CREATEs.
+
 validator=$1
 liquibase_bin=$2
 project_root=$(CDPATH= cd "$3" && pwd)

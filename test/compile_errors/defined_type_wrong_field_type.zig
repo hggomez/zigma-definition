@@ -1,5 +1,5 @@
-//! expected: expected type 'i64', found '*const [1:0]u8'
-//! (a field with the wrong type is rejected in a typed declaration)
+//! Diagnóstico esperado: `expected type 'i64', found '*const [1:0]u8'`.
+//! Una declaración tipada rechaza un campo con tipo incorrecto.
 const aida = @import("aida");
 
 comptime {

@@ -15,12 +15,13 @@ implementaciones on-the-fly pueden derivar los scripts de creación de tablas, l
 CRUD con su capa de base de datos, las pantallas del frontend, los serializadores en ambos
 sentidos, los validadores de tipo, etc.
 
-Este módulo cubre solo la parte descriptiva de los sistemas: no genera nada por sí mismo.
+El núcleo descriptivo normaliza el contrato y deriva tipos Zig en compilación. La generación
+de SQL y REST vive en módulos independientes.
 
 El paquete también incluye el módulo independiente `zigma_postgres_ddl`, que consume esas
 descripciones y genera las sentencias PostgreSQL de creación inicial del schema. No forma
 parte del núcleo descriptivo y requiere un mapping explícito de tipos de dominio a tipos SQL.
-Los módulos opcionales `zigma_postgres_executor` y `zigma_postgres_libpq` permiten ejecutar
+Los módulos opcionales `zigma_postgres_executor_ddl` y `zigma_postgres_libpq` permiten ejecutar
 ese DDL en una transacción sin acoplar el generador a una conexión concreta.
 
 Para schemas versionados, `zigma_postgres_migrations` deriva un snapshot canónico y drafts
@@ -42,8 +43,9 @@ Cada concepto descriptivo tiene (al menos) dos versiones, distinguidas por sufij
   todo explícito; es lo que consumen los generadores.
 
 La `Info` se deriva determinísticamente de la `Def` con funciones comptime (`completeRecord`,
-`completeEntity`), y ambas son serializables (representables como datos planos, sin funciones
-embebidas: los comportamientos especiales se referencian por nombre).
+`completeEntity`). `Model.info` reúne los metadatos serializables de todas las entidades:
+no contiene valores Zig `type` ni funciones. Las colecciones `TypeDef`, que sí contienen
+tipos Zig, permanecen fuera de esa representación.
 
 ## Vocabulario
 
@@ -54,7 +56,10 @@ Cada sistema define su propia colección de tipos, asociando un nombre de tipo (
 (`zigma.TypeDef{ .Type = i64 }`). El framework aporta unos pocos tipos comunes en
 `zigma.common_type_defs` (`text`, `integer`, `boolean`) como punto de partida; cada sistema
 puede agregar los suyos (en el ejemplo, `fecha` y `email`) combinándolos con `zigma.merge`.
-`defineTypes(.{...})` valida la colección en el punto de declaración.
+`defineTypes(.{...})` valida la colección en el punto de declaración. `TypeDef.Type` describe
+un valor no-null: se rechazan dominios opcionales como `?i64`; la propiedad `nullable` del
+campo es la única responsable de generar `?T`. `System` y `RecordInstanceType` también
+comprueban esto si se les pasa una colección sin usar `defineTypes`.
 
 ### Campos: `FieldDef` / `FieldInfo`
 
@@ -75,12 +80,14 @@ y los literales de `type` de cada campo — y es el tipo que devuelve `completeR
 `RecordInstanceType(type_defs, rec)` deduce, a partir de un record y la colección de tipos del
 sistema, el tipo Zig de una instancia real de ese record (los valores que tomaría cada campo
 en tiempo de ejecución). `DefinedType` en el ejemplo `aida` es ese mismo cálculo, atado de una
-vez a los `type_defs` del sistema, para no repetirlos en cada función de negocio.
+vez a los `type_defs` del sistema, para no repetirlos en cada función de negocio. Cada campo
+es `T` o `?T` según su nulabilidad declarada, cuyo default es `true`. El record no conoce
+las restricciones de PK de las entidades que lo reutilizan.
 
 ### Entidades: `EntityDef`
 
 Una entidad es el nivel contenedor — la unidad representable como grilla —, con la forma
-`{fields, pk, fks, uks}`. Se construye con `zigma.defineEntity(.{...})`, que chequea en
+`{fields, pk, fks, uks, rules}`. Se construye con `zigma.defineEntity(.{...})`, que chequea en
 compilación que cada nombre de `pk` (y de cada `uk`, y cada campo origen de cada `fk`) sea
 un campo de `fields`, y preserva los literales.
 
@@ -112,7 +119,78 @@ entidad destino exista, y que sus campos destino sean su pk completa o una de su
 
 `zigma.completeEntity(entity)` completa una entidad entera: los campos (con `completeRecord`),
 la pk (deduplicada), las fks (siempre en la forma de mapa origen→destino, aunque se hayan
-escrito como lista) y las uks (tal cual, o vacías si no se declararon).
+escrito como lista), las uks y las reglas (vacías por default). Los campos de la PK
+quedan con `nullable = false` en la entidad normalizada, sin alterar el record original.
+
+## Modelo compartido y tipos generados
+
+La composición se hace una sola vez; AIDA la publica como `aida.Model`:
+
+```zig
+pub const Model = zigma.System(type_defs, entity_defs);
+const Docente = Model.Row("docentes");
+const Contacto = Model.Projection("docentes", .{ "docente", "telefono" });
+const DocentePatch = Model.Patch("docentes");
+const DocenteFilters = Model.Filters("docentes");
+```
+
+| Tipo | Uso y nulabilidad |
+|---|---|
+| `RecordInstanceType(type_defs, record)` | Instancia del record; respeta su `nullable`, sin imponer PK. |
+| `Model.Row(entity)` | Fila completa con nulabilidad efectiva: los campos PK son obligatorios. |
+| `Model.Projection(entity, fields)` | Selección en el orden solicitado, con los mismos tipos que la fila; admite selección vacía. |
+| `Model.Patch(entity)` | Campos no-PK; cada uno tiene `unset` por default o `set: FieldType`. |
+| `Model.Filters(entity)` | Cada campo es `?T`, usando el dominio no-null; default `null` significa ausencia de filtro. |
+| `Model.RuleInput(entity, rule)` | Proyección de las dependencias declaradas de una regla. |
+
+Las filas y proyecciones no tienen defaults Zig: una fila completa debe incluir también los
+campos nullable, aunque su valor sea `null`. En HTTP, el parser de POST sigue completando
+con null los campos nullable omitidos.
+
+```zig
+var patch: DocentePatch = .{};        // Ningún cambio.
+patch.telefono = .{ .set = null };   // Borrar el teléfono.
+patch.telefono = .{ .set = "null" }; // Guardar el texto literal "null".
+
+var filters: DocenteFilters = .{};   // Ningún filtro.
+filters.docente = "d1";              // Igualdad por identificador.
+```
+
+`Filters` mantiene los filtros de igualdad actuales: no representa `IS NULL`. Por ejemplo,
+`?telefono=null` filtra por el texto `"null"`, mientras un filtro Zig con valor `null` está ausente.
+
+Los metadatos quedan disponibles como `Model.info.docentes.fields.telefono.nullable`.
+REST, CRUD, DDL y snapshots reciben ese mismo `Model`; los mappings SQL y los codecs
+se componen por separado. Las firmas anteriores que recibían `entity_defs` se reemplazaron,
+sin wrappers de compatibilidad. La frontera REST/repositorio todavía intercambia valores
+textuales: los codecs y el repositorio tipados corresponden a una etapa posterior.
+
+### Dependencias de reglas
+
+Una entidad puede declarar un mapa de reglas, sin funciones ni tipos repetidos:
+
+```zig
+const docentes = zigma.defineEntity(.{
+    .fields = docente,
+    .pk = .{"docente"},
+    .rules = .{
+        .docente_experience = .{ .fields = .{ "cargo", "experiencia" } },
+    },
+});
+const Model = zigma.System(type_defs, .{ .docentes = docentes });
+const Input = Model.RuleInput("docentes", "docente_experience");
+// Input tiene cargo: ?[]const u8 y experiencia: ?i64 según este contrato.
+```
+
+Se comprueban estructura, propiedades, campos inexistentes y dependencias repetidas al
+compilar. El orden de reglas y campos se conserva. Consultar una entidad o regla inexistente,
+o repetir un campo en una proyección, también produce un diagnóstico localizado.
+
+En esta etapa `rules` aporta metadatos y tipos; no registra ni ejecuta validadores. Los
+validadores REST existentes se siguen componiendo explícitamente por entidad. Las reglas
+pueden serializarse como parte de `Model.info`, pero se excluyen del DDL y del snapshot
+PostgreSQL: modificarlas no genera una migración. No hay todavía un comando de exportación
+ni un formato público de manifest.
 
 ## Ejemplo: sistema de alumnos (aida)
 
@@ -137,22 +215,49 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
 
 ## Estructura
 
-* `src/zigma.zig`: el framework descriptor (módulo `zigma`); no conoce ningún sistema
+El código del framework se agrupa por responsabilidad:
+
+```text
+src/
+├── framework/
+│   └── zigma.zig
+├── rest/
+│   ├── api.zig
+│   └── std_http.zig
+└── postgres/
+    ├── crud.zig
+    ├── ddl.zig
+    ├── executor_ddl.zig
+    ├── libpq.zig
+    ├── libpq.h
+    └── migrations/
+        ├── schema.zig
+        └── liquibase_runner.zig
+```
+
+`framework` contiene el contrato y los tipos derivados; `rest`, el controlador y su
+transporte HTTP; `postgres`, la persistencia y sus migraciones. Estas últimas se agrupan
+dentro de PostgreSQL porque actualmente el snapshot y el SQL generado son específicos
+de ese motor. Los nombres públicos de módulos (`zigma`, `zigma_rest`,
+`zigma_postgres_crud`, etc.) se mantienen independientes de las rutas internas.
+
+* `src/framework/zigma.zig`: el framework descriptor (módulo `zigma`); no conoce ningún sistema
   concreto.
-* `src/postgres_ddl.zig`: generación comptime del DDL PostgreSQL inicial.
-* `src/postgres_executor.zig`: política transaccional independiente del driver.
-* `src/postgres_libpq.zig`: adaptador bloqueante y mínimo sobre `libpq`.
-* `src/postgres_migrations.zig`: snapshot, diff estructural y drafts formatted-SQL.
-* `src/liquibase_runner.zig`: invocación runtime directa y bloqueante de Liquibase.
-* `src/rest.zig`: codecs, routing, JSON, validación y respuestas REST, sin sockets ni base.
-* `src/postgres_crud.zig`: CRUD PostgreSQL parametrizado derivado de las entidades.
-* `src/std_http.zig`: adaptador HTTP bloqueante y secuencial sobre `std.http`.
+* `src/postgres/ddl.zig`: generación comptime del DDL PostgreSQL inicial.
+* `src/postgres/executor_ddl.zig`: política transaccional independiente del driver.
+* `src/postgres/libpq.zig`: adaptador bloqueante y mínimo sobre `libpq`.
+* `src/postgres/migrations/schema.zig`: snapshot, diff estructural y drafts formatted-SQL.
+* `src/postgres/migrations/liquibase_runner.zig`: invocación runtime directa y bloqueante de Liquibase.
+* `src/rest/api.zig`: codecs, routing, JSON, validación y respuestas REST, sin sockets ni base.
+* `src/postgres/crud.zig`: CRUD PostgreSQL parametrizado derivado de las entidades.
+* `src/rest/std_http.zig`: adaptador HTTP bloqueante y secuencial sobre `std.http`.
 * `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
 * `examples/aida_postgres.zig`: mappings y modelo PostgreSQL compilado de AIDA.
 * `examples/aida_rest.zig`: codecs de `fecha`/`email` y API REST compilada de AIDA.
 * `examples/aida_rest_server.zig`: composición Liquibase → libpq → REST → `std.http`.
 * `db/`: snapshot aceptado, changelog raíz, changesets inmutables y drafts.
-* `tools/`: workflow de migraciones y comparación estructural vía `pg_catalog`.
+* `tools/`: comandos de desarrollo para crear/aceptar migraciones, adoptar bases existentes
+  y comparar estructuralmente schemas vía `pg_catalog`.
 * `test/*_test.zig`: tests positivos del descriptor, el DDL y el executor.
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
   error esperado listado en `build.zig`.
@@ -163,7 +268,9 @@ Enfoque TDD, avanzando de a pasos chicos: primero el test que muestra el problem
 implementación mínima que lo hace pasar. Los tests son fuertes: además de los positivos,
 prueban los rechazos esperados como casos de "no compila".
 
-`zig build test` corre todo: tests de runtime y casos de no-compila.
+`zig build test-model` verifica los tipos generados, la nulabilidad compartida, los
+diagnósticos de compilación y la igualdad de DDL/snapshot con las referencias anteriores.
+`zig build test` incluye ese conjunto y los demás tests de runtime y casos de no-compila.
 
 ## Estado
 
@@ -187,8 +294,8 @@ exe.root_module.addImport("zigma", zigma);
 const postgres_ddl = b.dependency("zigma_definition", .{}).module("zigma_postgres_ddl");
 exe.root_module.addImport("zigma_postgres_ddl", postgres_ddl);
 
-const postgres_executor = b.dependency("zigma_definition", .{}).module("zigma_postgres_executor");
-exe.root_module.addImport("zigma_postgres_executor", postgres_executor);
+const postgres_executor_ddl = b.dependency("zigma_definition", .{}).module("zigma_postgres_executor_ddl");
+exe.root_module.addImport("zigma_postgres_executor_ddl", postgres_executor_ddl);
 
 const postgres_migrations = b.dependency("zigma_definition", .{}).module("zigma_postgres_migrations");
 exe.root_module.addImport("zigma_postgres_migrations", postgres_migrations);
@@ -228,8 +335,8 @@ const mappings = postgres_ddl.defineTypeMappings(zigma.merge(.{
     },
 }));
 
-const materias_sql = postgres_ddl.createTableDdl(aida.entity_defs, "materias", mappings);
-const schema_sql = postgres_ddl.createSchemaDdl(aida.entity_defs, mappings);
+const materias_sql = postgres_ddl.createTableDdl(aida.Model, "materias", mappings);
+const schema_sql = postgres_ddl.createSchemaDdl(aida.Model, mappings);
 ```
 
 La salida contiene `CREATE TABLE IF NOT EXISTS`, columnas, PKs, UKs y FKs con nombres
@@ -268,10 +375,15 @@ Se puede indicar la ruta exacta con `-Dliquibase-bin=/ruta/a/liquibase`. El fluj
 # 1. Modificar entidades o mappings; el build ahora falla mostrando el diff.
 zig build
 
-# 2. Crear el único draft permitido. No avanza el snapshot.
-zig build migration -Dname=add_example
+# 2. Crear el único draft permitido con un nombre derivado del diff.
+#    No avanza el snapshot.
+zig build migration
 
-# 3. Revisar db/drafts/000002_add_example.sql. Los comentarios
+# Opcionalmente reemplazar el nombre automático cuando la intención humana
+# sea más precisa, por ejemplo al resolver un remove+add como rename.
+zig build migration -Dname=rename_example
+
+# 3. Revisar el SQL creado en db/drafts/. Los comentarios
 #    ZIGMA-BLOCKER requieren SQL PostgreSQL manual y deben eliminarse.
 
 # 4. Reproducir historia + candidato en PostgreSQL descartable, comparar
@@ -285,6 +397,11 @@ Las revisiones tienen seis dígitos y son secuenciales. Un conflicto entre branc
 rebaseando y regenerando el draft, porque el orden es parte del contrato. Los hashes SHA-256
 de los snapshots origen y destino impiden aceptar un draft stale. Los changesets aceptados no
 se editan: Liquibase detecta cualquier modificación mediante su checksum.
+
+El nombre automático es determinístico: un único cambio usa su operación, tabla y objeto;
+varios cambios sobre una tabla producen `update_<tabla>` y cambios sobre varias tablas
+producen `update_schema`. Los identificadores se normalizan a ASCII minúsculo. `-Dname`
+permanece como override opcional y no cambia qué diferencias ni qué SQL se generan.
 
 Los cambios seguros (tabla nueva, columna nullable, quitar `NOT NULL`, nuevas UK/FK) se
 renderizan directamente. Drops, posibles renames, columnas nuevas no-null, casts, `SET NOT
@@ -307,7 +424,7 @@ zig build run-postgres-liquibase-bootstrap
 ```
 
 Liquibase aporta checksums y locking para startups concurrentes. Un error de ejecutable,
-conexión, checksum o changeset impide el arranque. `zigma_postgres_executor` y `libpq` siguen
+conexión, checksum o changeset impide el arranque. `zigma_postgres_executor_ddl` y `libpq` siguen
 disponibles, pero no aplican el historial versionado.
 
 ### Inicialización, adopción y tests
@@ -346,21 +463,21 @@ aceptada; nunca calcula diferencias contra una base viva durante startup.
 
 ## Ejecución transaccional
 
-`zigma_postgres_executor` recibe el string inmutable y cualquier conexión que implemente
+`zigma_postgres_executor_ddl` recibe el string inmutable y cualquier conexión que implemente
 estructuralmente `begin`, `exec`, `commit` y `rollback`. De esa forma la política de
 transacción no depende de `libpq` ni de las definiciones del sistema:
 
 ```zig
-const postgres_executor = @import("zigma_postgres_executor");
+const postgres_executor_ddl = @import("zigma_postgres_executor_ddl");
 const postgres_libpq = @import("zigma_postgres_libpq");
 
-const schema_sql = postgres_ddl.createSchemaDdl(aida.entity_defs, mappings);
+const schema_sql = postgres_ddl.createSchemaDdl(aida.Model, mappings);
 
 var connection = postgres_libpq.Connection.init(allocator);
 defer connection.deinit();
 try connection.connect(database_url);
 
-try postgres_executor.executeSchema(&connection, schema_sql);
+try postgres_executor_ddl.executeSchema(&connection, schema_sql);
 ```
 
 El executor abre una transacción propia. Si falla la ejecución o el commit, intenta rollback
@@ -397,7 +514,7 @@ schema.
 
 ## REST CRUD derivado de las entidades
 
-`zigma_rest.Api(entity_defs, codecs)` produce en compilación la tabla de rutas y el dispatch
+`zigma_rest.Api(Model, codecs)` produce en compilación la tabla de rutas y el dispatch
 para todas las entidades. Los codecs se mantienen separados tanto de `TypeDef` como de los
 mappings SQL. El framework incluye `text`, `integer` y `boolean`; AIDA agrega `fecha` ISO
 `YYYY-MM-DD` y usa el codec de texto para `email`:
@@ -411,10 +528,29 @@ const codecs = rest.defineCodecs(aida.type_defs, zigma.merge(.{
     },
 }));
 
-const Api = rest.Api(aida.entity_defs, codecs);
+const Api = rest.Api(aida.Model, codecs);
 var api = Api.init(.{});
-var repository = postgres_crud.Repository(aida.entity_defs).init(&connection);
+var repository = postgres_crud.Repository(aida.Model).init(&connection);
 ```
+
+Las aplicaciones pueden registrar reglas de negocio por entidad sin modificar los
+controllers generados. Cada validador recibe una fila completa en la representación textual actual
+(`[]const rest.FieldValue`, con valores de texto o null). `POST` valida
+antes del `INSERT`; para `PUT`, el controller selecciona las filas actuales, aplica el patch
+en memoria y valida cada estado resultante antes del `UPDATE`:
+
+```zig
+const validators = rest.defineBusinessValidators(aida.Model, .{
+    .docentes = rest.BusinessValidator{ .validate = validateDocenteBusinessRules },
+});
+
+const Api = rest.ApiWithBusinessValidators(aida.Model, codecs, validators);
+```
+
+Una regla rechazada responde `422` con el `code` y `message` definidos por la aplicación.
+Las entidades sin regla registrada conservan el flujo normal y no realizan la lectura previa
+en `PUT`. Estas reglas protegen las escrituras realizadas por esta API, pero no sustituyen un
+constraint de base de datos para clientes que escriban por otra vía.
 
 Por cada nombre exacto de entidad se exponen `GET`, `POST`, `PUT` y `DELETE` bajo
 `/api/<entidad>`. Los filtros de query usan igualdad y `AND`; su orden en SQL siempre sigue

@@ -1,4 +1,4 @@
-//! expected: 'sql_type' must be a non-empty string
+//! Diagnóstico esperado: `'sql_type' must be a non-empty string`.
 const ddl = @import("zigma_postgres_ddl");
 
 comptime {

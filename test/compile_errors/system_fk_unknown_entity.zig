@@ -1,5 +1,5 @@
-//! expected: unknown target entity 'inexistentes'
-//! (a fk to an entity that is not part of the system is rejected)
+//! Diagnóstico esperado: `unknown target entity 'inexistentes'`.
+//! Se rechaza una FK a una entidad que no pertenece al sistema.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

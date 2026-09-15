@@ -1,6 +1,6 @@
-//! expected: no field named 'docente'
-//! ('docente' is a field of cursos but is not part of the pk, so the
-//! extracted record does not have it)
+//! Diagnóstico esperado: `no field named 'docente'`.
+//! 'docente' es un campo de cursos, pero no pertenece a la PK;
+//! por eso el record extraído no lo contiene.
 const zigma = @import("zigma");
 const aida = @import("aida");
 
