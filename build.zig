@@ -22,7 +22,7 @@ fn at(comptime file: []const u8) []const u8 {
 /// nativos se usa `at` (ver arriba).
 const CompileErrorCase = struct { file: []const u8, expected: []const u8 };
 
-const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }{
+const compile_error_cases = [_]CompileErrorCase{
     .{ .file = "types_not_a_typedef.zig", .expected = "type 'text': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
     .{ .file = "types_extra_property.zig", .expected = "type 'fecha': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
     .{ .file = "record_unknown_type.zig", .expected = "unknown type 'inexistente'" },
@@ -88,7 +88,7 @@ pub const PackageFiles = struct {
 
 pub fn filesHere(b: *std.Build) PackageFiles {
     return .{
-        .zigma = b.path("src/zigma.zig"),
+        .zigma = b.path("src/framework/zigma.zig"),
         .json = b.path("src/json.zig"),
         .frontend_main = b.path("src/frontend/main.zig"),
         .frontend_js = b.path("src/frontend/main.js"),
@@ -99,7 +99,7 @@ pub fn filesHere(b: *std.Build) PackageFiles {
 
 pub fn filesFromDependency(dep: *std.Build.Dependency) PackageFiles {
     return .{
-        .zigma = dep.path("src/zigma.zig"),
+        .zigma = dep.path("src/framework/zigma.zig"),
         .json = dep.path("src/json.zig"),
         .frontend_main = dep.path("src/frontend/main.zig"),
         .frontend_js = dep.path("src/frontend/main.js"),

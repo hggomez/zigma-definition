@@ -4,10 +4,9 @@ Port a Zig del módulo `system-design` (TypeScript): la parte descriptiva del fr
 SSOTIGAD (Single Source Of Truth Implies Good Application Design). Provee el vocabulario
 para describir sistemas (tipos de dominio, entidades, campos, pks, uks, fks) de modo que
 generadores automáticos puedan derivar tablas, endpoints, pantallas, serializadores y
-validadores. Este módulo cubre la parte descriptiva (`src/zigma.zig`) y generadores que la
-consumen (JSON, HTTP, frontend WASM). El descriptor no importa a los generadores.
-validadores. El núcleo `zigma` cubre **solo la parte descriptiva**; la generación y ejecución
-PostgreSQL viven en módulos independientes.
+validadores. El núcleo `zigma` (`src/framework/zigma.zig`) cubre **solo la parte
+descriptiva** y no importa generadores. JSON, HTTP, frontend WASM y la generación y
+ejecución PostgreSQL viven en módulos independientes que consumen el contrato.
 
 La referencia semántica es el repo `system-design` (hermano de este): la convención
 Def/Info, los nombres ya elegidos y las decisiones de diseño están documentados en su
@@ -26,46 +25,60 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 
 ## Estructura
 
+`AGENTS.md` contiene el mapa de consulta por tarea.
+
 * `README.md`: guía de uso, arranque de AIDA, migraciones y tests.
 * `DOCS.md`: referencia del contrato, arquitectura y APIs del framework.
-* `src/framework/zigma.zig`: el framework descriptor (módulo `zigma`). No conoce ningún sistema concreto.
+* `docs/`: guías de build, ejecución del ejemplo, frontend, vocabulario y diseño de validadores.
+* `src/framework/zigma.zig`: descriptor y modelo normalizado (módulo `zigma`). No conoce
+  ningún sistema concreto ni importa generadores.
+* `src/json.zig`: generador JSON (módulo `zigma_json`); depende del descriptor `zigma`.
+* `src/http/main.zig`: backend HTTP genérico con CRUD en memoria; recibe el módulo
+  `system` (`type_defs` + `entity_defs`, `seeds` opcional).
+* `src/frontend/`: cliente WASM genérico que consume el mismo contrato `system`.
+* `src/rest/api.zig`: codecs, routing, JSON y validación CRUD (módulo `zigma_rest`); no conoce
+  sockets ni PostgreSQL.
+* `src/rest/std_http.zig`: servidor secuencial de referencia (módulo `zigma_std_http`).
 * `src/postgres/ddl.zig`: generación comptime del DDL inicial (módulo
   `zigma_postgres_ddl`).
 * `src/postgres/executor_ddl.zig`: ejecución transaccional independiente del driver (módulo
   `zigma_postgres_executor_ddl`).
 * `src/postgres/libpq.zig`: adaptador bloqueante opcional sobre `libpq` (módulo
   `zigma_postgres_libpq`).
+* `src/postgres/crud.zig`: SQL CRUD parametrizado derivado de entidades (módulo
+  `zigma_postgres_crud`).
 * `src/postgres/migrations/schema.zig`: snapshot canónico, diff y drafts Liquibase formatted-SQL
   (módulo `zigma_postgres_migrations`); no conoce filesystem, procesos ni conexiones.
 * `src/postgres/migrations/liquibase_runner.zig`: startup versionado mediante el CLI externo (módulo
   `zigma_liquibase_runner`); credenciales solo por ambiente.
-* `src/rest/api.zig`: codecs, routing, JSON y validación CRUD (módulo `zigma_rest`); no conoce
-  sockets ni PostgreSQL.
-* `src/postgres/crud.zig`: SQL CRUD parametrizado derivado de entidades (módulo
-  `zigma_postgres_crud`).
-* `src/rest/std_http.zig`: servidor secuencial de referencia (módulo `zigma_std_http`).
-* `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
+* `examples/aida/src/aida.zig`: contrato del sistema de alumnos (módulo `aida`), compartido
+  por los ejemplos y usado como fixture de tests.
+* `examples/aida/`: app de ejemplo que depende del paquete; `src/system.zig` expone el
+  contrato y los seeds, y `build.zig` compone el backend en memoria y el frontend WASM.
 * `examples/aida_postgres.zig`: mappings y proyección PostgreSQL compartida de AIDA.
+* `examples/aida_rest.zig`: codecs y validadores de negocio de AIDA para REST.
+* `examples/aida_rest_server.zig`: composición del servidor REST con libpq y migraciones Liquibase.
 * `examples/postgres_bootstrap.zig`: ejecutable que genera el DDL de AIDA en compilación y
   lo aplica usando `DATABASE_URL` en runtime.
 * `db/`: snapshot aceptado, baseline/changesets inmutables y directorio del único draft.
 * `tools/postgres_migration_tool.zig`: workflow de init/check/draft/accept-files.
 * `tools/postgres_schema_validator.zig`: comparación SSOT↔`pg_catalog` en un schema esperado
   temporal; se usa antes de aceptar o baselinar.
-* `test/*_test.zig`: tests positivos (runtime y asserts comptime).
-Mapa de archivos para no recorrer el repo: `AGENTS.md`.
-
-* `src/zigma.zig`: el framework descriptor (módulo `zigma`). No conoce ningún sistema concreto ni importa generadores.
-* `src/json.zig`: generador JSON (módulo `zigma_json`); solo importa `zigma`.
-* `src/http/main.zig`: backend HTTP genérico; importa `system` (`type_defs` + `entity_defs`, `seeds` opcional).
-* `src/frontend/`: cliente WASM genérico (mismo contrato `system`).
-* `examples/aida/src/aida.zig`: el sistema de alumnos descripto con el vocabulario (módulo `aida`, fixture de tests).
-* `examples/aida/`: app de ejemplo que depende del paquete (`src/system.zig` + `build.zig`).
-* `test/aida_test.zig`: los tests positivos (runtime y asserts comptime).
+* `build.zig`: módulos y grafo de compilación y tests. Sus helpers `addApp` / `addAppFromDep`
+  componen el backend nativo y el frontend WASM para consumidores como `examples/aida/`;
+  el `build()` de la librería no instala esa app.
+* `test/*_test.zig`: pruebas de comportamiento (runtime y asserts comptime), incluidos
+  el contrato de AIDA, JSON, modelo normalizado, REST y PostgreSQL.
 * `test/compile_errors/*.zig`: fragmentos que **deben fallar** la compilación; `build.zig`
   los compila con `expect_errors` (el paso tiene éxito solo si el error coincide) y los
   cuelga del step `test`. La lista de casos con su mensaje esperado está en `build.zig`.
-* `zig build test` corre todo: tests de runtime y casos de no-compila.
+
+## Comprobaciones
+
+* `zig build test`: suite de runtime, asserts comptime, casos de no-compila y comprobación
+  del snapshot aceptado. Las integraciones con servicios externos se ejecutan por separado.
+* `zig build test-model`: pruebas del modelo normalizado y sus consumidores, incluidos
+  los rechazos de compilación correspondientes.
 * `zig build test-postgres -Dlibpq-prefix=...` levanta un PostgreSQL descartable con Docker
   y prueba la ejecución real; queda separado para que la suite normal no requiera servicios.
 * `zig build test-migrations -Dlibpq-prefix=... -Dliquibase-bin=...` fija Liquibase 5.0.4 y
@@ -73,8 +86,6 @@ Mapa de archivos para no recorrer el repo: `AGENTS.md`.
   y adopción validada.
 * `zig build test-rest-postgres -Dlibpq-prefix=...` prueba el CRUD generado end-to-end con
   `std.http`, libpq y PostgreSQL descartable.
-* `addApp` / `addAppFromDep` en `build.zig` arma backend nativo y frontend WASM; el consumidor es `examples/aida/`, no el `build()` de la librería.
-* `zig build test` corre todo: tests de runtime (`aida` y JSON) y casos de no-compila.
 
 ## Decisiones de diseño
 
