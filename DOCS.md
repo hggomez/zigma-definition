@@ -224,8 +224,11 @@ El código del framework se agrupa por responsabilidad:
 
 ```text
 src/
-├── framework/
+├── core/
 │   └── zigma.zig
+├── testing_backend/
+│   ├── main.zig
+│   └── memory_repository.zig
 ├── rest/
 │   ├── api.zig
 │   └── std_http.zig
@@ -240,13 +243,17 @@ src/
         └── liquibase_runner.zig
 ```
 
-`framework` contiene el contrato y los tipos derivados; `rest`, el controlador y su
+`testing_backend` compone un entorno de pruebas en memoria con el mismo controlador REST
+y transporte `std_http` que el servidor PostgreSQL. Se ejecuta desde `examples/aida/` con
+`zig build testing-backend`; no aplica migraciones ni persiste datos.
+
+`core` contiene el contrato y los tipos derivados; `rest`, el controlador y su
 transporte HTTP; `postgres`, la persistencia y sus migraciones. Estas últimas se agrupan
 dentro de PostgreSQL porque actualmente el snapshot y el SQL generado son específicos
 de ese motor. Los nombres públicos de módulos (`zigma`, `zigma_rest`,
 `zigma_postgres_crud`, etc.) se mantienen independientes de las rutas internas.
 
-* `src/framework/zigma.zig`: el framework descriptor (módulo `zigma`); no conoce ningún sistema
+* `src/core/zigma.zig`: el framework descriptor (módulo `zigma`); no conoce ningún sistema
   concreto.
 * `src/postgres/ddl.zig`: generación comptime del DDL PostgreSQL inicial.
 * `src/postgres/executor_ddl.zig`: política transaccional independiente del driver.

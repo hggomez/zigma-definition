@@ -6,7 +6,7 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 
 | Task | Open |
 | --- | --- |
-| Vocabulary / comptime checks / Def→Info | `src/zigma.zig` (one file; does not import generators) |
+| Vocabulary / comptime checks / Def→Info | `src/core/zigma.zig` (one file; does not import generators) |
 | Example system (records, entities, `DefinedType`) | `examples/aida/src/aida.zig` |
 | Example app (`system` + seeds, own `build.zig`) | `examples/aida/` |
 | Positive tests (runtime + comptime asserts) | `test/aida_test.zig` |
@@ -16,13 +16,14 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | Named object validators (design, not implemented) | `docs/validators.md` |
 | Consumer widgets | `examples/aida/src/widgets.js` (optional `widgets_js` on `addAppFromDep`) |
 | Consumer page title | optional `title` on `addApp` / `addAppFromDep`; generated `title.js` |
-| HTTP backend (in-memory CRUD from `system`) | `src/http/main.zig` |
+| Backend de pruebas en memoria | `src/testing_backend/main.zig`, `src/testing_backend/memory_repository.zig`, `src/rest/std_http.zig` |
+| Comprobación HTTP del backend de pruebas | `test/integration/run_testing_backend.py`, `examples/aida/build.zig` |
 | Modules, test graph, `addApp`, wasm/backend steps | `build.zig` |
 | Package name, zig version, published paths | `build.zig.zon` |
 
-`src/zigma.zig` does not know any concrete system. Generators (`src/json.zig`, `src/http/`, `src/frontend/`) import `zigma` and an injected `system` module (`type_defs` + `entity_defs`; optional `seeds`). `examples/aida/src/aida.zig` is the vocabulary fixture; `examples/aida/` is a consumer package (`src/system.zig` + `build.zig`) that depends on this framework. Domain names in aida stay in Spanish; framework identifiers are English.
+`src/core/zigma.zig` does not know any concrete system. Generators (`src/json.zig`, `src/testing_backend/`, `src/frontend/`) import `zigma` and an injected `system` module (`type_defs` + `entity_defs`; optional `seeds`). `examples/aida/src/aida.zig` is the vocabulary fixture; `examples/aida/` is a consumer package (`src/system.zig` + `build.zig`) that depends on this framework. Domain names in aida stay in Spanish; framework identifiers are English.
 
-## Public API (`src/zigma.zig`)
+## Public API (`src/core/zigma.zig`)
 
 Search these names; do not read the file top to bottom.
 
@@ -51,9 +52,9 @@ Field Def properties: `type` (required, name in `type_defs`), optional `label`, 
 | --- | --- | --- |
 | `zigma_json` | `src/json.zig` | stringify rows and entity Infos |
 | (WASM) | `src/frontend/main.zig` | catalog + typed row builder; import name `system` |
-| (HTTP) | `src/http/main.zig` | `GET`/`POST /{entity}`; `PUT`/`DELETE /{entity}?pk`; in-memory; import name `system` |
+| (Testing backend) | `src/testing_backend/main.zig` | API `/api/{entity}` compartida; repositorio en memoria y transporte `zigma_std_http` |
 
-`addApp` in `build.zig` compiles native HTTP and WASM frontend from one system file, with separate module graphs per target. Consumer (see `examples/aida/build.zig`): `@import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .widgets_js, .title, .target, .optimize })`. Optional `title` is installed as generated `title.js` (`document.title`).
+`addApp` in `build.zig` compiles native HTTP and WASM frontend from one system file, with separate module graphs per target. Consumer (see `examples/aida/build.zig`): `@import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .rest_root, .aida_root, .widgets_js, .title, .target, .optimize })`. Optional `title` is installed as generated `title.js` (`document.title`).
 
 ## Tests
 
@@ -68,14 +69,15 @@ TDD: write the failing test first, show the red, **wait for review before implem
 The library `zig build` does **not** install the example app. From `examples/aida/`:
 
 ```sh
-zig build              # zig-out/frontend/ + zig-out/bin/backend
-zig build backend      # run it (port 8080; `dummy` is an alias)
+zig build              # zig-out/frontend/ + zig-out/bin/testing-backend
+zig build testing-backend # run the in-memory testing backend (port 8080)
+zig build test-backend    # HTTP integration check (Python 3)
 python3 -m http.server 8000 --directory zig-out/frontend
 ```
 
 Details: [docs/run-example.md](docs/run-example.md).
 
-WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr`, `json_ptr`, `json_len`, `error_ptr`, `error_len`, `build_row`, `create_row`. JS import: `env.js_send_post`. After WASM load, JS builds a nav from the entity catalog (`stringifyEntityCatalog(type_defs, entity_defs)`), one table from `entity.fields`, then `GET /{entity}` plus `GET /{fk.entity}` for each distinct fk target. A one-column fk cell is a `<select>` of that list (label from target `is_name`, else pk; the posted value is still the pk), except a locked pk+fk cell which shows the label with no dropdown. The empty last row POSTs a typed record instance of that entity's fields; **Save** on a tbody row `PUT`s `/{entity}?pk…` (pk cells locked); **Delete** sends `DELETE /{entity}?pk…` with no body. Identity is the named query (every pk field required). Backend keeps an in-memory JSON list per entity name (optional `system.seeds`); GET returns it, POST appends, PUT replaces the matching pk, DELETE removes it. The example app wires `src/system.zig` as `system`.
+WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr`, `json_ptr`, `json_len`, `error_ptr`, `error_len`, `build_row`, `create_row`. JS import: `env.js_send_post`. El frontend arma la página desde el catálogo de entidades y consulta `/api/{entity}`. POST crea filas; PUT envía los campos editables sin PK y usa la query para seleccionar filas; DELETE usa esos mismos filtros. La API compartida determina validaciones y respuestas. `testing-backend` carga los seeds en `MemoryRepository` y delega HTTP/CORS a `std_http.serve`. Los datos solo duran mientras vive el proceso.
 
 ## Published package
 

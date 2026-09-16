@@ -4,7 +4,7 @@ Port a Zig del módulo `system-design` (TypeScript): la parte descriptiva del fr
 SSOTIGAD (Single Source Of Truth Implies Good Application Design). Provee el vocabulario
 para describir sistemas (tipos de dominio, entidades, campos, pks, uks, fks) de modo que
 generadores automáticos puedan derivar tablas, endpoints, pantallas, serializadores y
-validadores. El núcleo `zigma` (`src/framework/zigma.zig`) cubre **solo la parte
+validadores. El núcleo `zigma` (`src/core/zigma.zig`) cubre **solo la parte
 descriptiva** y no importa generadores. JSON, HTTP, frontend WASM y la generación y
 ejecución PostgreSQL viven en módulos independientes que consumen el contrato.
 
@@ -30,11 +30,13 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `README.md`: guía de uso, arranque de AIDA, migraciones y tests.
 * `DOCS.md`: referencia del contrato, arquitectura y APIs del framework.
 * `docs/`: guías de build, ejecución del ejemplo, frontend, vocabulario y diseño de validadores.
-* `src/framework/zigma.zig`: descriptor y modelo normalizado (módulo `zigma`). No conoce
+* `src/core/zigma.zig`: descriptor y modelo normalizado (módulo `zigma`). No conoce
   ningún sistema concreto ni importa generadores.
 * `src/json.zig`: generador JSON (módulo `zigma_json`); depende del descriptor `zigma`.
-* `src/http/main.zig`: backend HTTP genérico con CRUD en memoria; recibe el módulo
-  `system` (`type_defs` + `entity_defs`, `seeds` opcional).
+* `src/testing_backend/main.zig`: composición del backend de pruebas: API REST, seeds,
+  repositorio en memoria y transporte compartido `zigma_std_http`.
+* `src/testing_backend/memory_repository.zig`: persistencia temporal para el backend de pruebas;
+  los datos se descartan al terminar el proceso.
 * `src/frontend/`: cliente WASM genérico que consume el mismo contrato `system`.
 * `src/rest/api.zig`: codecs, routing, JSON y validación CRUD (módulo `zigma_rest`); no conoce
   sockets ni PostgreSQL.
@@ -77,6 +79,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 
 * `zig build test`: suite de runtime, asserts comptime, casos de no-compila y comprobación
   del snapshot aceptado. Las integraciones con servicios externos se ejecutan por separado.
+* Desde `examples/aida/`, `zig build testing-backend` inicia el backend en memoria;
+  `zig build test-backend` verifica su API HTTP con un proceso propio (requiere Python 3).
 * `zig build test-model`: pruebas del modelo normalizado y sus consumidores, incluidos
   los rechazos de compilación correspondientes.
 * `zig build test-postgres -Dlibpq-prefix=...` levanta un PostgreSQL descartable con Docker

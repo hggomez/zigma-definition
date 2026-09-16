@@ -28,9 +28,10 @@ The aida demo is a **consumer** of this package (`examples/aida/build.zig.zon` u
 
 ```sh
 cd examples/aida
-zig build              # zig-out/frontend/ + zig-out/bin/backend
+zig build              # zig-out/frontend/ + zig-out/bin/testing-backend
 zig build frontend     # WASM page only
-zig build backend      # run the HTTP server (port 8080; `dummy` is an alias)
+zig build testing-backend # run the in-memory testing backend (port 8080)
+zig build test-backend    # HTTP integration check (Python 3; own process and port)
 ```
 
 How to run it in a browser: [run-example.md](run-example.md).
@@ -44,11 +45,11 @@ How to run it in a browser: [run-example.md](run-example.md).
 
 Modules wired in the library `build.zig`:
 
-- `zigma` → `src/zigma.zig` (exported; leaf)
+- `zigma` → `src/core/zigma.zig` (exported; leaf)
 - `zigma_json` → `src/json.zig` (exported; imports `zigma`)
 - `aida` → `examples/aida/src/aida.zig` (exported fixture; imports `zigma`)
 
-`addApp` / `addAppFromDep` are called from a **consumer** `build.zig`, not from this package’s `build()`. They compile native HTTP and WASM frontend with **separate** `zigma` / `zigma_json` / `system` module instances per target.
+`addApp` / `addAppFromDep` are called from a **consumer** `build.zig`, not from this package’s `build()`. They compile the `testing-backend` executable (shared `zigma_std_http` + REST + memory repository) and WASM frontend with **separate** `zigma` / `zigma_json` / `system` module instances per target.
 
 List every step:
 
@@ -76,6 +77,8 @@ const zigma_def = b.dependency("zigma_definition", .{});
 const zigma_build = @import("zigma_definition");
 _ = zigma_build.addAppFromDep(b, zigma_def, .{
     .system_root = b.path("src/system.zig"),
+    .rest_root = b.path("src/rest.zig"),
+    .aida_root = b.path("src/aida.zig"),
     .widgets_js = b.path("src/widgets.js"), // optional
     .title = "aida", // optional; browser tab, generated `title.js`
     .target = target,
@@ -86,3 +89,7 @@ _ = zigma_build.addAppFromDep(b, zigma_def, .{
 In-tree, `examples/aida/` does the same with `.path = "../.."`.
 
 The package also exports `aida` (`examples/aida/src/aida.zig`) and `zigma_json`.
+
+The returned `App` exposes `testing_backend`, `run_testing_backend`, and `frontend`.
+`PackageFiles` supplies `testing_backend` and `std_http` separately. The previous
+`backend` / `dummy` steps are replaced by `testing-backend`.

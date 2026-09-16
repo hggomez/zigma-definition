@@ -28,13 +28,13 @@ flowchart TB
     js["frontend/main.js<br/>copied as-is"]
     titlejs["frontend/title.js<br/>generated document.title"]
     wjs["frontend/widgets.js<br/>optional consumer copy"]
-    bin["bin/backend"]
+    bin["bin/testing-backend"]
     addApp -->|"compile main.zig<br/>wasm32, rdynamic, export memory"| wasm
     addApp -->|"copy"| html
     addApp -->|"copy"| js
     addApp -->|"WriteFile title.js"| titlejs
     addApp -->|"copy if widgets_js"| wjs
-    addApp -->|"compile http/main.zig<br/>host target"| bin
+    addApp -->|"compile testing_backend/main.zig<br/>host target"| bin
   end
 
   subgraph browser["Browser — origin :8000"]
@@ -49,8 +49,10 @@ flowchart TB
   end
 
   subgraph server["Backend — :8080"]
-    lists["in-memory JSON lists<br/>one ArrayList per entity name"]
-    bin --> lists
+    transport["std_http.serve<br/>HTTP + CORS"]
+    api["API REST de AIDA"]
+    lists["MemoryRepository<br/>filas en memoria"]
+    bin --> transport --> api --> lists
   end
 
   mainjs -->|"GET/POST /api/{entity}<br/>PUT/DELETE /api/{entity}?pk…"| bin
@@ -61,11 +63,11 @@ flowchart TB
 | Boundary | Contract |
 | --- | --- |
 | `system.zig` → WASM | Same `type_defs` / `entity_defs` baked into `frontend.wasm`. Catalog JSON is `stringifyEntityCatalog` of those Defs (Infos via `completeEntity`). Seeds are **not** in WASM. |
-| `system.zig` → HTTP | Same Defs plus optional `seeds`. Lists start from `stringifyRecord` of each seed row. |
+| `system.zig` → HTTP | Same Defs plus optional `seeds`. Seeds se convierten a celdas del repositorio en memoria al iniciar. |
 | HTML → JS | Shell only: `#entity-nav`, `#sheet-title`, `#sheet-table` (`thead`/`tbody`/`tfoot`), `#status`. `<script src="title.js">` sets `document.title` from `addApp` `.title` (empty if omitted). No columns until JS runs. |
 | JS → WASM exports | Pointer/length accessors plus `build_row(entity_index)` / `create_row(entity_index)`. `entity_index` is field order on `entity_defs` (same order as the catalog array). |
 | WASM → JS import | `env.js_send_post(ptr, len)`: Zig has already written row JSON into `json_buf`; JS reads that slice and `fetches` `POST`. Zig does **not** await the Promise (the POST is fire-and-forget from WASM’s point of view; JS still `await`s inside the import). |
-| JS → HTTP | Hard-coded `http://localhost:8080/api`. CORS `*` on both the in-memory server and `zigma_std_http`. Identity for PUT/DELETE is the query string (pk fields). POST has no query. GET may include equality filters. PUT body omits PKs. Domain values (including `fecha` objects) follow the codecs / WASM row JSON. |
+| JS → HTTP | Hard-coded `http://localhost:8080/api`. CORS `*` mediante el transporte compartido `zigma_std_http`. Identity for PUT/DELETE is the query string (pk fields). POST has no query. GET may include equality filters. PUT body omits PKs. Domain values (including `fecha` objects) follow the codecs / WASM row JSON. |
 
 **Responsibility split (why WASM exists)**
 
@@ -109,10 +111,10 @@ Notation: `file: function` then callees. Browser APIs are included when they are
 
 ```
 examples/aida/build.zig
-  └─ @import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .widgets_js?, .title?, .target, .optimize })
+  └─ @import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .rest_root, .aida_root?, .widgets_js?, .title?, .target, .optimize })
        └─ build.zig: addApp
             ├─ zigmaModule / jsonModule / systemModule   (host)
-            │    └─ backend executable  ← src/http/main.zig
+            │    └─ testing-backend executable ← src/testing_backend/main.zig
             ├─ zigmaModule / jsonModule / systemModule   (wasm32-freestanding, .small)
             │    └─ frontend executable ← src/frontend/main.zig
             │         .entry = .disabled, .rdynamic, .export_memory
@@ -246,25 +248,15 @@ loadRows()
 
 Backend:
 
-```
-http/main.zig: main
-  seed(gpa, &lists)                             // once at process start
-    if system.seeds:
-      for each entity with a seeds field:
-        appendJson(gpa, list, row)
-          zigma_json.stringifyRecord(row, buf)
-          list.append(dupe)
-
-tcp accept → handleConnection
-  server.receiveHead → handleRequest
-    GET → handleGet
-      printRequest("GET", target, "")
-      splitTarget(target)                       // path vs query
-      if query nonempty → 400 {"status":"invalid"}
-      entityNameOf(path)                        // "/materias" → "materias"
-      listFor(lists, name)
-      joinJsonArray(list.items, json_buf)       // '[' + stored strings + ']'
-      reply 200 + CORS + application/json
+```text
+testing_backend/main.zig: main
+  MemoryRepository.init → seed → app_rest.Api.init
+  std_http.serve
+    acepta la conexión y construye una Request
+    api.handle(GET /api/{entity}?filtros)
+      valida los filtros → repository.select
+      convierte las filas con los codecs REST
+    responde 200 + array JSON + CORS
 ```
 
 Frontend after JSON:
@@ -282,7 +274,7 @@ fillTable(rows)
       Delete click → deleteRow(row)
 ```
 
-The `row` closed over by Save/Delete is the **original GET object**, not a live read of the inputs. PUT/DELETE query pk therefore stays the identity from load, even if the user edited non-pk cells. Pk cells are locked so the query and the body pk stay aligned on Save.
+The `row` closed over by Save/Delete is the **original GET object**, not a live read of the inputs. PUT/DELETE query pk therefore stays the identity from load, even if the user edited non-pk cells. Las celdas PK están bloqueadas; la PK se usa en la query y se omite del cuerpo de PUT.
 
 ---
 
@@ -406,19 +398,12 @@ sendJson(url, method, jsonString)
 
 Backend POST:
 
-```
-handleRequest POST → handleWrite(..., .post)
-  requestReader → allocRemaining body
-  printRequest("POST", path, body)
-  splitTarget / entityNameOf
-  if query nonempty → 400
-  inline match entity name:
-    Row = RecordInstanceType(type_defs, entity.fields)
-    std.json.parseFromSlice(Row, body)
-      fail → 400 {"status":"invalid"}
-    appendJson(gpa, list, parsed.value)
-      stringifyRecord + dupe into list
-  reply 200 {"status": "received"}
+```text
+std_http.serve → api.handle(POST /api/{entity})
+  valida Content-Type, JSON, campos y dominios
+  completa los nullable omitidos y ejecuta las reglas de negocio
+  repository.insert
+  responde 201 + fila JSON + CORS
 ```
 
 `create_row` returns `len` to JS **before** `sendJson` finishes (the import’s Promise is not observed by Zig). Failure of `fetch` is handled inside `sendJson` (`status` + `console.error`), not via `create_row`’s return value. A failed **parse** in WASM still returns 0 and never calls `js_send_post`.
@@ -466,20 +451,13 @@ pkString(name, value)
 
 Backend PUT:
 
-```
-handleWrite(..., .put)
-  parseQuery(query) → QueryPair[]
-  pkFromQuery(entity, pairs)
-    RecordInstanceType(type_defs, extractPk(entity))
-    every query name must be a pk field; every pk field required; no duplicates
-    parseQueryValue(T, raw) = parseFieldValue(T, raw)
-    fail → 400  (missing / extra / duplicate / invalid pk)
-  parseFromSlice(Row, body)
-  pkEqual(entity, body, url_pk) or 400 "pk mismatch"
-  replaceByPk(gpa, list, entity, url_pk, parsed.value)
-    for each stored JSON: parseFromSlice(Row), pkEqual → replace dupe of stringifyRecord
-    not found → 404 {"status":"not found"}
-  200 {"status": "received"}
+```text
+std_http.serve → api.handle(PUT /api/{entity}?filtros)
+  exige filtros y rechaza PK en el cuerpo
+  valida los campos del patch
+  si hay reglas, combina el patch con las filas seleccionadas y valida
+  repository.update
+  responde 200 + array de filas actualizadas (vacío si no hubo coincidencias)
 ```
 
 Then `sendJson` on OK → `loadRows()` (no special POST input clearing).
@@ -498,14 +476,11 @@ click Delete
 
 Backend:
 
-```
-handleWrite(..., .delete)
-  printRequest("DELETE", path, "")               // body not printed
-  pkFromQuery as PUT
-  removeByPk(gpa, list, entity, url_pk)
-    parse each stored JSON as Row, pkEqual → orderedRemove
-    not found → 404
-  200 {"status": "received"}
+```text
+std_http.serve → api.handle(DELETE /api/{entity}?filtros)
+  valida los filtros obligatorios
+  repository.delete
+  responde 200 + array de filas eliminadas (vacío si no hubo coincidencias)
 ```
 
 ---
@@ -514,9 +489,10 @@ handleWrite(..., .delete)
 
 The page origin (`:8000`) is not `:8080`. Browsers send `OPTIONS` before some POSTs/PUTs/DELETEs.
 
-```
-handleRequest OPTIONS
-  request.respond("", extra_headers: cors_origin, cors_methods, cors_headers)
+```text
+std_http.serve → sendOptions
+  responde 204 sin cuerpo
+  headers: Access-Control-Allow-Origin, -Methods, -Headers
 ```
 
 JS does not call this explicitly; `fetch` does.
@@ -531,7 +507,8 @@ JS does not call this explicitly; `fetch` does.
 | `src/json.zig` | `stringifyEntityCatalog`, `stringifyRecord`, `parseFieldValue`, `fieldStorage` |
 | `src/frontend/main.js` | Nav + table from catalog; packing; GET/POST/PUT/DELETE; optional `./widgets.js` |
 | `src/frontend/index.html` | Empty shell + CSS for the sheet; loads generated `title.js` |
-| `src/http/main.zig` | In-memory lists; same `system`; CORS |
+| `src/testing_backend/main.zig` | Compone API, repositorio, seeds y `std_http.serve` |
+| `src/testing_backend/memory_repository.zig` | CRUD en memoria para pruebas |
 | `src/rest/std_http.zig` | Socket adapter for `zigma_rest`; CORS + `OPTIONS` |
 | `examples/aida/src/aida.zig` | Domain Defs (vocabulary fixture) |
 | `examples/aida/src/system.zig` | Wired as `system` (Defs + demo seeds) |

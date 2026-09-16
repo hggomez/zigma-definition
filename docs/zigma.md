@@ -1,6 +1,6 @@
 # How `zigma` describes a system
 
-This is a walk through `src/zigma.zig`: what each piece is for, and how they nest.
+This is a walk through `src/core/zigma.zig`: what each piece is for, and how they nest.
 It goes from the smallest building block up to a whole system, so each section
 only uses what was already introduced.
 

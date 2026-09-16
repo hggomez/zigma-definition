@@ -83,34 +83,37 @@ pub const PackageFiles = struct {
     frontend_main: std.Build.LazyPath,
     frontend_js: std.Build.LazyPath,
     frontend_html: std.Build.LazyPath,
-    http: std.Build.LazyPath,
+    testing_backend: std.Build.LazyPath,
+    std_http: std.Build.LazyPath,
     rest: std.Build.LazyPath,
     memory_repository: std.Build.LazyPath,
 };
 
 pub fn filesHere(b: *std.Build) PackageFiles {
     return .{
-        .zigma = b.path("src/framework/zigma.zig"),
+        .zigma = b.path("src/core/zigma.zig"),
         .json = b.path("src/json.zig"),
         .frontend_main = b.path("src/frontend/main.zig"),
         .frontend_js = b.path("src/frontend/main.js"),
         .frontend_html = b.path("src/frontend/index.html"),
-        .http = b.path("src/http/main.zig"),
+        .testing_backend = b.path("src/testing_backend/main.zig"),
+        .std_http = b.path("src/rest/std_http.zig"),
         .rest = b.path("src/rest/api.zig"),
-        .memory_repository = b.path("src/http/memory_repository.zig"),
+        .memory_repository = b.path("src/testing_backend/memory_repository.zig"),
     };
 }
 
 pub fn filesFromDependency(dep: *std.Build.Dependency) PackageFiles {
     return .{
-        .zigma = dep.path("src/framework/zigma.zig"),
+        .zigma = dep.path("src/core/zigma.zig"),
         .json = dep.path("src/json.zig"),
         .frontend_main = dep.path("src/frontend/main.zig"),
         .frontend_js = dep.path("src/frontend/main.js"),
         .frontend_html = dep.path("src/frontend/index.html"),
-        .http = dep.path("src/http/main.zig"),
+        .testing_backend = dep.path("src/testing_backend/main.zig"),
+        .std_http = dep.path("src/rest/std_http.zig"),
         .rest = dep.path("src/rest/api.zig"),
-        .memory_repository = dep.path("src/http/memory_repository.zig"),
+        .memory_repository = dep.path("src/testing_backend/memory_repository.zig"),
     };
 }
 
@@ -130,9 +133,9 @@ pub const AppOptions = struct {
 };
 
 pub const App = struct {
-    backend: *std.Build.Step.Compile,
+    testing_backend: *std.Build.Step.Compile,
     frontend: *std.Build.Step.Compile,
-    run_backend: *std.Build.Step.Run,
+    run_testing_backend: *std.Build.Step.Run,
 };
 
 fn zigmaModule(
@@ -182,7 +185,7 @@ fn systemModule(
     });
 }
 
-/// Compile a native HTTP backend and a WASM frontend from the same `system` file
+/// Compila un backend de pruebas en memoria y un frontend WASM desde el mismo `system`.
 /// (`type_defs` + `entity_defs`; optional `seeds`). Each artifact gets its own
 /// `zigma` / `zigma_json` / `system` module instance so native and wasm32 do not share a target.
 pub fn addApp(b: *std.Build, opts: AppOptions) App {
@@ -234,10 +237,18 @@ pub fn addApp(b: *std.Build, opts: AppOptions) App {
         },
     });
 
-    const backend = b.addExecutable(.{
-        .name = "backend",
+    const std_http_native = b.createModule(.{
+        .root_source_file = files.std_http,
+        .target = opts.target,
+        .optimize = opts.optimize,
+        .imports = &.{
+            .{ .name = "zigma_rest", .module = rest_native },
+        },
+    });
+    const testing_backend = b.addExecutable(.{
+        .name = "testing-backend",
         .root_module = b.createModule(.{
-            .root_source_file = files.http,
+            .root_source_file = files.testing_backend,
             .target = opts.target,
             .optimize = opts.optimize,
             .imports = &.{
@@ -246,10 +257,11 @@ pub fn addApp(b: *std.Build, opts: AppOptions) App {
                 .{ .name = "system", .module = system_native },
                 .{ .name = "app_rest", .module = app_rest_native },
                 .{ .name = "memory_repository", .module = memory_repo_native },
+                .{ .name = "zigma_std_http", .module = std_http_native },
             },
         }),
     });
-    b.installArtifact(backend);
+    b.installArtifact(testing_backend);
 
     const wasm_target = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
@@ -324,17 +336,15 @@ pub fn addApp(b: *std.Build, opts: AppOptions) App {
         frontend_step.dependOn(&install_widgets.step);
     }
 
-    const run_backend = b.addRunArtifact(backend);
-    run_backend.has_side_effects = true;
-    const backend_step = b.step("backend", "Run the HTTP backend generated from the system module");
-    backend_step.dependOn(&run_backend.step);
-    const dummy_step = b.step("dummy", "Run the HTTP backend (alias of backend)");
-    dummy_step.dependOn(&run_backend.step);
+    const run_testing_backend = b.addRunArtifact(testing_backend);
+    run_testing_backend.has_side_effects = true;
+    const testing_backend_step = b.step("testing-backend", "Ejecutar el backend de pruebas en memoria (sin PostgreSQL)");
+    testing_backend_step.dependOn(&run_testing_backend.step);
 
     return .{
-        .backend = backend,
+        .testing_backend = testing_backend,
         .frontend = frontend,
-        .run_backend = run_backend,
+        .run_testing_backend = run_testing_backend,
     };
 }
 
@@ -369,7 +379,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const zigma_mod = b.addModule("zigma", .{
-        .root_source_file = b.path("src/framework/zigma.zig"),
+        .root_source_file = b.path("src/core/zigma.zig"),
         .target = target,
         .optimize = optimize,
     });

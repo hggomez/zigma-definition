@@ -10,7 +10,7 @@ Esta es la guía de uso. La explicación del contrato, los módulos y las APIs e
 ## Requisitos
 
 - Zig `0.17.0-dev.1818+7051f8e73`, según [build.zig.zon](build.zig.zon).
-- Para ejecutar AIDA: PostgreSQL, headers y biblioteca de **libpq**, y **Liquibase Community
+- Para ejecutar AIDA con PostgreSQL: PostgreSQL, headers y biblioteca de **libpq**, y **Liquibase Community
   5.0.4** con un entorno Java compatible y el driver JDBC PostgreSQL.
 - Docker para la base local del ejemplo, las integraciones y la aceptación de migraciones.
 
@@ -38,7 +38,26 @@ Cada ruta explícita tiene prioridad sobre la correspondiente del prefijo; la ot
 usando el prefijo si está definido. En Ubuntu/Debian, instalá `libpq-dev` para disponer
 de los headers y la biblioteca de desarrollo en la máquina donde compilás.
 
-## Arrancar AIDA
+## Probar el frontend con un backend en memoria
+
+Este entorno usa la API REST de AIDA y sus seeds; solo necesita Zig. Desde la raíz:
+
+```sh
+cd examples/aida
+zig build testing-backend
+```
+
+Escucha en `http://127.0.0.1:8080/api` y descarta los cambios al terminar. Podés configurar
+`HTTP_ADDRESS` y `HTTP_PORT`. El comando reemplaza los anteriores `backend` y `dummy`.
+Para compilar y abrir el frontend, consultá [la guía del ejemplo](docs/run-example.md).
+
+La comprobación HTTP usa un proceso y puerto propios y requiere Python 3:
+
+```sh
+zig build test-backend
+```
+
+## Arrancar AIDA con PostgreSQL
 
 ### 1. Preparar una base vacía
 

@@ -49,7 +49,7 @@ rejected today and would break serializability.
 A **string** on the Def (`validate = "check_clase"`) is optional later (DevXP: fail at
 declaration if the name is missing from the registry). It is not required for the
 approach to work. The generators can treat `system.validators` as a convention, the
-way they already treat `system.seeds`, with **no change** to `src/zigma.zig`.
+way they already treat `system.seeds`, with **no change** to `src/core/zigma.zig`.
 
 `TypeDef` stays `{ .Type = T }`. Field defs stay type / label / nullable / is_name /
 description. Schema checks (`record`, `defineEntity`, `defineEntities`) keep validating
