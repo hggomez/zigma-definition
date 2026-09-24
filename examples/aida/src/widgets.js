@@ -31,7 +31,8 @@ export const widgets = {
         },
         read(root, field) {
             const input = root.querySelector(`input[data-field="${field.name}"]`);
-            if (!input?.value) return {};
+            // La ausencia se empaqueta como celda vacía y Model decide si admite null.
+            if (!input?.value) return null;
             return isoToFecha(input.value);
         },
     },

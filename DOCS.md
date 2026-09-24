@@ -243,6 +243,12 @@ src/
         └── liquibase_runner.zig
 ```
 
+`zig build run-aida` compila el frontend del consumidor y el backend real. El lanzador
+`tools/run_aida.py` espera la API después de las migraciones, sirve los archivos con
+Python 3 y configura `/api-config.js` a partir de `HTTP_ADDRESS` y `HTTP_PORT`. Ctrl+C
+cierra el servidor estático y el grupo de procesos del backend (incluido Liquibase
+si aún está ejecutándose). `check-aida` permite compilar ambos sin arrancarlos.
+
 `testing_backend` compone un entorno de pruebas en memoria con el mismo controlador REST
 y transporte `std_http` que el servidor PostgreSQL. Se ejecuta desde `examples/aida/` con
 `zig build testing-backend`; no aplica migraciones ni persiste datos.

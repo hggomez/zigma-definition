@@ -1,57 +1,38 @@
-//! JSON writer for record instances and Def→Info schemas.
-//! Record values follow the Zig field type (string, int, bool, nested struct, optional).
-//! `stringifyRecordSchema` writes `[{name,label},...]` from a completed record Info.
-//! `stringifyEntitySchema` / `stringifyEntityCatalog` write entity Infos.
-//! Field `storage` is the Zig shape used by the page (`text`/`integer`/`boolean`/
-//! `object`), not the domain type name; optionals use the child shape.
-//! A struct is `object` with nested `fields`.
-//! `parseFieldValue` turns a cell string into that Zig type (structs as JSON objects;
-//! string fields alias the cell, they are not copies from parse scratch).
-//! Empty cell → Zig null for `?T`; required text rejects blank.
-//!
-//! Generator: imports `zigma` only. Does not know any concrete system.
+//! Catálogo de entidades desde Model y serialización JSON en buffers del llamador.
+//! `storage` describe el control de la interfaz; `type` conserva el dominio del contrato.
+//! La escritura usa std.json y no reserva memoria. El parser de celdas conserva
+//! sus reglas: vacío → null para opcionales, texto obligatorio vacío → InvalidValue.
+//! No conoce sistemas concretos, HTTP ni PostgreSQL.
 
 const std = @import("std");
-const zigma = @import("zigma");
 
-/// One record instance as a JSON object. `row` is a Zig struct; writes into `buf`. Slice of that JSON, or `error.NoSpaceLeft`.
+/// Serializa una fila Zig; el resultado pertenece al buffer recibido.
 pub fn stringifyRecord(row: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 {
-    var pos: usize = 0;
-    try writeJsonValue(buf, &pos, row);
-    return buf[0..pos];
+    var writer = std.Io.Writer.fixed(buf);
+    std.json.Stringify.value(row, .{}, &writer) catch return error.NoSpaceLeft;
+    return writer.buffered();
 }
 
-/// JSON array of `stringifyRecord` for each element of `rows`. Writes into `buf`.
+/// Serializa un conjunto de filas como un array JSON compacto.
 pub fn stringifyRecords(rows: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 {
-    var pos: usize = 0;
-    try writeByte(buf, &pos, '[');
-    for (rows, 0..) |row, i| {
-        if (i != 0) try writeByte(buf, &pos, ',');
-        const obj = try stringifyRecord(row, buf[pos..]);
-        pos += obj.len;
-    }
-    try writeByte(buf, &pos, ']');
-    return buf[0..pos];
+    var writer = std.Io.Writer.fixed(buf);
+    var json: std.json.Stringify = .{ .writer = &writer };
+    json.beginArray() catch return error.NoSpaceLeft;
+    for (rows) |row| json.write(row) catch return error.NoSpaceLeft;
+    json.endArray() catch return error.NoSpaceLeft;
+    return writer.buffered();
 }
 
-/// `[{name,label},…]` from a completed record Info. Writes into `buf`.
+/// Conserva la proyección de un record independiente como [{name,label},…].
 pub fn stringifyRecordSchema(rec_info: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 {
-    var pos: usize = 0;
-    try writeByte(buf, &pos, '[');
-    inline for (@typeInfo(@TypeOf(rec_info)).@"struct".field_names, 0..) |name, i| {
-        if (i != 0) try writeByte(buf, &pos, ',');
-        try writeByte(buf, &pos, '{');
-        try writeJsonString(buf, &pos, "name");
-        try writeByte(buf, &pos, ':');
-        try writeJsonString(buf, &pos, name);
-        try writeByte(buf, &pos, ',');
-        try writeJsonString(buf, &pos, "label");
-        try writeByte(buf, &pos, ':');
-        try writeJsonString(buf, &pos, @field(rec_info, name).label);
-        try writeByte(buf, &pos, '}');
+    var writer = std.Io.Writer.fixed(buf);
+    var json: std.json.Stringify = .{ .writer = &writer };
+    json.beginArray() catch return error.NoSpaceLeft;
+    inline for (@typeInfo(@TypeOf(rec_info)).@"struct".field_names) |name| {
+        json.write(.{ .name = name, .label = @field(rec_info, name).label }) catch return error.NoSpaceLeft;
     }
-    try writeByte(buf, &pos, ']');
-    return buf[0..pos];
+    json.endArray() catch return error.NoSpaceLeft;
+    return writer.buffered();
 }
 
 /// Page widget shape for Zig type `T`: `"text"` / `"integer"` / `"boolean"` / `"object"`.
@@ -130,269 +111,96 @@ fn slicesInsideInput(comptime T: type, value: T, input: []const u8) bool {
     }
 }
 
-/// One entity Info as JSON (`name`, `pk`, `uks`, `fks`, `fields` with `type`/`is_name`/`storage`). `completeEntity` on `entity_def`; writes into `buf`.
-pub fn stringifyEntitySchema(comptime type_defs: anytype, entity_name: []const u8, comptime entity_def: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 {
-    const entity_info = zigma.completeEntity(entity_def);
-    var pos: usize = 0;
-    try writeByte(buf, &pos, '{');
-
-    try writeJsonString(buf, &pos, "name");
-    try writeByte(buf, &pos, ':');
-    try writeJsonString(buf, &pos, entity_name);
-
-    try writeByte(buf, &pos, ',');
-    try writeJsonString(buf, &pos, "pk");
-    try writeByte(buf, &pos, ':');
-    try writeNameList(buf, &pos, entity_info.pk);
-
-    try writeByte(buf, &pos, ',');
-    try writeJsonString(buf, &pos, "uks");
-    try writeByte(buf, &pos, ':');
-    try writeUks(buf, &pos, entity_info.uks);
-
-    try writeByte(buf, &pos, ',');
-    try writeJsonString(buf, &pos, "fks");
-    try writeByte(buf, &pos, ':');
-    try writeFks(buf, &pos, entity_info.fks);
-
-    try writeByte(buf, &pos, ',');
-    try writeJsonString(buf, &pos, "fields");
-    try writeByte(buf, &pos, ':');
-    try writeEntityFields(buf, &pos, type_defs, entity_def.fields, entity_info.fields);
-
-    try writeByte(buf, &pos, '}');
-    return buf[0..pos];
+/// Serializa una entidad normalizada y su forma para los controles del frontend.
+pub fn stringifyEntitySchema(comptime Model: type, comptime entity_name: []const u8, buf: []u8) error{NoSpaceLeft}![]const u8 {
+    var writer = std.Io.Writer.fixed(buf);
+    var json: std.json.Stringify = .{ .writer = &writer };
+    writeEntity(&json, Model, entity_name) catch return error.NoSpaceLeft;
+    return writer.buffered();
 }
 
-/// JSON array of `stringifyEntitySchema` for every field of `entity_defs`, in that order. Writes into `buf`.
-pub fn stringifyEntityCatalog(comptime type_defs: anytype, comptime entity_defs: anytype, buf: []u8) error{NoSpaceLeft}![]const u8 {
-    var pos: usize = 0;
-    try writeByte(buf, &pos, '[');
-    inline for (@typeInfo(@TypeOf(entity_defs)).@"struct".field_names, 0..) |name, i| {
-        if (i != 0) try writeByte(buf, &pos, ',');
-        const obj = try stringifyEntitySchema(type_defs, name, @field(entity_defs, name), buf[pos..]);
-        pos += obj.len;
+/// Catálogo en orden de declaración. Las reglas de aplicación no se publican aquí.
+pub fn stringifyEntityCatalog(comptime Model: type, buf: []u8) error{NoSpaceLeft}![]const u8 {
+    var writer = std.Io.Writer.fixed(buf);
+    var json: std.json.Stringify = .{ .writer = &writer };
+    json.beginArray() catch return error.NoSpaceLeft;
+    inline for (@typeInfo(@TypeOf(Model.info)).@"struct".field_names) |name| {
+        writeEntity(&json, Model, name) catch return error.NoSpaceLeft;
     }
-    try writeByte(buf, &pos, ']');
-    return buf[0..pos];
+    json.endArray() catch return error.NoSpaceLeft;
+    return writer.buffered();
 }
 
-/// Appends the `fields` array (`name`/`label`/`type`/`is_name`/`storage`; nested `fields` if the Zig type is a struct). Advances `pos`.
-fn writeEntityFields(buf: []u8, pos: *usize, comptime type_defs: anytype, comptime rec: anytype, fields_info: anytype) error{NoSpaceLeft}!void {
-    try writeByte(buf, pos, '[');
-    inline for (@typeInfo(@TypeOf(fields_info)).@"struct".field_names, 0..) |name, i| {
-        if (i != 0) try writeByte(buf, pos, ',');
-        const info = @field(fields_info, name);
-        const zig_type = @field(type_defs, @field(rec, name).type).Type;
-        try writeByte(buf, pos, '{');
-        try writeJsonString(buf, pos, "name");
-        try writeByte(buf, pos, ':');
-        try writeJsonString(buf, pos, name);
-        try writeByte(buf, pos, ',');
-        try writeJsonString(buf, pos, "label");
-        try writeByte(buf, pos, ':');
-        try writeJsonString(buf, pos, info.label);
-        try writeByte(buf, pos, ',');
-        try writeJsonString(buf, pos, "type");
-        try writeByte(buf, pos, ':');
-        try writeJsonString(buf, pos, info.type);
-        try writeByte(buf, pos, ',');
-        try writeJsonString(buf, pos, "is_name");
-        try writeByte(buf, pos, ':');
-        try writeRaw(buf, pos, if (info.is_name) "true" else "false");
-        try writeByte(buf, pos, ',');
-        try writeJsonString(buf, pos, "storage");
-        try writeByte(buf, pos, ':');
-        try writeJsonString(buf, pos, fieldStorage(zig_type));
-        if (@typeInfo(zig_type) == .@"struct") {
-            try writeByte(buf, pos, ',');
-            try writeNestedFields(buf, pos, zig_type);
-        }
-        try writeByte(buf, pos, '}');
+fn writeEntity(json: *std.json.Stringify, comptime Model: type, comptime name: []const u8) std.json.Stringify.Error!void {
+    // Row también localiza el error de una entidad desconocida antes de acceder a info.
+    const Row = Model.Row(name);
+    const entity = @field(Model.info, name);
+    try json.beginObject();
+    try json.objectField("name");
+    try json.write(name);
+    try json.objectField("pk");
+    try json.write(entity.pk);
+    try json.objectField("uks");
+    try json.beginObject();
+    inline for (@typeInfo(@TypeOf(entity.uks)).@"struct".field_names) |key| {
+        try json.objectField(key);
+        try json.write(@field(entity.uks, key));
     }
-    try writeByte(buf, pos, ']');
-}
-
-/// Appends `"fields":[{name,storage},…]` for struct type `T` (recursive). Advances `pos`.
-fn writeNestedFields(buf: []u8, pos: *usize, comptime T: type) error{NoSpaceLeft}!void {
-    const info = @typeInfo(T);
-    try writeJsonString(buf, pos, "fields");
-    try writeByte(buf, pos, ':');
-    try writeByte(buf, pos, '[');
-    inline for (info.@"struct".field_names, info.@"struct".field_types, 0..) |name, FieldType, i| {
-        if (i != 0) try writeByte(buf, pos, ',');
-        try writeByte(buf, pos, '{');
-        try writeJsonString(buf, pos, "name");
-        try writeByte(buf, pos, ':');
-        try writeJsonString(buf, pos, name);
-        try writeByte(buf, pos, ',');
-        try writeJsonString(buf, pos, "storage");
-        try writeByte(buf, pos, ':');
-        try writeJsonString(buf, pos, fieldStorage(FieldType));
-        if (@typeInfo(FieldType) == .@"struct") {
-            try writeByte(buf, pos, ',');
-            try writeNestedFields(buf, pos, FieldType);
-        }
-        try writeByte(buf, pos, '}');
+    try json.endObject();
+    try json.objectField("fks");
+    try json.beginObject();
+    inline for (@typeInfo(@TypeOf(entity.fks)).@"struct".field_names) |key| {
+        try json.objectField(key);
+        try json.write(@field(entity.fks, key));
     }
-    try writeByte(buf, pos, ']');
-}
-
-/// Appends a JSON object of unique-key name → field-name list. Advances `pos`.
-fn writeUks(buf: []u8, pos: *usize, uks: anytype) error{NoSpaceLeft}!void {
-    try writeByte(buf, pos, '{');
-    inline for (@typeInfo(@TypeOf(uks)).@"struct".field_names, 0..) |name, i| {
-        if (i != 0) try writeByte(buf, pos, ',');
-        try writeJsonString(buf, pos, name);
-        try writeByte(buf, pos, ':');
-        try writeNameList(buf, pos, @field(uks, name));
+    try json.endObject();
+    try json.objectField("fields");
+    try json.beginArray();
+    inline for (@typeInfo(Row).@"struct".field_names) |field_name| {
+        const info = @field(entity.fields, field_name);
+        const T = @FieldType(Row, field_name);
+        try json.beginObject();
+        try json.objectField("name");
+        try json.write(field_name);
+        try json.objectField("label");
+        try json.write(info.label);
+        try json.objectField("type");
+        try json.write(info.type);
+        try json.objectField("is_name");
+        try json.write(info.is_name);
+        try json.objectField("nullable");
+        try json.write(info.nullable);
+        try json.objectField("storage");
+        try json.write(fieldStorage(T));
+        if (@typeInfo(nonOptional(T)) == .@"struct") try writeNestedFields(json, nonOptional(T));
+        try json.endObject();
     }
-    try writeByte(buf, pos, '}');
+    try json.endArray();
+    try json.endObject();
 }
 
-/// Appends a JSON object of fk name → `{entity, fields}` (source→target map). Advances `pos`.
-fn writeFks(buf: []u8, pos: *usize, fks: anytype) error{NoSpaceLeft}!void {
-    try writeByte(buf, pos, '{');
-    inline for (@typeInfo(@TypeOf(fks)).@"struct".field_names, 0..) |name, i| {
-        if (i != 0) try writeByte(buf, pos, ',');
-        const fk = @field(fks, name);
-        try writeJsonString(buf, pos, name);
-        try writeByte(buf, pos, ':');
-        try writeByte(buf, pos, '{');
-        try writeJsonString(buf, pos, "entity");
-        try writeByte(buf, pos, ':');
-        try writeJsonString(buf, pos, fk.entity);
-        try writeByte(buf, pos, ',');
-        try writeJsonString(buf, pos, "fields");
-        try writeByte(buf, pos, ':');
-        try writeFkFields(buf, pos, fk.fields);
-        try writeByte(buf, pos, '}');
+fn nonOptional(comptime T: type) type {
+    return switch (@typeInfo(T)) {
+        .optional => |optional| optional.child,
+        else => T,
+    };
+}
+
+/// En objetos anidados la nulabilidad procede de sus tipos Zig, no de otro record.
+fn writeNestedFields(json: *std.json.Stringify, comptime T: type) std.json.Stringify.Error!void {
+    const info = @typeInfo(T).@"struct";
+    try json.objectField("fields");
+    try json.beginArray();
+    inline for (info.field_names, info.field_types) |name, FieldType| {
+        try json.beginObject();
+        try json.objectField("name");
+        try json.write(name);
+        try json.objectField("nullable");
+        try json.write(@typeInfo(FieldType) == .optional);
+        try json.objectField("storage");
+        try json.write(fieldStorage(FieldType));
+        if (@typeInfo(nonOptional(FieldType)) == .@"struct") try writeNestedFields(json, nonOptional(FieldType));
+        try json.endObject();
     }
-    try writeByte(buf, pos, '}');
-}
-
-/// Appends one fk `fields` map as JSON (source name → target name). Advances `pos`.
-fn writeFkFields(buf: []u8, pos: *usize, fields: anytype) error{NoSpaceLeft}!void {
-    try writeByte(buf, pos, '{');
-    inline for (@typeInfo(@TypeOf(fields)).@"struct".field_names, 0..) |name, i| {
-        if (i != 0) try writeByte(buf, pos, ',');
-        try writeJsonString(buf, pos, name);
-        try writeByte(buf, pos, ':');
-        try writeJsonString(buf, pos, nameSlice(@field(fields, name)));
-    }
-    try writeByte(buf, pos, '}');
-}
-
-/// Appends a JSON string array from an array, slice, or tuple of names. Advances `pos`.
-fn writeNameList(buf: []u8, pos: *usize, list: anytype) error{NoSpaceLeft}!void {
-    try writeByte(buf, pos, '[');
-    switch (@typeInfo(@TypeOf(list))) {
-        .array => {
-            for (list, 0..) |name, i| {
-                if (i != 0) try writeByte(buf, pos, ',');
-                try writeJsonString(buf, pos, nameSlice(name));
-            }
-        },
-        .pointer => |p| switch (p.size) {
-            .slice => {
-                for (list, 0..) |name, i| {
-                    if (i != 0) try writeByte(buf, pos, ',');
-                    try writeJsonString(buf, pos, nameSlice(name));
-                }
-            },
-            .one => try writeNameList(buf, pos, list.*),
-            else => @compileError("expected a list of names"),
-        },
-        .@"struct" => |s| {
-            if (!s.is_tuple) @compileError("expected a list of names");
-            inline for (s.field_names, 0..) |_, i| {
-                if (i != 0) try writeByte(buf, pos, ',');
-                try writeJsonString(buf, pos, nameSlice(list[i]));
-            }
-        },
-        else => @compileError("expected a list of names"),
-    }
-    try writeByte(buf, pos, ']');
-}
-
-/// Agrega un valor JSON de texto, entero, booleano, struct u opcional y avanza `pos`.
-fn writeJsonValue(buf: []u8, pos: *usize, value: anytype) error{NoSpaceLeft}!void {
-    const T = @TypeOf(value);
-    switch (@typeInfo(T)) {
-        .optional => if (value) |present|
-            try writeJsonValue(buf, pos, present)
-        else
-            try writeRaw(buf, pos, "null"),
-        .pointer => |p| {
-            if (p.size == .slice and p.child == u8) {
-                try writeJsonString(buf, pos, value);
-            } else if (p.size == .one) {
-                switch (@typeInfo(p.child)) {
-                    .array => |a| if (a.child == u8) {
-                        try writeJsonString(buf, pos, value);
-                    } else @compileError("unsupported json type " ++ @typeName(T)),
-                    else => @compileError("unsupported json type " ++ @typeName(T)),
-                }
-            } else @compileError("unsupported json type " ++ @typeName(T));
-        },
-        .int => try writeInt(buf, pos, value),
-        .bool => try writeRaw(buf, pos, if (value) "true" else "false"),
-        .@"struct" => |s| {
-            if (s.is_tuple) @compileError("unsupported json type " ++ @typeName(T));
-            try writeByte(buf, pos, '{');
-            inline for (s.field_names, 0..) |name, i| {
-                if (i != 0) try writeByte(buf, pos, ',');
-                try writeJsonString(buf, pos, name);
-                try writeByte(buf, pos, ':');
-                try writeJsonValue(buf, pos, @field(value, name));
-            }
-            try writeByte(buf, pos, '}');
-        },
-        else => @compileError("unsupported json type " ++ @typeName(T)),
-    }
-}
-
-/// Appends a decimal integer. Advances `pos`.
-fn writeInt(buf: []u8, pos: *usize, value: anytype) error{NoSpaceLeft}!void {
-    var tmp: [32]u8 = undefined;
-    const slice = std.fmt.bufPrint(&tmp, "{d}", .{value}) catch return error.NoSpaceLeft;
-    try writeRaw(buf, pos, slice);
-}
-
-/// Coerces a name (slice, `*const [N]u8`, or `[N]u8`) to `[]const u8`. Compile error otherwise.
-fn nameSlice(name: anytype) []const u8 {
-    const T = @TypeOf(name);
-    switch (@typeInfo(T)) {
-        .pointer => |p| {
-            if (p.size == .slice) return name;
-            if (p.size == .one) switch (@typeInfo(p.child)) {
-                .array => |a| if (a.child == u8) return name,
-                else => {},
-            };
-        },
-        .array => |a| if (a.child == u8) return &name,
-        else => {},
-    }
-    @compileError("expected a string, got " ++ @typeName(T));
-}
-
-/// Appends `s` as a JSON string (quotes, no escaping). Advances `pos`.
-fn writeJsonString(buf: []u8, pos: *usize, s: []const u8) error{NoSpaceLeft}!void {
-    try writeByte(buf, pos, '"');
-    try writeRaw(buf, pos, s);
-    try writeByte(buf, pos, '"');
-}
-
-/// Appends one byte at `pos`. `error.NoSpaceLeft` if `buf` is full.
-fn writeByte(buf: []u8, pos: *usize, byte: u8) error{NoSpaceLeft}!void {
-    if (pos.* >= buf.len) return error.NoSpaceLeft;
-    buf[pos.*] = byte;
-    pos.* += 1;
-}
-
-/// Appends `bytes` at `pos`. `error.NoSpaceLeft` if they do not fit.
-fn writeRaw(buf: []u8, pos: *usize, bytes: []const u8) error{NoSpaceLeft}!void {
-    if (pos.* + bytes.len > buf.len) return error.NoSpaceLeft;
-    @memcpy(buf[pos.*..][0..bytes.len], bytes);
-    pos.* += bytes.len;
+    try json.endArray();
 }

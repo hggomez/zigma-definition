@@ -1,4 +1,4 @@
-const apiBase = "http://localhost:8080/api";
+const apiBase = globalThis.ZIGMA_API_BASE ?? "http://localhost:8080/api";
 
 let catalog = [];
 let currentEntity = null;
@@ -88,9 +88,9 @@ function simpleFk(entity, fieldName) {
 
 /** Cell string for a field value: object → JSON, boolean → `"true"`/`"false"`, else `String(value)` (empty if nullish). */
 function cellString(field, value) {
-    if (field && field.storage === "object") return JSON.stringify(value ?? {});
-    if (field && field.storage === "boolean") return value === true || value === "true" ? "true" : "false";
     if (value == null) return "";
+    if (field && field.storage === "object") return JSON.stringify(value);
+    if (field && field.storage === "boolean") return value === true || value === "true" ? "true" : "false";
     return String(value);
 }
 
@@ -140,11 +140,42 @@ function makeInput(field, value, locked) {
         const wrap = document.createElement("div");
         wrap.className = "object-fields";
         wrap.dataset.field = field.name;
+        const contents = document.createElement("fieldset");
+        contents.className = "object-contents";
+        contents.disabled = !!locked || (field.nullable && value == null);
+        if (field.nullable) {
+            const label = document.createElement("label");
+            label.className = "object-null";
+            const absent = document.createElement("input");
+            absent.type = "checkbox";
+            absent.dataset.nullFor = field.name;
+            absent.checked = value == null;
+            absent.disabled = !!locked;
+            absent.addEventListener("change", () => { contents.disabled = !!locked || absent.checked; });
+            label.appendChild(absent);
+            label.appendChild(document.createTextNode("Sin valor"));
+            wrap.appendChild(label);
+        }
         const obj = value && typeof value === "object" ? value : {};
         for (const sub of field.fields) {
-            wrap.appendChild(makeInput(sub, obj[sub.name], locked));
+            contents.appendChild(makeInput(sub, obj[sub.name], locked));
         }
+        wrap.appendChild(contents);
         return wrap;
+    }
+    if (field.storage === "boolean" && field.nullable) {
+        const select = document.createElement("select");
+        select.dataset.field = field.name;
+        for (const [optionValue, label] of [["", "Sin valor"], ["true", "Sí"], ["false", "No"]]) {
+            const option = document.createElement("option");
+            option.value = optionValue;
+            option.textContent = label;
+            select.appendChild(option);
+        }
+        select.value = value == null ? "" : cellString(field, value);
+        select.disabled = !!locked;
+        if (locked) select.tabIndex = -1;
+        return select;
     }
     const input = document.createElement("input");
     input.dataset.field = field.name;
@@ -232,39 +263,44 @@ function makeFkSelect(field, value, locked, fk) {
     return select;
 }
 
-/** Value of `field` under `root`: nested object, checkbox bool, or raw string. Used inside object cells. */
-function readLeaf(root, field) {
+/** Arma el JSON de una celda anidada sin redondear enteros a Number de JavaScript. */
+function readNestedJson(root, field) {
+    const value = readFieldValue(root, field);
+    if (value === "") {
+        if (field.nullable) return "null";
+        throw new Error(`error: ${field.name}: required value`);
+    }
+    if (field.storage === "object") return value;
+    if (field.storage === "integer") {
+        if (!/^[+-]?[0-9]+$/.test(value)) throw new Error(`error: ${field.name}: not integer`);
+        return BigInt(value).toString();
+    }
+    if (field.storage === "boolean") {
+        if (value !== "true" && value !== "false") throw new Error(`error: ${field.name}: not boolean`);
+        return value;
+    }
+    return JSON.stringify(value);
+}
+
+/** Empaqueta un control para WASM: ausencia → vacío; los objetos usan JSON. */
+function readFieldValue(root, field) {
     const widget = widgetFor(field);
-    if (widget?.read) return widget.read(root, field);
+    if (widget?.read) {
+        const value = widget.read(root, field);
+        if (value == null) return "";
+        if (typeof value === "object") return JSON.stringify(value);
+        return String(value);
+    }
     if (field.storage === "object" && field.fields) {
         const wrap = root.matches?.(`[data-field="${field.name}"].object-fields`)
             ? root
             : root.querySelector(`[data-field="${field.name}"].object-fields`);
-        const obj = {};
-        for (const sub of field.fields) {
-            obj[sub.name] = readLeaf(wrap ?? root, sub);
-        }
-        return obj;
+        if (!wrap) throw new Error(`error: ${field.name}: missing object control`);
+        const absent = wrap.querySelector(":scope > .object-null input");
+        if (field.nullable && absent?.checked) return "";
+        return `{${field.fields.map((sub) => `${JSON.stringify(sub.name)}:${readNestedJson(wrap, sub)}`).join(",")}}`;
     }
-    const control = root.querySelector(`[data-field="${field.name}"]`);
-    if (!control) return "";
-    if (control.tagName === "SELECT") return control.value;
-    if (field.storage === "boolean") return control.checked;
-    return control.value ?? "";
-}
-
-/** Cell string for WASM packing: object → JSON, boolean → `"true"`/`"false"`, else the input value. */
-function readFieldValue(td, field) {
-    const widget = widgetFor(field);
-    if (widget?.read) {
-        const value = widget.read(td, field);
-        if (typeof value === "object") return JSON.stringify(value ?? {});
-        return String(value ?? "");
-    }
-    if (field.storage === "object" && field.fields) {
-        return JSON.stringify(readLeaf(td, field));
-    }
-    const input = td.querySelector(`[data-field="${field.name}"]`);
+    const input = root.querySelector(`[data-field="${field.name}"]`);
     if (!input) return "";
     if (input.tagName === "SELECT") return input.value ?? "";
     if (field.storage === "boolean") return input.checked ? "true" : "false";
@@ -358,7 +394,7 @@ function buildTable(entity) {
     for (const field of fields) {
         const td = document.createElement("td");
         td.className = fieldKeyClass(entity, field);
-        td.appendChild(makeInput(field, field.storage === "boolean" ? false : field.storage === "object" ? {} : ""));
+        td.appendChild(makeInput(field, initialFieldValue(field)));
         newRow.appendChild(td);
     }
     const action = document.createElement("td");
@@ -373,8 +409,8 @@ function buildTable(entity) {
     fitSheetColumns();
 
     button.addEventListener("click", () => {
-        const values = fields.map((field, i) => readFieldValue(newRow.children[i], field));
         try {
+            const values = fields.map((field, i) => readFieldValue(newRow.children[i], field));
             writeInputStrings(values);
             const len = wasmExports.create_row(entityIndex());
             if (!len) throw new Error(rowBuildError());
@@ -520,6 +556,14 @@ function rowValuesFrom(tr) {
     return currentEntity.fields.map((field, i) => readFieldValue(tr.children[i], field));
 }
 
+/** El estado inicial y el reinicio de POST comparten la nulabilidad del catálogo. */
+function initialFieldValue(field) {
+    if (field.nullable) return null;
+    if (field.storage === "boolean") return false;
+    if (field.storage === "object") return {};
+    return "";
+}
+
 function setRowBaseline(tr) {
     tr.dataset.baseline = JSON.stringify(rowValuesFrom(tr));
 }
@@ -533,7 +577,10 @@ function isRowDirty(tr) {
 function updateSaveButton(tr) {
     const save = tr.querySelector("button.save-row");
     if (!save) return;
-    save.disabled = !isRowDirty(tr);
+    // Una entrada incompleta puede impedir armar el JSON de un objeto. Se deja
+    // guardar para que la validación muestre el error dentro de la fila.
+    try { save.disabled = !isRowDirty(tr); }
+    catch { save.disabled = false; }
 }
 
 /** PUT: pack live cells from `tr`, `build_row`, patch body without PK fields. Query pk from loaded `row`. */
@@ -623,12 +670,9 @@ async function sendJson(url, method, jsonString) {
         clearCellErrors();
         clearStatus();
         if (method === "POST") {
-            document.querySelectorAll("#new-row input").forEach((input) => {
-                if (input.type === "checkbox") input.checked = false;
-                else input.value = "";
-            });
-            document.querySelectorAll("#new-row select").forEach((select) => {
-                select.value = "";
+            const newRow = document.getElementById("new-row");
+            currentEntity.fields.forEach((field, i) => {
+                newRow.children[i].replaceChildren(makeInput(field, initialFieldValue(field)));
             });
         }
         loadRows();
@@ -699,7 +743,9 @@ loadWidgets()
     .then((obj) => {
         wasmExports = obj.instance.exports;
         window.wasmInstance = obj.instance;
-        catalog = JSON.parse(readWasmString(wasmExports.schema_ptr, wasmExports.schema_len));
+        const schemaLength = wasmExports.schema_len();
+        if (!schemaLength) throw new Error(rowBuildError());
+        catalog = JSON.parse(readMemoryString(wasmExports.schema_ptr(), schemaLength));
         const fromHash = location.hash.replace(/^#/, "");
         selectEntity(fromHash || catalog[0].name);
         clearStatus();

@@ -8,6 +8,11 @@ datos, libpq ni Liquibase. Al terminar el proceso se pierden las modificaciones.
 La arquitectura del frontend está en [frontend.md](frontend.md); la composición del
 build, en [build.md](build.md).
 
+Para iniciar el frontend con el backend real y PostgreSQL, desde la raíz ejecutá
+`zig build run-aida` con las opciones de libpq y las variables de conexión del
+[README](../README.md#arrancar-aida-con-postgresql). Ese comando gestiona ambos servidores
+y su cierre. Los pasos siguientes corresponden al backend de pruebas en memoria.
+
 ## Inicio rápido
 
 Desde la raíz del repositorio, en una terminal:
@@ -46,8 +51,10 @@ También podés ejecutar el binario directamente:
 ```
 
 `HTTP_ADDRESS` y `HTTP_PORT` permiten cambiar la dirección y el puerto. Los valores por
-default son `127.0.0.1` y `8080`. El frontend configura su URL en `src/frontend/main.js`;
-si cambiás el puerto del backend, ajustá también esa URL.
+default son `127.0.0.1` y `8080`. Cuando servís el frontend de forma independiente, su URL
+de API está en `src/frontend/api_config.js`; si cambiás el puerto del backend de pruebas,
+ajustá esa configuración y recompilá el frontend. El arranque conjunto `run-aida` configura
+la URL automáticamente mediante la respuesta de `/api-config.js`.
 
 Este servidor anuncia su dirección al iniciar; la lectura de solicitudes, CORS,
 límites y respuestas HTTP quedan a cargo de `src/rest/std_http.zig`.

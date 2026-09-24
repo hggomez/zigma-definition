@@ -64,10 +64,22 @@ def main():
             request("OPTIONS", "/api/materias", expected=204)
             docentes = request("GET", "/api/docentes?docente=1")
             assert len(docentes) == 1 and docentes[0]["telefono"] is None
+            original_docente = docentes[0]
+            docente_path = "/api/docentes?docente=1"
+            changed_docente = {**original_docente, "nombres": 'Nombre "visible"\\aula\nñ'}
+            assert request("PUT", docente_path, {"nombres": changed_docente["nombres"]}) == [changed_docente]
+            assert request("GET", docente_path)[0]["esImportador"] is None
+            for flag in (True, False, None):
+                changed_docente["esImportador"] = flag
+                assert request("PUT", docente_path, {"esImportador": flag}) == [changed_docente]
             assert request("GET", "/api/clases?orden=1&materia=AlgoI&periodo=1C2024")[0]["fecha"] == {
                 "año": 2024, "mes": 3, "día": 15,
             }
-            row = {"materia": "testing-backend-check", "denominacion": "Prueba HTTP"}
+            clase_path = "/api/clases?orden=1&materia=AlgoI&periodo=1C2024"
+            original_clase = request("GET", clase_path)[0]
+            assert request("PUT", clase_path, {"fecha": None}) == [{**original_clase, "fecha": None}]
+            assert request("PUT", clase_path, {"fecha": original_clase["fecha"]}) == [original_clase]
+            row = {"materia": "testing-backend-check", "denominacion": 'Prueba "HTTP"\\ruta\nñ'}
             assert request("POST", "/api/materias", row, expected=201) == row
             path = "/api/materias?materia=testing-backend-check"
             assert request("GET", path) == [row]
@@ -86,7 +98,7 @@ def main():
             stop(process)
             process = start()
             assert request("GET", path) == []
-            print("OK: seeds, CORS, filtros, CRUD, validación de negocio y reinicio sin persistencia")
+            print("OK: seeds, CORS, filtros, CRUD, JSON escapado, null/false/true, fechas, reglas y reinicio")
         except BaseException:
             log.seek(0)
             sys.stderr.write(log.read().decode("utf-8", errors="replace"))

@@ -13,6 +13,7 @@ Esta es la guía de uso. La explicación del contrato, los módulos y las APIs e
 - Para ejecutar AIDA con PostgreSQL: PostgreSQL, headers y biblioteca de **libpq**, y **Liquibase Community
   5.0.4** con un entorno Java compatible y el driver JDBC PostgreSQL.
 - Docker para la base local del ejemplo, las integraciones y la aceptación de migraciones.
+- Python 3 para el arranque conjunto del backend real y el frontend (`run-aida`).
 
 Comprobá Liquibase y agregá su driver una sola vez:
 
@@ -79,7 +80,7 @@ docker exec zigma-dev pg_isready -U zigma -d zigma_dev
 Esperá a que `pg_isready` informe que acepta conexiones. Si el contenedor ya existe y está
 apagado, inicialo con `docker start zigma-dev`.
 
-### 2. Configurar la conexión e iniciar el servidor
+### 2. Configurar la conexión e iniciar backend y frontend
 
 Usá estas credenciales para la base local anterior, o reemplazalas por las de tu base:
 
@@ -89,16 +90,32 @@ export LIQUIBASE_URL="jdbc:postgresql://localhost:5433/zigma_dev"
 export LIQUIBASE_USERNAME="zigma"
 export LIQUIBASE_PASSWORD="secret"
 
-zig build run-aida-rest -Dlibpq-prefix=/opt/homebrew/opt/libpq
+zig build run-aida -Dlibpq-prefix=/opt/homebrew/opt/libpq
 ```
 
-El servidor aplica las migraciones aceptadas pendientes y luego escucha en
-`http://127.0.0.1:8080` con CORS permisivo para el frontend de ejemplo. Si una migración
-falla, el arranque se detiene. Al clonar el repositorio con su historial completo, este
-mismo comando construye la base desde cero.
+El comando compila ambos componentes, inicia el backend real y espera a que aplique las
+migraciones aceptadas. Cuando la API está disponible en `http://127.0.0.1:8080/api`, sirve
+el frontend: abrí **[http://127.0.0.1:8000](http://127.0.0.1:8000)**. No carga seeds de
+prueba ni inicia PostgreSQL: la base debe estar disponible con la conexión configurada.
+Si el backend falla, el lanzador termina; `Ctrl+C` detiene backend y frontend juntos.
 
-Podés configurar `HTTP_ADDRESS`, `HTTP_PORT` y `LIQUIBASE_SCHEMA`. Si Liquibase no está en
-el PATH, exportá `LIQUIBASE_BIN` con la ruta de su ejecutable.
+Podés configurar `HTTP_ADDRESS`, `HTTP_PORT`, `FRONTEND_PORT` (default 8000) y
+`LIQUIBASE_SCHEMA`. El frontend recibe automáticamente la URL configurada de la API.
+Si Liquibase no está en el PATH, exportá `LIQUIBASE_BIN` con la ruta de su ejecutable.
+`AIDA_STARTUP_TIMEOUT` permite ajustar los 120 segundos de espera inicial.
+
+Para ejecutar solo el backend, seguí usando `zig build run-aida-rest` con las mismas
+opciones de libpq. Para compilar ambos sin iniciarlos:
+
+```sh
+zig build check-aida -Dlibpq-prefix=/opt/homebrew/opt/libpq
+```
+
+Las pruebas del lanzador usan procesos simulados y puertos propios, sin base de datos:
+
+```sh
+zig build test-aida-launcher
+```
 
 ### 3. Probar la API
 

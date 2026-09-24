@@ -64,6 +64,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   lo aplica usando `DATABASE_URL` en runtime.
 * `db/`: snapshot aceptado, baseline/changesets inmutables y directorio del único draft.
 * `tools/postgres_migration_tool.zig`: workflow de init/check/draft/accept-files.
+* `tools/run_aida.py`: arranque conjunto del backend PostgreSQL y el frontend; espera la
+  API después de las migraciones y cierra ambos con Ctrl+C.
 * `tools/postgres_schema_validator.zig`: comparación SSOT↔`pg_catalog` en un schema esperado
   temporal; se usa antes de aceptar o baselinar.
 * `build.zig`: módulos y grafo de compilación y tests. Sus helpers `addApp` / `addAppFromDep`
@@ -77,6 +79,9 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 
 ## Comprobaciones
 
+* `zig build check-aida -Dlibpq-prefix=...`: compila backend real y frontend sin ejecutarlos.
+* `zig build test-aida-launcher`: prueba el arranque y cierre conjunto con procesos simulados
+  (Python 3); `zig build run-aida -Dlibpq-prefix=...` inicia la aplicación configurada.
 * `zig build test`: suite de runtime, asserts comptime, casos de no-compila y comprobación
   del snapshot aceptado. Las integraciones con servicios externos se ejecutan por separado.
 * Desde `examples/aida/`, `zig build testing-backend` inicia el backend en memoria;

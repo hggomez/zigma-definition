@@ -83,6 +83,7 @@ pub const PackageFiles = struct {
     frontend_main: std.Build.LazyPath,
     frontend_js: std.Build.LazyPath,
     frontend_html: std.Build.LazyPath,
+    frontend_api_config: std.Build.LazyPath,
     testing_backend: std.Build.LazyPath,
     std_http: std.Build.LazyPath,
     rest: std.Build.LazyPath,
@@ -96,6 +97,7 @@ pub fn filesHere(b: *std.Build) PackageFiles {
         .frontend_main = b.path("src/frontend/main.zig"),
         .frontend_js = b.path("src/frontend/main.js"),
         .frontend_html = b.path("src/frontend/index.html"),
+        .frontend_api_config = b.path("src/frontend/api_config.js"),
         .testing_backend = b.path("src/testing_backend/main.zig"),
         .std_http = b.path("src/rest/std_http.zig"),
         .rest = b.path("src/rest/api.zig"),
@@ -110,6 +112,7 @@ pub fn filesFromDependency(dep: *std.Build.Dependency) PackageFiles {
         .frontend_main = dep.path("src/frontend/main.zig"),
         .frontend_js = dep.path("src/frontend/main.js"),
         .frontend_html = dep.path("src/frontend/index.html"),
+        .frontend_api_config = dep.path("src/frontend/api_config.js"),
         .testing_backend = dep.path("src/testing_backend/main.zig"),
         .std_http = dep.path("src/rest/std_http.zig"),
         .rest = dep.path("src/rest/api.zig"),
@@ -321,6 +324,10 @@ pub fn addApp(b: *std.Build, opts: AppOptions) App {
     b.getInstallStep().dependOn(&install_html.step);
     frontend_step.dependOn(&install_js.step);
     frontend_step.dependOn(&install_html.step);
+
+    const install_api_config = b.addInstallFileWithDir(files.frontend_api_config, frontend_dir, "api-config.js");
+    b.getInstallStep().dependOn(&install_api_config.step);
+    frontend_step.dependOn(&install_api_config.step);
 
     const title_js = b.addWriteFiles().add(
         "title.js",
@@ -601,6 +608,28 @@ pub fn build(b: *std.Build) void {
     );
     check_aida_rest_server_step.dependOn(&aida_rest_server.step);
 
+    // Reutiliza el build del consumidor con el mismo compilador y contrato de AIDA.
+    const build_aida_frontend = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "frontend" });
+    build_aida_frontend.setCwd(b.path("examples/aida"));
+    const run_aida = b.addSystemCommand(&.{"python3"});
+    run_aida.addFileArg(b.path("tools/run_aida.py"));
+    run_aida.addArtifactArg(aida_rest_server);
+    run_aida.addDirectoryArg(b.path("examples/aida/zig-out/frontend"));
+    run_aida.setCwd(b.path("."));
+    run_aida.has_side_effects = true;
+    run_aida.step.dependOn(&build_aida_frontend.step);
+    const run_aida_step = b.step("run-aida", "Iniciar AIDA con PostgreSQL y frontend (requiere Python 3)");
+    run_aida_step.dependOn(&run_aida.step);
+
+    const check_aida_step = b.step("check-aida", "Compilar el backend PostgreSQL y el frontend de AIDA sin ejecutarlos");
+    check_aida_step.dependOn(&aida_rest_server.step);
+    check_aida_step.dependOn(&build_aida_frontend.step);
+
+    const test_aida_launcher = b.addSystemCommand(&.{"python3"});
+    test_aida_launcher.addFileArg(b.path("test/integration/run_aida_test.py"));
+    const test_aida_launcher_step = b.step("test-aida-launcher", "Probar arranque, configuración y cierre conjunto (Python 3; sin PostgreSQL)");
+    test_aida_launcher_step.dependOn(&test_aida_launcher.step);
+
     const schema_validator = b.addExecutable(.{
         .name = "postgres-schema-validator",
         .root_module = b.createModule(.{
@@ -787,11 +816,27 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_json_tests = b.addRunArtifact(json_tests);
+    const json_model_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/json_model_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "zigma_json", .module = zigma_json_mod },
+            },
+        }),
+    });
+    const run_json_model_tests = b.addRunArtifact(json_model_tests);
+    const test_json_step = b.step("test-json", "Probar serialización JSON y catálogo del modelo normalizado");
+    test_json_step.dependOn(&run_json_tests.step);
+    test_json_step.dependOn(&run_json_model_tests.step);
 
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(model_test_step);
     test_step.dependOn(&run_tests.step);
-    test_step.dependOn(&run_json_tests.step);
+    test_step.dependOn(test_json_step);
     test_step.dependOn(&run_postgres_ddl_tests.step);
     test_step.dependOn(&run_postgres_executor_ddl_tests.step);
     test_step.dependOn(&run_postgres_migrations_tests.step);

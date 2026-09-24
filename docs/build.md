@@ -36,6 +36,18 @@ zig build test-backend    # HTTP integration check (Python 3; own process and po
 
 How to run it in a browser: [run-example.md](run-example.md).
 
+Para el backend real con PostgreSQL, desde la raíz del repositorio:
+
+```sh
+zig build run-aida -Dlibpq-prefix=/opt/homebrew/opt/libpq
+zig build check-aida -Dlibpq-prefix=/opt/homebrew/opt/libpq # solo compilar
+zig build test-aida-launcher # procesos simulados; sin PostgreSQL
+```
+
+`run-aida` requiere Python 3 y las variables de conexión del [README](../README.md).
+El build compila el backend real y ejecuta el paso `frontend` del consumidor AIDA con el
+mismo compilador. El lanzador espera la API, sirve los archivos y cierra ambos con Ctrl+C.
+
 ## What the library build graph contains
 
 | Step | Command | Result |

@@ -110,16 +110,16 @@ test "stringifies a record schema from completeRecord" {
 test "stringifies an entity schema from completeEntity" {
     var buf: [512]u8 = undefined;
     try expectEqualStrings(
-        "{\"name\":\"materias\",\"pk\":[\"materia\"],\"uks\":{\"denominacion\":[\"denominacion\"]},\"fks\":{},\"fields\":[{\"name\":\"materia\",\"label\":\"materia\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"denominacion\",\"label\":\"denominación\",\"type\":\"text\",\"is_name\":true,\"storage\":\"text\"}]}",
-        try zigma_json.stringifyEntitySchema(aida.type_defs, "materias", aida.materias, &buf),
+        "{\"name\":\"materias\",\"pk\":[\"materia\"],\"uks\":{\"denominacion\":[\"denominacion\"]},\"fks\":{},\"fields\":[{\"name\":\"materia\",\"label\":\"materia\",\"type\":\"text\",\"is_name\":false,\"nullable\":false,\"storage\":\"text\"},{\"name\":\"denominacion\",\"label\":\"denominación\",\"type\":\"text\",\"is_name\":true,\"nullable\":false,\"storage\":\"text\"}]}",
+        try zigma_json.stringifyEntitySchema(aida.Model, "materias", &buf),
     );
 }
 
 test "stringifies entity fks as source-to-target maps" {
     var buf: [2048]u8 = undefined;
-    const json = try zigma_json.stringifyEntitySchema(aida.type_defs, "docentes", aida.docentes, &buf);
+    const json = try zigma_json.stringifyEntitySchema(aida.Model, "docentes", &buf);
     try expectEqualStrings(
-        "{\"name\":\"docentes\",\"pk\":[\"docente\"],\"uks\":{},\"fks\":{\"jefe\":{\"entity\":\"docentes\",\"fields\":{\"jefe\":\"docente\"}}},\"fields\":[{\"name\":\"docente\",\"label\":\"docente\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"apellido\",\"label\":\"apellido\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"nombres\",\"label\":\"nombres\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"cargo\",\"label\":\"cargo\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"email\",\"label\":\"email\",\"type\":\"email\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"email_alternativo\",\"label\":\"email alternativo\",\"type\":\"email\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"jefe\",\"label\":\"jefe\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"telefono\",\"label\":\"telefono\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"experiencia\",\"label\":\"experiencia\",\"type\":\"integer\",\"is_name\":false,\"storage\":\"integer\"},{\"name\":\"esImportador\",\"label\":\"esImportador\",\"type\":\"boolean\",\"is_name\":false,\"storage\":\"boolean\"}]}",
+        "{\"name\":\"docentes\",\"pk\":[\"docente\"],\"uks\":{},\"fks\":{\"jefe\":{\"entity\":\"docentes\",\"fields\":{\"jefe\":\"docente\"}}},\"fields\":[{\"name\":\"docente\",\"label\":\"docente\",\"type\":\"text\",\"is_name\":false,\"nullable\":false,\"storage\":\"text\"},{\"name\":\"apellido\",\"label\":\"apellido\",\"type\":\"text\",\"is_name\":false,\"nullable\":true,\"storage\":\"text\"},{\"name\":\"nombres\",\"label\":\"nombres\",\"type\":\"text\",\"is_name\":false,\"nullable\":false,\"storage\":\"text\"},{\"name\":\"cargo\",\"label\":\"cargo\",\"type\":\"text\",\"is_name\":false,\"nullable\":true,\"storage\":\"text\"},{\"name\":\"email\",\"label\":\"email\",\"type\":\"email\",\"is_name\":false,\"nullable\":true,\"storage\":\"text\"},{\"name\":\"email_alternativo\",\"label\":\"email alternativo\",\"type\":\"email\",\"is_name\":false,\"nullable\":true,\"storage\":\"text\"},{\"name\":\"jefe\",\"label\":\"jefe\",\"type\":\"text\",\"is_name\":false,\"nullable\":true,\"storage\":\"text\"},{\"name\":\"telefono\",\"label\":\"telefono\",\"type\":\"text\",\"is_name\":false,\"nullable\":true,\"storage\":\"text\"},{\"name\":\"experiencia\",\"label\":\"experiencia\",\"type\":\"integer\",\"is_name\":false,\"nullable\":true,\"storage\":\"integer\"},{\"name\":\"esImportador\",\"label\":\"esImportador\",\"type\":\"boolean\",\"is_name\":false,\"nullable\":true,\"storage\":\"boolean\"}]}",
         json,
     );
 }
@@ -155,7 +155,7 @@ test "stringifies a fecha field as a JSON object" {
 
 test "stringifies a catalog of entity Infos from entity_defs" {
     var buf: [16384]u8 = undefined;
-    const json = try zigma_json.stringifyEntityCatalog(aida.type_defs, aida.entity_defs, &buf);
+    const json = try zigma_json.stringifyEntityCatalog(aida.Model, &buf);
     try std.testing.expect(json[0] == '[');
     try std.testing.expect(json[json.len - 1] == ']');
     try std.testing.expect(std.mem.startsWith(u8, json, "[{\"name\":\"docentes\""));
@@ -174,15 +174,15 @@ test "stringifies a catalog from a system that is not aida" {
 
     var buf: [512]u8 = undefined;
     try expectEqualStrings(
-        "[{\"name\":\"items\",\"pk\":[\"id\"],\"uks\":{},\"fks\":{},\"fields\":[{\"name\":\"id\",\"label\":\"id\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"},{\"name\":\"nombre\",\"label\":\"nombre\",\"type\":\"text\",\"is_name\":false,\"storage\":\"text\"}]}]",
-        try zigma_json.stringifyEntityCatalog(tiny.type_defs, tiny.entity_defs, &buf),
+        "[{\"name\":\"items\",\"pk\":[\"id\"],\"uks\":{},\"fks\":{},\"fields\":[{\"name\":\"id\",\"label\":\"id\",\"type\":\"text\",\"is_name\":false,\"nullable\":false,\"storage\":\"text\"},{\"name\":\"nombre\",\"label\":\"nombre\",\"type\":\"text\",\"is_name\":false,\"nullable\":true,\"storage\":\"text\"}]}]",
+        try zigma_json.stringifyEntityCatalog(zigma.System(tiny.type_defs, tiny.entity_defs), &buf),
     );
 }
 
 test "a struct field is object storage with nested fields" {
     var buf: [2048]u8 = undefined;
-    const json = try zigma_json.stringifyEntitySchema(aida.type_defs, "clases", aida.clases, &buf);
-    try std.testing.expect(std.mem.indexOf(u8, json, "{\"name\":\"fecha\",\"label\":\"fecha\",\"type\":\"fecha\",\"is_name\":false,\"storage\":\"object\",\"fields\":[{\"name\":\"año\",\"storage\":\"integer\"},{\"name\":\"mes\",\"storage\":\"integer\"},{\"name\":\"día\",\"storage\":\"integer\"}]}") != null);
+    const json = try zigma_json.stringifyEntitySchema(aida.Model, "clases", &buf);
+    try std.testing.expect(std.mem.indexOf(u8, json, "{\"name\":\"fecha\",\"label\":\"fecha\",\"type\":\"fecha\",\"is_name\":false,\"nullable\":true,\"storage\":\"object\",\"fields\":[{\"name\":\"año\",\"nullable\":false,\"storage\":\"integer\"},{\"name\":\"mes\",\"nullable\":false,\"storage\":\"integer\"},{\"name\":\"día\",\"nullable\":false,\"storage\":\"integer\"}]}") != null);
 }
 
 test "parseFieldValue rejects a non-integer string" {
@@ -229,4 +229,52 @@ test "parseFieldValue rejects struct text that would allocate a copy" {
         error.InvalidValue,
         zigma_json.parseFieldValue(Row, "{\"name\":\"line\\nbreak\"}"),
     );
+}
+
+test "record JSON escapes text and property names and preserves Unicode" {
+    const key = "nombre\"\\\n\tñ";
+    const text = "Profesor \"Juan\"\\aula\nsegunda línea\tñ 😀\r\x01";
+    const Row = struct { @"nombre\"\\\n\tñ": []const u8, empty: ?bool };
+    const row: Row = .{ .@"nombre\"\\\n\tñ" = text, .empty = null };
+    var buf: [512]u8 = undefined;
+    const encoded = try zigma_json.stringifyRecord(row, &buf);
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, encoded, .{});
+    defer parsed.deinit();
+    try expectEqualStrings(text, parsed.value.object.get(key).?.string);
+    try std.testing.expect(parsed.value.object.get("empty").? == .null);
+}
+
+test "record arrays escape every element" {
+    const Row = struct { name: []const u8 };
+    const rows = [_]Row{ .{ .name = "a\"b" }, .{ .name = "c\\d\ne" } };
+    var buf: [128]u8 = undefined;
+    const encoded = try zigma_json.stringifyRecords(&rows, &buf);
+    var parsed = try std.json.parseFromSlice([]Row, std.testing.allocator, encoded, .{});
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value.len == rows.len);
+    for (rows, parsed.value) |expected, actual| try expectEqualStrings(expected.name, actual.name);
+}
+
+test "record schema escapes labels and names" {
+    const name = "campo\"\\\n";
+    const label = "Etiqueta \"visible\"\\ruta\nsegunda línea\tñ";
+    const info = zigma.completeRecord(zigma.record(zigma.common_type_defs, .{
+        .@"campo\"\\\n" = .{ .type = "text", .label = label },
+    }));
+    var buf: [256]u8 = undefined;
+    const encoded = try zigma_json.stringifyRecordSchema(info, &buf);
+    var parsed = try std.json.parseFromSlice(std.json.Value, std.testing.allocator, encoded, .{});
+    defer parsed.deinit();
+    try expectEqualStrings(name, parsed.value.array.items[0].object.get("name").?.string);
+    try expectEqualStrings(label, parsed.value.array.items[0].object.get("label").?.string);
+}
+
+test "escaped output capacity is checked and the caller buffer can be reused" {
+    const Row = struct { value: []const u8 };
+    var buf: [20]u8 = undefined;
+    // La entrada cabe; su representación escapada requiere más espacio.
+    try std.testing.expectError(error.NoSpaceLeft, zigma_json.stringifyRecord(Row{ .value = "\n\n\n\n\n\n\n\n" }, &buf));
+    try expectEqualStrings("{\"value\":\"ok\"}", try zigma_json.stringifyRecord(Row{ .value = "ok" }, &buf));
+    var empty: [0]u8 = .{};
+    try std.testing.expectError(error.NoSpaceLeft, zigma_json.stringifyRecords(&[_]Row{}, &empty));
 }

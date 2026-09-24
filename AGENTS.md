@@ -18,6 +18,7 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | Consumer page title | optional `title` on `addApp` / `addAppFromDep`; generated `title.js` |
 | Backend de pruebas en memoria | `src/testing_backend/main.zig`, `src/testing_backend/memory_repository.zig`, `src/rest/std_http.zig` |
 | Comprobación HTTP del backend de pruebas | `test/integration/run_testing_backend.py`, `examples/aida/build.zig` |
+| Arranque conjunto del backend real y frontend | `tools/run_aida.py`, `test/integration/run_aida_test.py`, `build.zig`, `src/frontend/api_config.js` |
 | Modules, test graph, `addApp`, wasm/backend steps | `build.zig` |
 | Package name, zig version, published paths | `build.zig.zon` |
 

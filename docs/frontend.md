@@ -67,7 +67,7 @@ flowchart TB
 | HTML → JS | Shell only: `#entity-nav`, `#sheet-title`, `#sheet-table` (`thead`/`tbody`/`tfoot`), `#status`. `<script src="title.js">` sets `document.title` from `addApp` `.title` (empty if omitted). No columns until JS runs. |
 | JS → WASM exports | Pointer/length accessors plus `build_row(entity_index)` / `create_row(entity_index)`. `entity_index` is field order on `entity_defs` (same order as the catalog array). |
 | WASM → JS import | `env.js_send_post(ptr, len)`: Zig has already written row JSON into `json_buf`; JS reads that slice and `fetches` `POST`. Zig does **not** await the Promise (the POST is fire-and-forget from WASM’s point of view; JS still `await`s inside the import). |
-| JS → HTTP | Hard-coded `http://localhost:8080/api`. CORS `*` mediante el transporte compartido `zigma_std_http`. Identity for PUT/DELETE is the query string (pk fields). POST has no query. GET may include equality filters. PUT body omits PKs. Domain values (including `fecha` objects) follow the codecs / WASM row JSON. |
+| JS → HTTP | `api-config.js` configura `globalThis.ZIGMA_API_BASE` (default `http://localhost:8080/api`); `run-aida` lo sirve con la URL real del backend. CORS `*` mediante el transporte compartido `zigma_std_http`. Identity for PUT/DELETE is the query string (pk fields). POST has no query. GET may include equality filters. PUT body omits PKs. Domain values (including `fecha` objects) follow the codecs / WASM row JSON. |
 
 **Responsibility split (why WASM exists)**
 
@@ -131,12 +131,13 @@ The library `zig build` at the repo root does **not** install this app. Generato
 
 ### 3.2 Page load → catalog → first table
 
-Triggered by the browser loading `index.html` (`<script src="title.js">` then `<script src="main.js">`). Status text starts as `Loading...`.
+Triggered by the browser loading `index.html` (`<script src="title.js">`, `<script src="api-config.js">`, then `<script src="main.js">`). Status text starts as `Loading...`.
 
 ```
 browser
   └─ fetch("index.html") → parse DOM (empty nav, empty table)
        ├─ fetch("title.js") → document.title from addApp `.title`
+       ├─ fetch("api-config.js") → URL de la API
        └─ fetch("main.js") → execute
 
 main.js  (top level)
@@ -506,7 +507,8 @@ JS does not call this explicitly; `fetch` does.
 | `src/frontend/main.zig` | WASM: catalog, packed-string `build_row` / `create_row`, exports, `js_send_post` import |
 | `src/json.zig` | `stringifyEntityCatalog`, `stringifyRecord`, `parseFieldValue`, `fieldStorage` |
 | `src/frontend/main.js` | Nav + table from catalog; packing; GET/POST/PUT/DELETE; optional `./widgets.js` |
-| `src/frontend/index.html` | Empty shell + CSS for the sheet; loads generated `title.js` |
+| `src/frontend/index.html` | Empty shell + CSS; loads `title.js` and `api-config.js` before `main.js` |
+| `src/frontend/api_config.js` | URL por defecto de la API; `run-aida` la configura en runtime |
 | `src/testing_backend/main.zig` | Compone API, repositorio, seeds y `std_http.serve` |
 | `src/testing_backend/memory_repository.zig` | CRUD en memoria para pruebas |
 | `src/rest/std_http.zig` | Socket adapter for `zigma_rest`; CORS + `OPTIONS` |

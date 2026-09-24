@@ -200,8 +200,25 @@
       }
       table.sheet td .object-fields {
         display: flex;
-        height: 24px;
+        min-height: 24px;
         width: max-content;
+      }
+      table.sheet td .object-contents {
+        display: flex;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        min-width: 0;
+      }
+      table.sheet td .object-null {
+        display: inline-flex;
+        align-items: center;
+        white-space: nowrap;
+        padding-right: 6px;
+      }
+      table.sheet td .object-null input[type="checkbox"] {
+        width: 24px;
+        min-width: 24px;
       }
       table.sheet td .object-fields input {
         min-width: 0;
@@ -304,6 +321,7 @@
       </table>
     </div>
     <nav id="entity-nav"></nav>
+    <script src="api-config.js"></script>
     <script src="main.js"></script>
   </body>
 </html>
