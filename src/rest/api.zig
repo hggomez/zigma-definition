@@ -1,232 +1,41 @@
-//! Controladores CRUD REST derivados de entidades Zigma en compilación.
+//! CRUD REST derivados de entidades Zigma en compilación.
 //!
 //! Este módulo se ocupa de routing, validación de solicitudes, codecs de dominio
-//! y JSON. No conoce sockets ni PostgreSQL; `Api.handle` comprueba
+//! y JSON. No posee conocimiento sobre Web Sockets ni PostgreSQL; `Api.handle` comprueba
 //! los repositorios de forma estructural.
+//!
+//! Entrada pública de zigma_rest: conserva los tipos y funciones reexportados.
+//! Para seguir una solicitud, leer handle y después handleEntity; los detalles
+//! de codecs, parsing, respuestas y reglas viven en los archivos del mismo directorio.
 
 const std = @import("std");
+const domain_codecs = @import("codecs.zig");
+const requests = @import("request.zig");
+const responses = @import("response.zig");
+const validation = @import("validation.zig");
+const types = @import("types.zig");
 
-// Los codecs exponen un conjunto acotado de errores. El valor es inválido para
-// su dominio o la normalización no pudo reservar memoria para la solicitud.
-pub const CodecError = error{ InvalidValue, OutOfMemory };
+pub const CodecError = domain_codecs.CodecError;
+pub const Codec = domain_codecs.Codec;
+pub const text_codec = domain_codecs.text_codec;
+pub const integer_codec = domain_codecs.integer_codec;
+pub const boolean_codec = domain_codecs.boolean_codec;
+pub const common_codecs = domain_codecs.common_codecs;
+pub const defineCodecs = domain_codecs.defineCodecs;
 
-/// Conecta un tipo de dominio Zigma entre valores HTTP/JSON y el protocolo
-/// textual de PostgreSQL. El motor REST gestiona null; los codecs solo reciben valores no-null.
-pub const Codec = struct {
-    queryToPostgres: *const fn (std.mem.Allocator, []const u8) CodecError![]const u8,
-    jsonToPostgres: *const fn (std.mem.Allocator, std.json.Value) CodecError![]const u8,
-    postgresToJson: *const fn (std.mem.Allocator, []const u8) CodecError!std.json.Value,
-};
+pub const Method = types.Method;
+pub const Request = types.Request;
+pub const Response = types.Response;
+pub const Route = types.Route;
+pub const FieldValue = types.FieldValue;
+pub const QueryResult = types.QueryResult;
+pub const RepositoryError = types.RepositoryError;
+pub const Config = types.Config;
 
-fn textFromQuery(allocator: std.mem.Allocator, value: []const u8) CodecError![]const u8 {
-    // Copia el valor a memoria propia para el resto de la solicitud, sin depender
-    // de la duración del buffer de query del adaptador HTTP.
-    return allocator.dupe(u8, value) catch error.OutOfMemory;
-}
-
-fn textFromJson(allocator: std.mem.Allocator, value: std.json.Value) CodecError![]const u8 {
-    // No convierte números o booleanos JSON a strings en silencio:
-    // el tipo JSON enviado por el cliente forma parte del contrato REST.
-    if (value != .string) return error.InvalidValue;
-    return allocator.dupe(u8, value.string) catch error.OutOfMemory;
-}
-
-fn textToJson(_: std.mem.Allocator, value: []const u8) CodecError!std.json.Value {
-    // El resultado del repositorio sigue vigente durante la serialización:
-    // el nodo JSON puede tomar prestados sus bytes con seguridad.
-    return .{ .string = value };
-}
-
-fn integerFromQuery(allocator: std.mem.Allocator, value: []const u8) CodecError![]const u8 {
-    // Parsear y volver a formatear valida la entrada y produce una
-    // representación canónica en base 10 para el parámetro PostgreSQL.
-    const parsed = std.fmt.parseInt(i64, value, 10) catch return error.InvalidValue;
-    return std.fmt.allocPrint(allocator, "{d}", .{parsed}) catch error.OutOfMemory;
-}
-
-fn integerFromJson(allocator: std.mem.Allocator, value: std.json.Value) CodecError![]const u8 {
-    // std.json distingue enteros de flotantes: se rechaza 1.5 en lugar de
-    // truncarlo o dejar que PostgreSQL lo acepte mediante una conversión implícita.
-    if (value != .integer) return error.InvalidValue;
-    return std.fmt.allocPrint(allocator, "{d}", .{value.integer}) catch error.OutOfMemory;
-}
-
-fn integerToJson(_: std.mem.Allocator, value: []const u8) CodecError!std.json.Value {
-    // Un valor de base no entero indica que se rompió el contrato entre repositorio
-    // y dominio; terminará como un error de servidor sin detalles internos.
-    return .{ .integer = std.fmt.parseInt(i64, value, 10) catch return error.InvalidValue };
-}
-
-fn booleanFromQuery(allocator: std.mem.Allocator, value: []const u8) CodecError![]const u8 {
-    // Mantiene estricta la representación pública, sin aceptar los múltiples
-    // aliases booleanos de PostgreSQL (t/f, yes/no, 1/0).
-    if (!std.mem.eql(u8, value, "true") and !std.mem.eql(u8, value, "false"))
-        return error.InvalidValue;
-    return allocator.dupe(u8, value) catch error.OutOfMemory;
-}
-
-fn booleanFromJson(allocator: std.mem.Allocator, value: std.json.Value) CodecError![]const u8 {
-    if (value != .bool) return error.InvalidValue;
-    return allocator.dupe(u8, if (value.bool) "true" else "false") catch error.OutOfMemory;
-}
-
-fn booleanToJson(_: std.mem.Allocator, value: []const u8) CodecError!std.json.Value {
-    // libpq suele devolver t/f; aceptar también la forma larga facilita
-    // el uso de repositorios falsos y adaptadores alternativos.
-    if (std.mem.eql(u8, value, "t") or std.mem.eql(u8, value, "true")) return .{ .bool = true };
-    if (std.mem.eql(u8, value, "f") or std.mem.eql(u8, value, "false")) return .{ .bool = false };
-    return error.InvalidValue;
-}
-
-pub const text_codec = Codec{
-    .queryToPostgres = textFromQuery,
-    .jsonToPostgres = textFromJson,
-    .postgresToJson = textToJson,
-};
-
-pub const integer_codec = Codec{
-    .queryToPostgres = integerFromQuery,
-    .jsonToPostgres = integerFromJson,
-    .postgresToJson = integerToJson,
-};
-
-pub const boolean_codec = Codec{
-    .queryToPostgres = booleanFromQuery,
-    .jsonToPostgres = booleanFromJson,
-    .postgresToJson = booleanToJson,
-};
-
-/// Codecs de los dominios incorporados en Zigma. Este struct anónimo
-/// se puede extender con codecs de la aplicación mediante `zigma.merge`.
-pub const common_codecs = .{
-    .text = text_codec,
-    .integer = integer_codec,
-    .boolean = boolean_codec,
-};
-
-fn isCodec(comptime T: type) bool {
-    // La igualdad exacta es útil acá: cada codec tiene un contrato estable de
-    // tipo ABI, sin confiar en que un valor con nombre parecido funcione después.
-    return T == Codec;
-}
-
-pub fn defineCodecs(comptime type_defs: anytype, comptime codecs: anytype) @TypeOf(codecs) {
-    // Ambos bucles corren en compilación. El primero detecta nombres erróneos,
-    // entradas adicionales y firmas inválidas; el segundo comprueba la cobertura de dominios.
-    inline for (@typeInfo(@TypeOf(codecs)).@"struct".field_names) |name| {
-        if (!@hasField(@TypeOf(type_defs), name))
-            @compileError("REST codec '" ++ name ++ "': unknown domain type");
-        if (!isCodec(@TypeOf(@field(codecs, name))))
-            @compileError("REST codec '" ++ name ++ "': must be a zigma_rest.Codec");
-    }
-    inline for (@typeInfo(@TypeOf(type_defs)).@"struct".field_names) |name| {
-        if (!@hasField(@TypeOf(codecs), name))
-            @compileError("domain type '" ++ name ++ "': missing REST codec");
-    }
-    return codecs;
-}
-
-pub const Method = enum { GET, POST, PUT, DELETE, other };
-
-/// Vista de solicitud independiente del transporte. Todos los slices pueden ser
-/// prestados porque `handle` los consume en forma síncrona antes de retornar.
-pub const Request = struct {
-    method: Method,
-    target: []const u8,
-    content_type: ?[]const u8 = null,
-    body: []const u8 = "",
-};
-
-/// El cuerpo de respuesta pertenece al allocator pasado a `handle`.
-pub const Response = struct {
-    status: u16,
-    body: []const u8,
-    content_type: []const u8 = "application/json",
-};
-
-/// Metadatos de rutas en compilación para adaptadores, tests y documentación futura.
-/// El despacho es código generado y no recorre este array.
-pub const Route = struct {
-    path: []const u8,
-    methods: [4]Method = .{ .GET, .POST, .PUT, .DELETE },
-};
-
-/// Parámetro PostgreSQL validado. null de Zig representa SQL NULL;
-/// los bytes "null" siguen siendo un valor de texto común.
-pub const FieldValue = struct {
-    name: []const u8,
-    value: ?[]const u8,
-};
-
-/// Descripción estable, visible para el cliente, de un estado de negocio rechazado.
-/// Los validadores son código de aplicación; el motor REST construye la respuesta HTTP de
-/// error.
-pub const BusinessRuleViolation = struct {
-    code: []const u8,
-    message: []const u8,
-};
-
-/// `InvalidState` indica que el validador no pudo interpretar una fila completa
-/// supuestamente normalizada. Es un error interno de contrato, no una infracción
-/// del cliente: se devuelve como HTTP 500 sin exponer detalles internos.
-pub const BusinessValidationError = error{InvalidState};
-
-/// La validación de entidad recibe una fila completa con la misma forma normalizada
-/// de texto/null que usan los repositorios. Así no depende de JSON, HTTP
-/// ni de un driver PostgreSQL concreto.
-pub const BusinessValidator = struct {
-    validate: *const fn ([]const FieldValue) BusinessValidationError!?BusinessRuleViolation,
-};
-
-/// Valida un registro opcional comptime por nombre de entidad. Las entidades
-/// omitidas no tienen validación de negocio ni requieren una consulta PUT adicional.
-pub fn defineBusinessValidators(
-    comptime Model: type,
-    comptime validators: anytype,
-) @TypeOf(validators) {
-    const model_info = Model.info;
-    inline for (@typeInfo(@TypeOf(validators)).@"struct".field_names) |entity_name| {
-        if (!@hasField(@TypeOf(model_info), entity_name))
-            @compileError("REST business validator '" ++ entity_name ++ "': unknown entity");
-        if (@TypeOf(@field(validators, entity_name)) != BusinessValidator)
-            @compileError("REST business validator '" ++ entity_name ++ "': must be a zigma_rest.BusinessValidator");
-    }
-    return validators;
-}
-
-/// Resultado tabular mínimo con memoria propia, usado por repositorios y dobles de prueba.
-pub const QueryResult = struct {
-    allocator: std.mem.Allocator,
-    columns: []const []const u8,
-    rows: []const []const ?[]const u8,
-
-    pub fn deinit(self: QueryResult) void {
-        // El resultado contiene copias propias: nombres de columnas, arrays de filas
-        // y celdas no-null se copiaron al allocator del resultado.
-        for (self.columns) |column| self.allocator.free(column);
-        self.allocator.free(self.columns);
-        for (self.rows) |row| {
-            for (row) |value| if (value) |bytes| self.allocator.free(bytes);
-            self.allocator.free(row);
-        }
-        self.allocator.free(self.rows);
-    }
-};
-
-pub const RepositoryError = error{
-    OutOfMemory,
-    Conflict,
-    Unavailable,
-    DatabaseError,
-};
-
-pub const Config = struct {
-    // La capa pura impone este límite aunque el adaptador de red tenga uno propio.
-    max_body_bytes: usize = 1024 * 1024,
-};
-
-// Los filtros de query no pueden expresar SQL NULL en esta primera versión REST.
-const RawFilter = struct { name: []const u8, value: []const u8 };
+pub const BusinessRuleViolation = validation.BusinessRuleViolation;
+pub const BusinessValidationError = validation.BusinessValidationError;
+pub const BusinessValidator = validation.BusinessValidator;
+pub const defineBusinessValidators = validation.defineBusinessValidators;
 
 fn routeList(comptime entity_defs: anytype) [@typeInfo(@TypeOf(entity_defs)).@"struct".field_names.len]Route {
     // Los nombres de entidades y el tamaño del array se conocen en compilación;
@@ -235,336 +44,6 @@ fn routeList(comptime entity_defs: anytype) [@typeInfo(@TypeOf(entity_defs)).@"s
     var result: [names.len]Route = undefined;
     inline for (names, 0..) |name, index| result[index] = .{ .path = "/api/" ++ name };
     return result;
-}
-
-fn isPrimaryKey(comptime entity: anytype, comptime field_name: []const u8) bool {
-    for (entity.pk) |pk_name|
-        if (std.mem.eql(u8, pk_name, field_name)) return true;
-    return false;
-}
-
-fn decodeHex(byte: u8) ?u8 {
-    return switch (byte) {
-        '0'...'9' => byte - '0',
-        'a'...'f' => byte - 'a' + 10,
-        'A'...'F' => byte - 'A' + 10,
-        else => null,
-    };
-}
-
-fn percentDecode(allocator: std.mem.Allocator, encoded: []const u8) ![]const u8 {
-    // La decodificación crea bytes propios de la solicitud. `errdefer` también
-    // libera un valor parcialmente construido si encuentra un escape mal formado.
-    var output: std.ArrayList(u8) = .empty;
-    errdefer output.deinit(allocator);
-    var index: usize = 0;
-    while (index < encoded.len) {
-        if (encoded[index] == '%') {
-            // Los escapes porcentuales son exactamente `%` seguido de dos dígitos hexadecimales.
-            if (index + 2 >= encoded.len) return error.InvalidEncoding;
-            const high = decodeHex(encoded[index + 1]) orelse return error.InvalidEncoding;
-            const low = decodeHex(encoded[index + 2]) orelse return error.InvalidEncoding;
-            try output.append(allocator, high * 16 + low);
-            index += 3;
-        } else {
-            // Las queries con formato de formulario HTML codifican los espacios como `+`;
-            // un signo más literal es `%2B` y por eso pasa por la rama anterior.
-            try output.append(allocator, if (encoded[index] == '+') ' ' else encoded[index]);
-            index += 1;
-        }
-    }
-    // Los strings JSON y el contrato textual PostgreSQL de este framework usan UTF-8.
-    if (!std.unicode.utf8ValidateSlice(output.items)) return error.InvalidEncoding;
-    return output.toOwnedSlice(allocator);
-}
-
-fn parseFilters(allocator: std.mem.Allocator, query: []const u8) ![]RawFilter {
-    // Conserva el orden de la URL solo al parsear y detectar duplicados.
-    // Una etapa posterior ordena los filtros según la declaración de la entidad.
-    var filters: std.ArrayList(RawFilter) = .empty;
-    errdefer filters.deinit(allocator);
-    if (query.len == 0) return filters.toOwnedSlice(allocator);
-
-    var pairs = std.mem.splitScalar(u8, query, '&');
-    while (pairs.next()) |pair| {
-        if (pair.len == 0) return error.InvalidQuery;
-        const equals = std.mem.indexOfScalar(u8, pair, '=') orelse return error.InvalidQuery;
-        const name = try percentDecode(allocator, pair[0..equals]);
-        const value = try percentDecode(allocator, pair[equals + 1 ..]);
-        // Rechaza duplicados para evitar una convención inesperada de primero o último
-        // que gana, que podría diferir entre clientes y proxies.
-        for (filters.items) |existing|
-            if (std.mem.eql(u8, existing.name, name)) return error.DuplicateFilter;
-        try filters.append(allocator, .{ .name = name, .value = value });
-    }
-    return filters.toOwnedSlice(allocator);
-}
-
-fn contentTypeIsJson(value: ?[]const u8) bool {
-    // Admite parámetros como `charset=utf-8` y compara el tipo de contenido
-    // sin distinguir mayúsculas, tal como exige HTTP.
-    const content_type = value orelse return false;
-    const end = std.mem.indexOfScalar(u8, content_type, ';') orelse content_type.len;
-    return std.ascii.eqlIgnoreCase(std.mem.trim(u8, content_type[0..end], " \t"), "application/json");
-}
-
-fn jsonResponse(allocator: std.mem.Allocator, status: u16, value: anytype) !Response {
-    // El writer con allocator produce un cuerpo contiguo y transfiere su memoria
-    // a Response. Después se pueden descartar los datos temporales de la solicitud.
-    var output: std.Io.Writer.Allocating = .init(allocator);
-    errdefer output.deinit();
-    var stringify: std.json.Stringify = .{ .writer = &output.writer };
-    try stringify.write(value);
-    return .{ .status = status, .body = try output.toOwnedSlice() };
-}
-
-fn errorResponse(allocator: std.mem.Allocator, status: u16, code: []const u8, message: []const u8) !Response {
-    // Un único constructor mantiene uniforme la estructura de errores visible para el cliente.
-    return jsonResponse(allocator, status, .{ .@"error" = .{ .code = code, .message = message } });
-}
-
-fn repositoryErrorResponse(allocator: std.mem.Allocator, err: anyerror) !Response {
-    // Solo las categorías estables cruzan la interfaz HTTP. Los diagnósticos
-    // PostgreSQL quedan privados, sin exponer detalles del schema ni de la conexión.
-    return switch (err) {
-        error.Conflict => errorResponse(allocator, 409, "constraint_conflict", "PostgreSQL constraint rejected the operation"),
-        error.Unavailable => errorResponse(allocator, 503, "database_unavailable", "Database is unavailable"),
-        error.OutOfMemory => error.OutOfMemory,
-        else => errorResponse(allocator, 500, "database_error", "Database operation failed"),
-    };
-}
-
-fn rawFilter(raw: []const RawFilter, name: []const u8) ?[]const u8 {
-    // `name` proviene de los metadatos comptime de la entidad. El texto de la URL
-    // solo se compara con él; una entrada arbitraria nunca se convierte en identificador SQL.
-    for (raw) |filter| if (std.mem.eql(u8, filter.name, name)) return filter.value;
-    return null;
-}
-
-fn validateFilterNames(comptime entity: anytype, raw: []const RawFilter) bool {
-    // Las claves recibidas en runtime se comprueban contra la lista completa permitida en
-    // comptime.
-    for (raw) |filter| {
-        var found = false;
-        inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
-            if (std.mem.eql(u8, filter.name, field_name)) {
-                found = true;
-            }
-        }
-        if (!found) return false;
-    }
-    return true;
-}
-
-fn buildFilters(
-    allocator: std.mem.Allocator,
-    comptime entity: anytype,
-    comptime codecs: anytype,
-    raw: []const RawFilter,
-) ![]FieldValue {
-    // Recorre los metadatos de la entidad en vez del orden de la URL: `$1`, `$2`, ...
-    // son estables para un conjunto de filtros y los identificadores provienen de metadatos
-    // confiables.
-    var result: std.ArrayList(FieldValue) = .empty;
-    errdefer result.deinit(allocator);
-    inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
-        if (rawFilter(raw, field_name)) |raw_value| {
-            const domain_type = @field(entity.fields, field_name).type;
-            // El codec de dominio del campo valida y normaliza solo el valor;
-            // la parametrización SQL posterior impide que se convierta en código SQL.
-            const value = @field(codecs, domain_type).queryToPostgres(allocator, raw_value) catch
-                return error.InvalidFilterValue;
-            try result.append(allocator, .{ .name = field_name, .value = value });
-        }
-    }
-    return result.toOwnedSlice(allocator);
-}
-
-fn objectHasUnknownField(comptime entity: anytype, object: std.json.ObjectMap) bool {
-    // Las claves del objeto JSON son entrada de runtime y deben pertenecer
-    // a la entidad antes de construir una operación del repositorio.
-    for (object.keys()) |name| {
-        var found = false;
-        inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
-            if (std.mem.eql(u8, name, field_name)) {
-                found = true;
-            }
-        }
-        if (!found) return true;
-    }
-    return false;
-}
-
-fn buildInsertValues(
-    allocator: std.mem.Allocator,
-    comptime entity: anytype,
-    comptime codecs: anytype,
-    object: std.json.ObjectMap,
-) ![]FieldValue {
-    // Los valores de INSERT siguen el orden de declaración. Los campos nullable
-    // omitidos se completan con SQL NULL; se debe aportar cada campo efectivamente NOT NULL.
-    var result: std.ArrayList(FieldValue) = .empty;
-    errdefer result.deinit(allocator);
-    inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
-        const field_value = object.get(field_name);
-        if (field_value == null) {
-            if (!@field(entity.fields, field_name).nullable) return error.MissingRequiredField;
-            try result.append(allocator, .{ .name = field_name, .value = null });
-        } else if (field_value.? == .null) {
-            if (!@field(entity.fields, field_name).nullable) return error.NullNotAllowed;
-            try result.append(allocator, .{ .name = field_name, .value = null });
-        } else {
-            const domain_type = @field(entity.fields, field_name).type;
-            const encoded = @field(codecs, domain_type).jsonToPostgres(allocator, field_value.?) catch
-                return error.InvalidBodyValue;
-            try result.append(allocator, .{ .name = field_name, .value = encoded });
-        }
-    }
-    return result.toOwnedSlice(allocator);
-}
-
-fn buildUpdateValues(
-    allocator: std.mem.Allocator,
-    comptime entity: anytype,
-    comptime codecs: anytype,
-    object: std.json.ObjectMap,
-) ![]FieldValue {
-    // PUT es parcial: solo las claves del cuerpo generan asignaciones. Las PK
-    // son inmutables para que este endpoint no traslade relaciones en silencio.
-    var result: std.ArrayList(FieldValue) = .empty;
-    errdefer result.deinit(allocator);
-    inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
-        if (object.get(field_name)) |field_value| {
-            if (isPrimaryKey(entity, field_name)) return error.PrimaryKeyUpdate;
-            if (field_value == .null) {
-                if (!@field(entity.fields, field_name).nullable) return error.NullNotAllowed;
-                try result.append(allocator, .{ .name = field_name, .value = null });
-            } else {
-                const domain_type = @field(entity.fields, field_name).type;
-                const encoded = @field(codecs, domain_type).jsonToPostgres(allocator, field_value) catch
-                    return error.InvalidBodyValue;
-                try result.append(allocator, .{ .name = field_name, .value = encoded });
-            }
-        }
-    }
-    // `{}` produciría SQL inválido y casi con seguridad es un error del cliente:
-    // se rechaza antes de llegar al repositorio.
-    if (result.items.len == 0) return error.EmptyUpdate;
-    return result.toOwnedSlice(allocator);
-}
-
-fn renderResult(
-    response_allocator: std.mem.Allocator,
-    scratch_allocator: std.mem.Allocator,
-    comptime entity: anytype,
-    comptime codecs: anytype,
-    result: anytype,
-    status: u16,
-    single: bool,
-) !Response {
-    // El contrato del repositorio exige todas las columnas de la entidad en orden
-    // de declaración. Se comprueba antes de indexar celdas o aplicar codecs de dominio.
-    const field_names = @typeInfo(@TypeOf(entity.fields)).@"struct".field_names;
-    if (result.columns.len != field_names.len) return error.InvalidRepositoryResult;
-    inline for (field_names, 0..) |field_name, index| {
-        if (!std.mem.eql(u8, result.columns[index], field_name)) return error.InvalidRepositoryResult;
-    }
-    // POST promete exactamente la fila producida por INSERT ... RETURNING *.
-    if (single and result.rows.len != 1) return error.InvalidRepositoryResult;
-
-    var output: std.Io.Writer.Allocating = .init(response_allocator);
-    errdefer output.deinit();
-    var stringify: std.json.Stringify = .{ .writer = &output.writer };
-    if (!single) try stringify.beginArray();
-    for (result.rows) |row| {
-        if (row.len != field_names.len) return error.InvalidRepositoryResult;
-        try stringify.beginObject();
-        inline for (field_names, 0..) |field_name, index| {
-            try stringify.objectField(field_name);
-            if (row[index]) |database_value| {
-                // El texto no-null pasa por el codec del campo; SQL NULL se
-                // representa directamente como JSON null sin pasar por el codec.
-                const domain_type = @field(entity.fields, field_name).type;
-                const json_value = @field(codecs, domain_type).postgresToJson(scratch_allocator, database_value) catch
-                    return error.InvalidRepositoryResult;
-                try stringify.write(json_value);
-            } else {
-                try stringify.write(null);
-            }
-        }
-        try stringify.endObject();
-    }
-    if (!single) try stringify.endArray();
-    return .{ .status = status, .body = try output.toOwnedSlice() };
-}
-
-fn parseJsonObject(allocator: std.mem.Allocator, body: []const u8) !std.json.Parsed(std.json.Value) {
-    // Los nodos parseados viven en la arena de la solicitud. Solo se acepta un objeto;
-    // los arrays para operaciones masivas quedan fuera de la fase 3.
-    var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch return error.InvalidJson;
-    errdefer parsed.deinit();
-    if (parsed.value != .object) return error.InvalidJson;
-    return parsed;
-}
-
-fn requestValidationResponse(allocator: std.mem.Allocator, err: anyerror) !Response {
-    // Varios errores internos de validación se reducen a un único contrato 400 seguro;
-    // solo el tamaño del cuerpo y el tipo de contenido reciben estados distintos.
-    return switch (err) {
-        error.BodyTooLarge => errorResponse(allocator, 413, "body_too_large", "Request body exceeds the configured limit"),
-        error.UnsupportedMediaType => errorResponse(allocator, 415, "unsupported_media_type", "Expected application/json"),
-        else => errorResponse(allocator, 400, "invalid_request", "Request fields or values are invalid"),
-    };
-}
-
-fn businessViolationResponse(
-    allocator: std.mem.Allocator,
-    violation: BusinessRuleViolation,
-) !Response {
-    return errorResponse(allocator, 422, violation.code, violation.message);
-}
-
-fn fieldValue(values: []const FieldValue, name: []const u8) ?FieldValue {
-    for (values) |value| {
-        if (std.mem.eql(u8, value.name, name)) return value;
-    }
-    return null;
-}
-
-fn resultHasEntityShape(comptime entity: anytype, result: anytype) bool {
-    const field_names = @typeInfo(@TypeOf(entity.fields)).@"struct".field_names;
-    if (result.columns.len != field_names.len) return false;
-    inline for (field_names, 0..) |field_name, index| {
-        if (!std.mem.eql(u8, result.columns[index], field_name)) return false;
-    }
-    for (result.rows) |row| {
-        if (row.len != field_names.len) return false;
-    }
-    return true;
-}
-
-/// Un cuerpo PUT es solo un patch: se valida cada estado resultante de aplicarlo
-/// a las filas seleccionadas por los filtros. Los arrays combinados toman prestadas
-/// ambas entradas y duran solo durante la llamada síncrona al validador.
-fn validateUpdatedRows(
-    comptime entity: anytype,
-    current: anytype,
-    updates: []const FieldValue,
-    validator: BusinessValidator,
-) !?BusinessRuleViolation {
-    if (!resultHasEntityShape(entity, current)) return error.InvalidRepositoryResult;
-    const field_names = @typeInfo(@TypeOf(entity.fields)).@"struct".field_names;
-    for (current.rows) |row| {
-        var merged: [field_names.len]FieldValue = undefined;
-        inline for (field_names, 0..) |field_name, index| {
-            merged[index] = fieldValue(updates, field_name) orelse .{
-                .name = field_name,
-                .value = row[index],
-            };
-        }
-        if (try validator.validate(&merged)) |violation| return violation;
-    }
-    return null;
 }
 
 /// `Api` es una fábrica de tipos comptime: no crea ahora un objeto API, sino el
@@ -594,35 +73,7 @@ pub fn ApiWithBusinessValidators(
     const model_info = Model.info;
     const checked_validators = defineBusinessValidators(Model, validators);
 
-    // `@TypeOf(model_info)` obtiene el tipo struct anónimo de la colección de entidades;
-    // `@typeInfo(...).@"struct".field_names` expone sus nombres. `inline for` despliega
-    // el bucle durante la compilación y produce una rama de validación por entidad,
-    // en lugar de un bucle de reflexión en runtime.
-    inline for (@typeInfo(@TypeOf(model_info)).@"struct".field_names) |entity_name| {
-        // `entity_name` es un string comptime: `@field` puede seleccionar la entidad
-        // por nombre en un struct anónimo, aunque la sintaxis normal `.field`
-        // no se pueda escribir cuando el nombre proviene de un bucle.
-        const entity = @field(model_info, entity_name);
-
-        // Repite la misma reflexión en compilación sobre los campos de esta entidad.
-        inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
-            // Las definiciones de campos guardan su tipo de dominio como un nombre,
-            // por ejemplo `"text"`, `"integer"` o `"fecha"`, no como un tipo de base de datos.
-            const domain_type = @field(entity.fields, field_name).type;
-
-            // Si falta un codec, no se pueden parsear queries o JSON ni generar resultados.
-            // Se informa ahora la entidad y el campo para no descubrir la omisión
-            // al atender una solicitud en runtime.
-            if (!@hasField(@TypeOf(codecs), domain_type))
-                @compileError("entity '" ++ entity_name ++ "', field '" ++ field_name ++ "': missing REST codec for domain type '" ++ domain_type ++ "'");
-
-            // No alcanza con tener un campo con el nombre correcto. Su valor debe
-            // ser un `Codec` real: sus campos de punteros a función exigen
-            // las tres firmas de conversión en compilación.
-            if (!isCodec(@TypeOf(@field(codecs, domain_type))))
-                @compileError("REST codec '" ++ domain_type ++ "': must be a zigma_rest.Codec");
-        }
-    }
+    domain_codecs.checkModelCodecs(Model, codecs);
 
     // El resultado es un tipo struct anónimo especializado para estas entidades
     // y codecs. No se generan archivos fuente del controlador: este tipo *es*
@@ -678,7 +129,7 @@ pub fn ApiWithBusinessValidators(
             // repositorio. El adaptador de sockets también impone el límite al leer;
             // esta comprobación protege por igual las llamadas directas a `handle`.
             if (request.body.len > self.config.max_body_bytes)
-                return requestValidationResponse(allocator, error.BodyTooLarge);
+                return responses.requestValidationResponse(allocator, error.BodyTooLarge);
 
             // Busca una sola vez el primer separador de query. `null` indica que
             // el destino de esta solicitud contiene únicamente una ruta.
@@ -692,7 +143,7 @@ pub fn ApiWithBusinessValidators(
             // Este controlador generado gestiona solo el espacio `/api/`. Otro
             // adaptador o router puede atender verificaciones de estado o archivos estáticos.
             if (!std.mem.startsWith(u8, path, "/api/"))
-                return errorResponse(allocator, 404, "not_found", "Route not found");
+                return responses.errorResponse(allocator, 404, "not_found", "Route not found");
 
             // Se quitan cinco bytes porque `"/api/".len == 5`; el resto debe ser
             // exactamente un nombre de entidad, como `"docentes"`.
@@ -700,7 +151,7 @@ pub fn ApiWithBusinessValidators(
             // Los nombres vacíos y los segmentos anidados no son rutas de colecciones
             // de entidades; esta fase no incluye rutas con forma `/api/entity/id`.
             if (entity_path.len == 0 or std.mem.indexOfScalar(u8, entity_path, '/') != null)
-                return errorResponse(allocator, 404, "not_found", "Route not found");
+                return responses.errorResponse(allocator, 404, "not_found", "Route not found");
 
             // Este bucle comptime genera una rama normal de comparación de strings por
             // entidad conocida. Runtime elige una rama, pero el handler seleccionado
@@ -714,7 +165,7 @@ pub fn ApiWithBusinessValidators(
             }
 
             // La ruta tenía la forma correcta, pero no nombraba ninguna entidad de la SSOT.
-            return errorResponse(allocator, 404, "not_found", "Entity not found");
+            return responses.errorResponse(allocator, 404, "not_found", "Entity not found");
         }
 
         // Este helper contiene la validación y el comportamiento CRUD de la entidad.
@@ -743,22 +194,8 @@ pub fn ApiWithBusinessValidators(
             // concreta de entidad sin buscar en un mapa de runtime.
             const entity = @field(model_info, entity_name);
 
-            // Divide `a=b&c=d`, decodifica escapes porcentuales de ambos lados,
-            // valida UTF-8 y rechaza nombres de parámetro duplicados. Los fallos son errores
-            // del cliente.
-            const raw_filters = parseFilters(scratch_allocator, query) catch |err|
-                return requestValidationResponse(response_allocator, err);
-
-            // El parseo solo comprueba la sintaxis. Este paso impide filtrar por un
-            // nombre que no sea un campo de la entidad seleccionada.
-            if (!validateFilterNames(entity, raw_filters))
-                return requestValidationResponse(response_allocator, error.UnknownFilter);
-
-            // Recorre campos en orden SSOT, invoca el codec de query de cada dominio
-            // y produce valores canónicos para el repositorio. El orden de parámetros de
-            // la URL no puede cambiar el orden de placeholders ni el texto SQL generado.
-            const filters = buildFilters(scratch_allocator, entity, codecs, raw_filters) catch |err|
-                return requestValidationResponse(response_allocator, err);
+            const filters = requests.decodeFilters(scratch_allocator, entity, codecs, query) catch |err|
+                return responses.requestValidationResponse(response_allocator, err);
 
             // Los cuatro métodos CRUD comparten la preparación de rutas y filtros;
             // se separan recién cuando la solicitud está ligada a un schema de entidad válido.
@@ -771,7 +208,7 @@ pub fn ApiWithBusinessValidators(
                         // conflictos de restricciones, la indisponibilidad y los fallos
                         // internos
                         // no exponen diagnósticos de PostgreSQL en la respuesta HTTP.
-                        return repositoryErrorResponse(response_allocator, err);
+                        return responses.repositoryErrorResponse(response_allocator, err);
 
                     // Los resultados contienen columnas y filas propias y deben liberarlas
                     // en cada salida de la serialización. Con libpq, esto libera su arena.
@@ -779,151 +216,106 @@ pub fn ApiWithBusinessValidators(
 
                     // GET genera un array JSON y devuelve 200. El `false` final indica
                     // que se esperan cero o más filas, no una fila obligatoria.
-                    return renderResult(response_allocator, scratch_allocator, entity, codecs, result, 200, false) catch |err| switch (err) {
-                        // La falta de memoria es un fallo de infraestructura y se propaga por
-                        // el canal de errores de Zig, sin simular una respuesta HTTP válida
-                        // que podría necesitar a su vez reservar memoria.
-                        error.OutOfMemory => error.OutOfMemory,
-                        // Columnas, anchos de fila o valores de base incorrectos indican
-                        // un contrato roto entre repositorio y codec, no entrada inválida:
-                        // el cliente recibe 500 sin detalles internos.
-                        else => errorResponse(response_allocator, 500, "invalid_repository_result", "Repository returned an invalid row shape"),
-                    };
+                    return responses.fromResult(response_allocator, scratch_allocator, entity, codecs, result, 200, false);
                 },
 
                 .POST => {
                     // POST crea una entidad y no acepta filtros de selección.
                     // Rechazarlos evita una semántica de inserción ambigua.
-                    if (query.len != 0) return requestValidationResponse(response_allocator, error.UnexpectedQuery);
+                    if (query.len != 0) return responses.requestValidationResponse(response_allocator, error.UnexpectedQuery);
 
-                    // El cuerpo JSON de una mutación se interpreta solo si el tipo de contenido
-                    // es `application/json`. `contentTypeIsJson` acepta parámetros
-                    // como charset.
-                    if (!contentTypeIsJson(request.content_type))
-                        return requestValidationResponse(response_allocator, error.UnsupportedMediaType);
-
-                    // Parsea al árbol JSON dinámico de Zig, pero exige que la raíz
-                    // sea exactamente un objeto, no un array ni un escalar.
-                    var parsed = parseJsonObject(scratch_allocator, request.body) catch |err|
-                        return requestValidationResponse(response_allocator, err);
-                    // Aunque la arena temporal contiene los bytes, `Parsed.deinit` conserva
-                    // el contrato de gestión de memoria de la API JSON y sería necesario
-                    // si se usara un allocator distinto de una arena.
+                    var parsed = requests.parseBody(scratch_allocator, entity, request) catch |err|
+                        return responses.requestValidationResponse(response_allocator, err);
                     defer parsed.deinit();
-
-                    // Ignorar propiedades mal escritas en silencio sería peligroso:
-                    // cada miembro JSON debe corresponder a un campo de la entidad.
-                    if (objectHasUnknownField(entity, parsed.value.object))
-                        return requestValidationResponse(response_allocator, error.UnknownBodyField);
 
                     // Recorre campos en orden SSOT, exige PK y campos efectivamente NOT NULL,
                     // completa los nullable omitidos con SQL NULL y pasa cada valor
                     // no-null por el codec JSON de su dominio.
-                    const values = buildInsertValues(scratch_allocator, entity, codecs, parsed.value.object) catch |err|
-                        return requestValidationResponse(response_allocator, err);
+                    const values = requests.buildInsertValues(scratch_allocator, entity, codecs, parsed.value.object) catch |err|
+                        return responses.requestValidationResponse(response_allocator, err);
 
                     // Los validadores de negocio reciben la fila completa normalizada,
                     // incluidos los SQL NULL que completan propiedades nullable omitidas.
                     if (comptime @hasField(@TypeOf(checked_validators), entity_name)) {
                         const validator = @field(checked_validators, entity_name);
                         const violation = validator.validate(values) catch
-                            return errorResponse(response_allocator, 500, "business_validation_error", "Business validation could not be completed");
+                            return responses.errorResponse(response_allocator, 500, "business_validation_error", "Business validation could not be completed");
                         if (violation) |details|
-                            return businessViolationResponse(response_allocator, details);
+                            return responses.businessViolationResponse(response_allocator, details);
                     }
 
                     // El repositorio emite INSERT ... RETURNING * parametrizado.
                     var result = repository.insert(scratch_allocator, entity_name, values) catch |err|
-                        return repositoryErrorResponse(response_allocator, err);
+                        return responses.repositoryErrorResponse(response_allocator, err);
                     defer result.deinit();
 
                     // Un POST exitoso devuelve 201 y exactamente una fila;
                     // `single = true` convierte cualquier otra cantidad en un error de contrato.
-                    return renderResult(response_allocator, scratch_allocator, entity, codecs, result, 201, true) catch |err| switch (err) {
-                        error.OutOfMemory => error.OutOfMemory,
-                        else => errorResponse(response_allocator, 500, "invalid_repository_result", "Repository returned an invalid row shape"),
-                    };
+                    return responses.fromResult(response_allocator, scratch_allocator, entity, codecs, result, 201, true);
                 },
 
                 .PUT => {
                     // Esta API no admite actualizaciones masivas sin restricciones:
                     // al menos un filtro de igualdad debe identificar las filas destino.
-                    if (filters.len == 0) return requestValidationResponse(response_allocator, error.FilterRequired);
+                    if (filters.len == 0) return responses.requestValidationResponse(response_allocator, error.FilterRequired);
 
-                    // Los cuerpos PUT usan la misma política de tipo de contenido JSON que
-                    // POST.
-                    if (!contentTypeIsJson(request.content_type))
-                        return requestValidationResponse(response_allocator, error.UnsupportedMediaType);
-
-                    // Exige un único objeto JSON con la actualización parcial.
-                    var parsed = parseJsonObject(scratch_allocator, request.body) catch |err|
-                        return requestValidationResponse(response_allocator, err);
+                    var parsed = requests.parseBody(scratch_allocator, entity, request) catch |err|
+                        return responses.requestValidationResponse(response_allocator, err);
                     defer parsed.deinit();
-
-                    // Rechaza campos desconocidos antes de calcular los valores de
-                    // actualización.
-                    if (objectHasUnknownField(entity, parsed.value.object))
-                        return requestValidationResponse(response_allocator, error.UnknownBodyField);
 
                     // Este helper exige un cuerpo parcial no vacío, rechaza cambios de PK,
                     // comprueba nulabilidad y aplica codecs JSON. Emite los valores
                     // en orden de campos de la entidad para generar SQL estable.
-                    const values = buildUpdateValues(scratch_allocator, entity, codecs, parsed.value.object) catch |err|
-                        return requestValidationResponse(response_allocator, err);
+                    const values = requests.buildUpdateValues(scratch_allocator, entity, codecs, parsed.value.object) catch |err|
+                        return responses.requestValidationResponse(response_allocator, err);
 
                     // Una actualización parcial no se puede validar por sí sola: la regla
                     // puede depender de una columna que no cambia. Solo las entidades con
                     // un validador registrado ejecutan este SELECT preparatorio.
                     if (comptime @hasField(@TypeOf(checked_validators), entity_name)) {
                         var current = repository.select(scratch_allocator, entity_name, filters) catch |err|
-                            return repositoryErrorResponse(response_allocator, err);
+                            return responses.repositoryErrorResponse(response_allocator, err);
                         defer current.deinit();
 
                         const validator = @field(checked_validators, entity_name);
-                        const violation = validateUpdatedRows(entity, current, values, validator) catch |err| switch (err) {
-                            error.InvalidRepositoryResult => return errorResponse(response_allocator, 500, "invalid_repository_result", "Repository returned an invalid row shape"),
-                            error.InvalidState => return errorResponse(response_allocator, 500, "business_validation_error", "Business validation could not be completed"),
+                        const violation = validation.validateUpdatedRows(entity, current, values, validator) catch |err| switch (err) {
+                            error.InvalidRepositoryResult => return responses.errorResponse(response_allocator, 500, "invalid_repository_result", "Repository returned an invalid row shape"),
+                            error.InvalidState => return responses.errorResponse(response_allocator, 500, "business_validation_error", "Business validation could not be completed"),
                         };
                         if (violation) |details|
-                            return businessViolationResponse(response_allocator, details);
+                            return responses.businessViolationResponse(response_allocator, details);
                     }
 
                     // El repositorio produce UPDATE ... WHERE ... RETURNING * parametrizado
                     // y numera los valores de actualización antes que los de filtros.
                     var result = repository.update(scratch_allocator, entity_name, values, filters) catch |err|
-                        return repositoryErrorResponse(response_allocator, err);
+                        return responses.repositoryErrorResponse(response_allocator, err);
                     defer result.deinit();
 
                     // PUT devuelve un array porque el filtro puede coincidir con cero,
                     // una o varias filas. Cero coincidencias produce `200 []`, no 404.
-                    return renderResult(response_allocator, scratch_allocator, entity, codecs, result, 200, false) catch |err| switch (err) {
-                        error.OutOfMemory => error.OutOfMemory,
-                        else => errorResponse(response_allocator, 500, "invalid_repository_result", "Repository returned an invalid row shape"),
-                    };
+                    return responses.fromResult(response_allocator, scratch_allocator, entity, codecs, result, 200, false);
                 },
 
                 .DELETE => {
                     // Como en PUT, se rechaza la eliminación sin restricciones.
-                    if (filters.len == 0) return requestValidationResponse(response_allocator, error.FilterRequired);
+                    if (filters.len == 0) return responses.requestValidationResponse(response_allocator, error.FilterRequired);
 
                     // DELETE no tiene cuerpo JSON; los filtros ya validados bastan
                     // para DELETE ... RETURNING * parametrizado.
                     var result = repository.delete(scratch_allocator, entity_name, filters) catch |err|
-                        return repositoryErrorResponse(response_allocator, err);
+                        return responses.repositoryErrorResponse(response_allocator, err);
                     defer result.deinit();
 
                     // Devuelve todas las filas eliminadas como array. Sin coincidencias,
                     // devuelve `200 []` exitoso porque la solicitud sigue siendo válida.
-                    return renderResult(response_allocator, scratch_allocator, entity, codecs, result, 200, false) catch |err| switch (err) {
-                        error.OutOfMemory => error.OutOfMemory,
-                        else => errorResponse(response_allocator, 500, "invalid_repository_result", "Repository returned an invalid row shape"),
-                    };
+                    return responses.fromResult(response_allocator, scratch_allocator, entity, codecs, result, 200, false);
                 },
 
                 // `.other` representa los métodos std.http ajenos al contrato CRUD de esta
                 // fase, incluidos PATCH y HEAD. La ruta de entidad existe: corresponde
                 // 405 en lugar de 404.
-                .other => return errorResponse(response_allocator, 405, "method_not_allowed", "Allowed methods: GET, POST, PUT, DELETE"),
+                .other => return responses.errorResponse(response_allocator, 405, "method_not_allowed", "Allowed methods: GET, POST, PUT, DELETE"),
             }
         }
     };

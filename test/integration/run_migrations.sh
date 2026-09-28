@@ -2,7 +2,7 @@
 set -eu
 
 validator=$1
-liquibase_bootstrap=$2
+migration_applier=$2
 baseline_existing_script=$3
 liquibase_bin=$4
 project_root=$(CDPATH= cd "$5" && pwd)
@@ -44,7 +44,7 @@ LIQUIBASE_URL="$jdbc_url" \
 LIQUIBASE_USERNAME=postgres \
 LIQUIBASE_PASSWORD=postgres \
 LIQUIBASE_CHANGELOG="$temp_dir/db/changelog-root.yaml" \
-"$liquibase_bootstrap"
+"$migration_applier"
 
 # A second startup must be a no-op and must not duplicate schema objects.
 LIQUIBASE_BIN="$liquibase_bin" \
@@ -52,7 +52,7 @@ LIQUIBASE_URL="$jdbc_url" \
 LIQUIBASE_USERNAME=postgres \
 LIQUIBASE_PASSWORD=postgres \
 LIQUIBASE_CHANGELOG="$temp_dir/db/changelog-root.yaml" \
-"$liquibase_bootstrap"
+"$migration_applier"
 
 DATABASE_URL="$database_url" ZIGMA_ACTUAL_SCHEMA=public "$validator"
 

@@ -1,7 +1,19 @@
 # Revisión del refactor JSON y frontend
 
-Este checkpoint agrega pruebas antes de modificar producción. Los cambios previos
+El checkpoint de tests rojos fue revisado y se implementaron el catálogo basado en
+Model, la escritura con std.json y los controles de nulabilidad. Los cambios previos
 del arranque conjunto y la configuración del frontend se conservan.
+
+## Estado de la implementación
+
+- JSON y catálogo: 30/30 pruebas pasaron después de implementar.
+- Frontend/WASM: 19/19 pruebas pasan.
+- Integración HTTP ampliada: pasa con proceso y puerto propios.
+- Compilación conjunta: `check-aida` pasa con el prefix local de libpq.
+- La documentación describe las nuevas firmas y la política de null en formularios.
+- Pendiente: completar la comprobación visual inferior y la ejecución final de la
+  suite general. El permiso para esta última ejecución fuera del sandbox fue
+  rechazado; no se ha certificado nuevamente el resultado de la suite completa.
 
 ## Resultados del checkpoint
 
@@ -12,8 +24,8 @@ del arranque conjunto y la configuración del frontend se conservan.
 | Frontend WASM y controles: 19 casos | 4 pasan y 15 fallan por el comportamiento previsto. |
 | Integración HTTP ampliada | Pasa con proceso y puerto propios. |
 
-Formato Zig, sintaxis del runner Node y `git diff --check` pasan. Las comprobaciones
-visuales de navegador se ejecutarán después de implementar, con la lista inferior.
+Durante el checkpoint pasaron formato Zig, sintaxis del runner Node y
+`git diff --check`. Las comprobaciones visuales de navegador siguen pendientes.
 
 ## Ejecución automática
 

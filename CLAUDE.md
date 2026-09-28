@@ -30,16 +30,22 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `README.md`: guía de uso, arranque de AIDA, migraciones y tests.
 * `DOCS.md`: referencia del contrato, arquitectura y APIs del framework.
 * `docs/`: guías de build, ejecución del ejemplo, frontend, vocabulario y diseño de validadores.
-* `src/core/zigma.zig`: descriptor y modelo normalizado (módulo `zigma`). No conoce
-  ningún sistema concreto ni importa generadores.
-* `src/json.zig`: generador JSON (módulo `zigma_json`); depende del descriptor `zigma`.
+* `src/core/zigma.zig`: entrada pública del descriptor y modelo normalizado (módulo
+  `zigma`). Reexporta `records.zig` (dominios, campos y records), `entities.zig`
+  (claves, relaciones y reglas declaradas) y `model.zig` (`System` y tipos derivados).
+  `names.zig` contiene los helpers internos de nombres. El núcleo no conoce ningún
+  sistema concreto ni importa generadores; `docs/zigma.md` explica cómo recorrerlo.
+* `src/json.zig`: catálogo basado en `Model`, serialización con `std.json` y parsing
+  de celdas (módulo `zigma_json`); no conoce REST ni PostgreSQL.
 * `src/testing_backend/main.zig`: composición del backend de pruebas: API REST, seeds,
   repositorio en memoria y transporte compartido `zigma_std_http`.
 * `src/testing_backend/memory_repository.zig`: persistencia temporal para el backend de pruebas;
   los datos se descartan al terminar el proceso.
 * `src/frontend/`: cliente WASM genérico que consume el mismo contrato `system`.
-* `src/rest/api.zig`: codecs, routing, JSON y validación CRUD (módulo `zigma_rest`); no conoce
-  sockets ni PostgreSQL.
+* `src/rest/api.zig`: entrada pública de `zigma_rest`, rutas y coordinación CRUD.
+  Reexporta los tipos compartidos de `types.zig`, los codecs de `codecs.zig` y el registro
+  de validadores de `validation.zig`. Delega parsing a `request.zig` y respuestas a
+  `response.zig`; estos archivos no conocen sockets ni conexiones PostgreSQL.
 * `src/rest/std_http.zig`: servidor secuencial de referencia (módulo `zigma_std_http`).
 * `src/postgres/ddl.zig`: generación comptime del DDL inicial (módulo
   `zigma_postgres_ddl`).
@@ -49,36 +55,51 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   `zigma_postgres_libpq`).
 * `src/postgres/crud.zig`: SQL CRUD parametrizado derivado de entidades (módulo
   `zigma_postgres_crud`).
-* `src/postgres/migrations/schema.zig`: snapshot canónico, diff y drafts Liquibase formatted-SQL
-  (módulo `zigma_postgres_migrations`); no conoce filesystem, procesos ni conexiones.
+* `src/postgres/migrations/schema.zig`: entrada pública del módulo `zigma_postgres_migrations`.
+  Reexporta `snapshot.zig` (modelo canónico, parsing y hashes), `diff.zig` (comparación y
+  nombres) y `draft.zig` (SQL Liquibase y bloqueos). Estos archivos no conocen filesystem,
+  procesos ni conexiones; los helpers estructurales compartidos viven en `snapshot.zig`.
 * `src/postgres/migrations/liquibase_runner.zig`: startup versionado mediante el CLI externo (módulo
   `zigma_liquibase_runner`); credenciales solo por ambiente.
 * `examples/aida/src/aida.zig`: contrato del sistema de alumnos (módulo `aida`), compartido
   por los ejemplos y usado como fixture de tests.
 * `examples/aida/`: app de ejemplo que depende del paquete; `src/system.zig` expone el
   contrato y los seeds, y `build.zig` compone el backend en memoria y el frontend WASM.
-* `examples/aida_postgres.zig`: mappings y proyección PostgreSQL compartida de AIDA.
-* `examples/aida_rest.zig`: codecs y validadores de negocio de AIDA para REST.
-* `examples/aida_rest_server.zig`: composición del servidor REST con libpq y migraciones Liquibase.
-* `examples/postgres_bootstrap.zig`: ejecutable que genera el DDL de AIDA en compilación y
-  lo aplica usando `DATABASE_URL` en runtime.
+* `examples/aida/src/postgres.zig`: mappings y proyección PostgreSQL compartida de AIDA.
+* `examples/aida/src/rest.zig`: codecs y validadores de negocio de AIDA para REST.
+* `examples/aida/src/server.zig`: composición del servidor REST con libpq y migraciones Liquibase.
+* `test/integration/postgres_bootstrap.zig`: auxiliar de las integraciones DDL/REST que
+  usa los mappings PostgreSQL de AIDA; no tiene comando público de arranque.
 * `db/`: snapshot aceptado, baseline/changesets inmutables y directorio del único draft.
 * `tools/postgres_migration_tool.zig`: workflow de init/check/draft/accept-files.
-* `tools/run_aida.py`: arranque conjunto del backend PostgreSQL y el frontend; espera la
-  API después de las migraciones y cierra ambos con Ctrl+C.
+* `tools/apply_migrations.zig`: aplica el historial aceptado y termina sin iniciar HTTP;
+  se ejecuta mediante `zig build apply-migrations` y también desde `test-migrations`.
+* `tools/run_aida.zig`: lanzador nativo para macOS/Linux; sirve el frontend, espera la
+  API después de las migraciones y cierra ambos con Ctrl+C. No requiere Python.
 * `tools/postgres_schema_validator.zig`: comparación SSOT↔`pg_catalog` en un schema esperado
   temporal; se usa antes de aceptar o baselinar.
-* `build.zig`: módulos y grafo de compilación y tests. Sus helpers `addApp` / `addAppFromDep`
-  componen el backend nativo y el frontend WASM para consumidores como `examples/aida/`;
+* `build.zig`: opciones generales, conexiones del grafo y API pública del build.
+* `build/modules.zig`: módulos publicados e imports compartidos; configuración de libpq.
+* `build/app.zig`: implementación de `addApp` / `addAppFromDep`, reexportadas por la raíz.
+  Componen el backend en memoria y el frontend WASM para consumidores como `examples/aida/`;
   el `build()` de la librería no instala esa app.
+* `build/aida.zig`: ejecutables de AIDA, comprobación del schema y comandos de migración.
+* `build/tests.zig`: suites locales, integraciones y casos esperados de no-compila.
+  `docs/build.md` explica módulos, artefactos, ejecución y dependencias para leer el grafo.
 * `test/*_test.zig`: pruebas de comportamiento (runtime y asserts comptime), incluidos
   el contrato de AIDA, JSON, modelo normalizado, REST y PostgreSQL.
-* `test/compile_errors/*.zig`: fragmentos que **deben fallar** la compilación; `build.zig`
+* `test/compile_errors/*.zig`: fragmentos que **deben fallar** la compilación; `build/tests.zig`
   los compila con `expect_errors` (el paso tiene éxito solo si el error coincide) y los
-  cuelga del step `test`. La lista de casos con su mensaje esperado está en `build.zig`.
+  cuelga del step `test`. La lista de casos con su mensaje esperado está en `build/tests.zig`.
 
 ## Comprobaciones
 
+* `zig build test-local`: agrega la suite `test`, el lanzador, los nombres públicos de
+  comandos y las suites del consumidor `test-backend`/`test-frontend`. Requiere Node y
+  Python; no requiere libpq ni servicios.
+* `zig build test-json`: serialización y catálogo del modelo; incluye escaping y buffers.
+* Desde `examples/aida/`, `zig build test-frontend`: catálogo, nulabilidad, controles
+  escalares y protocolo del WASM compilado; requiere Node.
 * `zig build check-aida -Dlibpq-prefix=...`: compila backend real y frontend sin ejecutarlos.
 * `zig build test-aida-launcher`: prueba el arranque y cierre conjunto con procesos simulados
   (Python 3); `zig build run-aida -Dlibpq-prefix=...` inicia la aplicación configurada.
@@ -95,6 +116,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   y adopción validada.
 * `zig build test-rest-postgres -Dlibpq-prefix=...` prueba el CRUD generado end-to-end con
   `std.http`, libpq y PostgreSQL descartable.
+* `python3 test/integration/build_commands_test.py`: comprueba los nombres públicos del
+  build mediante `--help`; no inicia aplicaciones ni aplica migraciones.
 
 ## Decisiones de diseño
 

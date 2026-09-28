@@ -36,8 +36,7 @@ fn appendIdentifier(
     output: *std.ArrayList(u8),
     identifier: []const u8,
 ) std.mem.Allocator.Error!void {
-    // Los identificadores PostgreSQL no pueden ser parámetros `$n`. Su seguridad
-    // depende de la lista permitida por la SSOT y del escape estándar de comillas dobles.
+    // Los identificadores PostgreSQL (como tablas o columnas) no pueden ser parámetros `$n`
     try output.append(allocator, '"');
     for (identifier) |byte| {
         // Copia cada byte del identificador confiable y duplica las comillas internas.
@@ -70,9 +69,6 @@ fn findValue(values: []const rest.FieldValue, name: []const u8) ?rest.FieldValue
 }
 
 fn hasUnknownOrDuplicate(comptime entity: anytype, values: []const rest.FieldValue) bool {
-    // REST ya valida estas invariantes, pero el repositorio concreto también tiene
-    // una interfaz pública. Repetir las comprobaciones impide que una llamada directa
-    // introduzca en SQL un identificador recibido en runtime.
     for (values, 0..) |value, index| {
         var known = false;
         // Compara solo contra la lista de nombres de campos permitidos en comptime.
@@ -142,13 +138,9 @@ fn mapDatabaseError(connection: anytype, err: anyerror) rest.RepositoryError {
     };
 }
 
-/// Crea una fábrica de repositorios para un sistema completo de entidades Zigma.
-///
-/// La conexión sigue siendo estructural: se puede vincular cualquier puntero que
-/// exponga `queryParams` y `lastSqlState`. Esto mantiene los tests y un futuro
-/// adaptador pg.zig independientes de libpq.
+/// Crea una estructura con todos los repositorios correspondientes a la fuente de verdad
+/// representada por entidades en Zigma
 pub fn Repository(comptime Model: type) type {
-    // El modelo compartido ya validó el contrato y normalizó campos, PKs y FKs.
     const model_info = Model.info;
 
     // Este tipo de fábrica exterior no tiene campos. Pospone la elección de la
@@ -156,9 +148,6 @@ pub fn Repository(comptime Model: type) type {
     // esa elección visible para el sistema de tipos de Zig.
     return struct {
         pub fn init(connection: anytype) Bound(@TypeOf(connection)) {
-            // El tipo de retorno se especializa a partir del argumento. Una conexión falsa
-            // y libpq producen tipos de repositorio distintos sin costo adicional,
-            // mediante el mismo constructor.
             return .{ .connection = connection };
         }
 
@@ -178,8 +167,6 @@ pub fn Repository(comptime Model: type) type {
                     entity_name: []const u8,
                     filters: []const rest.FieldValue,
                 ) rest.RepositoryError!Result {
-                    // La entrada de runtime elige entre ramas generadas a partir de los nombres
-                    // permitidos en compilación. Los nombres desconocidos nunca llegan a SQL.
                     inline for (@typeInfo(@TypeOf(model_info)).@"struct".field_names) |name| {
                         if (std.mem.eql(u8, entity_name, name))
                             return self.selectEntity(allocator, name, filters);
@@ -197,7 +184,7 @@ pub fn Repository(comptime Model: type) type {
                     filters: []const rest.FieldValue,
                 ) rest.RepositoryError!Result {
                     // Desde acá se conoce la entidad exacta en compilación, lo que permite
-                    // los recorridos de campos por reflexión que siguen.
+                    // los recorridos de campos por reflexión
                     const entity = @field(model_info, entity_name);
                     if (hasUnknownOrDuplicate(entity, filters)) return error.DatabaseError;
                     // El texto SQL y el array de punteros son temporales para esta llamada.

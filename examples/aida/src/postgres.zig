@@ -1,4 +1,4 @@
-//! Proyección PostgreSQL de la definición de AIDA, independiente de la base de datos.
+//! Mappings, DDL baseline y snapshot PostgreSQL del contrato compartido de AIDA.
 
 const zigma = @import("zigma");
 const aida = @import("aida");

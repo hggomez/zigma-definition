@@ -1,8 +1,36 @@
 # How `zigma` describes a system
 
-This is a walk through `src/core/zigma.zig`: what each piece is for, and how they nest.
-It goes from the smallest building block up to a whole system, so each section
-only uses what was already introduced.
+Esta guía recorre el núcleo de `src/core/`: para qué sirve cada pieza y cómo se
+combinan. Va desde los elementos más pequeños hasta un sistema completo.
+`src/core/zigma.zig` sigue siendo la entrada pública de `@import("zigma")`.
+
+## Cómo recorrer los archivos
+
+| Archivo en `src/core/` | Qué contiene |
+| --- | --- |
+| `zigma.zig` | La lista de nombres públicos; reexporta las implementaciones. |
+| `records.zig` | Tipos de dominio, campos, validación y defaults de records, tipos de instancia y `merge`. |
+| `entities.zig` | PK, UK, FK y dependencias de reglas; validación local, referencias entre entidades y normalización. |
+| `model.zig` | `System`: reúne el contrato normalizado y genera `Row`, `Projection`, `Patch`, `Filters` y `RuleInput`. |
+| `names.zig` | Tres helpers internos para reconocer strings, comparar nombres y comprobar pertenencia a una lista. |
+
+Para leer la implementación, conviene seguir `records.zig` → `entities.zig` →
+`model.zig`. El modelo utiliza los dos anteriores; las entidades utilizan los
+records. Los helpers de nombres no dependen de ninguno de ellos. Las importaciones
+entre archivos son internas: los consumidores siguen usando el módulo `zigma`.
+
+Por ejemplo, un campo `.id = .{ .type = "integer" }` recibe `nullable = true` al
+completar su record en `records.zig`. Si pertenece a la PK, `entities.zig` lo marca
+no-null al completar la entidad, sin cambiar el record original. `model.zig` usa
+esa entidad para construir `Model.info` y `Model.Row`; tanto la fila como una
+proyección de `id` tendrán `i64`. La conversión de un campo normalizado a `T` o
+`?T` vive solamente en `records.zig` y se comparte con el modelo.
+
+Esta separación conserva el comportamiento: las reglas todavía describen
+dependencias y permiten generar `RuleInput`; no ejecutan funciones de validación
+automáticamente.
+
+## El vocabulario
 
 `zigma` does not generate tables, endpoints, or screens. It is the vocabulary
 used to *describe* a system so that other tools can. The example system in

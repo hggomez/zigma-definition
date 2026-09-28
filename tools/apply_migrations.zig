@@ -1,4 +1,4 @@
-//! Arranque versionado de AIDA: valida el snapshot aceptado en compilación
+//! Aplicación del historial de AIDA sin iniciar HTTP: valida el snapshot en compilación
 //! y solicita a Liquibase que aplique las migraciones versionadas en runtime.
 
 const std = @import("std");

@@ -165,10 +165,24 @@ filters.docente = "d1";              // Igualdad por identificador.
 `?telefono=null` filtra por el texto `"null"`, mientras un filtro Zig con valor `null` está ausente.
 
 Los metadatos quedan disponibles como `Model.info.docentes.fields.telefono.nullable`.
-REST, CRUD, DDL y snapshots reciben ese mismo `Model`; los mappings SQL y los codecs
+REST, CRUD, DDL, snapshots y el catálogo del frontend reciben ese mismo `Model`; los mappings SQL y los codecs
 se componen por separado. Las firmas anteriores que recibían `entity_defs` se reemplazaron,
 sin wrappers de compatibilidad. La frontera REST/repositorio todavía intercambia valores
 textuales: los codecs y el repositorio tipados corresponden a una etapa posterior.
+
+El frontend WASM usa `Model.Row(entity)` para construir filas completas y
+`zigma_json.stringifyEntityCatalog(Model, buf)` para describirlas a JavaScript.
+`stringifyEntitySchema(Model, entity_name, buf)` produce una entidad. El catálogo
+conserva el dominio `type`, agrega la nulabilidad efectiva y describe los controles
+con `storage`; los objetos anidados derivan su nulabilidad de los opcionales Zig.
+Las reglas no se publican en este catálogo. La escritura de filas y metadatos usa
+`std.json` sobre buffers fijos y devuelve `NoSpaceLeft` si no caben.
+
+En los formularios, vacío representa null para texto/números opcionales. Un booleano
+opcional distingue Sin valor, Sí y No; una fecha vacía representa null, y un objeto
+opcional sin widget tiene un control Sin valor. Una PK no puede quedar vacía. El
+reinicio después de POST conserva estos defaults de interfaz; las filas Zig siguen
+sin defaults implícitos. Véase [la referencia del frontend](docs/frontend.md).
 
 ### Dependencias de reglas
 
@@ -199,7 +213,7 @@ ni un formato público de manifest.
 
 ## Ejemplo: sistema de alumnos (aida)
 
-`examples/aida.zig` describe un sistema de alumnos con este vocabulario. Incluye entidades
+`examples/aida/src/aida.zig` describe un sistema de alumnos con este vocabulario. Incluye entidades
 independientes (`docentes`, `materias`, `periodos`, `alumnos`) y entidades que heredan claves
 de otras:
 
@@ -225,12 +239,21 @@ El código del framework se agrupa por responsabilidad:
 ```text
 src/
 ├── core/
-│   └── zigma.zig
+│   ├── zigma.zig
+│   ├── records.zig
+│   ├── entities.zig
+│   ├── model.zig
+│   └── names.zig
 ├── testing_backend/
 │   ├── main.zig
 │   └── memory_repository.zig
 ├── rest/
 │   ├── api.zig
+│   ├── types.zig
+│   ├── codecs.zig
+│   ├── request.zig
+│   ├── response.zig
+│   ├── validation.zig
 │   └── std_http.zig
 └── postgres/
     ├── crud.zig
@@ -240,14 +263,20 @@ src/
     ├── libpq.h
     └── migrations/
         ├── schema.zig
+        ├── snapshot.zig
+        ├── diff.zig
+        ├── draft.zig
         └── liquibase_runner.zig
 ```
 
 `zig build run-aida` compila el frontend del consumidor y el backend real. El lanzador
-`tools/run_aida.py` espera la API después de las migraciones, sirve los archivos con
-Python 3 y configura `/api-config.js` a partir de `HTTP_ADDRESS` y `HTTP_PORT`. Ctrl+C
+`tools/run_aida.zig` espera la API después de las migraciones, sirve los archivos con
+`std.http` y configura `/api-config.js` a partir de `HTTP_ADDRESS` y `HTTP_PORT`. Ctrl+C
 cierra el servidor estático y el grupo de procesos del backend (incluido Liquibase
-si aún está ejecutándose). `check-aida` permite compilar ambos sin arrancarlos.
+si aún está ejecutándose). El lanzador usa grupos de procesos POSIX en macOS/Linux;
+Python solo participa en el harness de pruebas. `check-aida` permite compilar backend,
+frontend y lanzador sin arrancarlos. `test-aida-launcher` verifica su ciclo de vida con
+procesos simulados y puertos propios, sin PostgreSQL.
 
 `testing_backend` compone un entorno de pruebas en memoria con el mismo controlador REST
 y transporte `std_http` que el servidor PostgreSQL. Se ejecuta desde `examples/aida/` con
@@ -259,26 +288,50 @@ dentro de PostgreSQL porque actualmente el snapshot y el SQL generado son espec�
 de ese motor. Los nombres públicos de módulos (`zigma`, `zigma_rest`,
 `zigma_postgres_crud`, etc.) se mantienen independientes de las rutas internas.
 
-* `src/core/zigma.zig`: el framework descriptor (módulo `zigma`); no conoce ningún sistema
-  concreto.
+* `src/core/zigma.zig`: entrada pública del descriptor (módulo `zigma`); reexporta las
+  implementaciones sin cambiar los imports de sus consumidores.
+* `src/core/records.zig`: dominios, campos, records, composición con `merge` y generación
+  de tipos de campo. Centraliza los defaults y la interpretación de `nullable`.
+* `src/core/entities.zig`: claves, relaciones y dependencias de reglas; normaliza las
+  entidades y aplica la restricción no-null de las PK sobre sus campos completados.
+* `src/core/model.zig`: `System`, `Model.info` y tipos `Row`, `Projection`, `Patch`,
+  `Filters` y `RuleInput`. Reutiliza la validación y normalización de records y entidades.
+* `src/core/names.zig`: helpers internos para reconocer y comparar nombres. Ningún
+  archivo del núcleo importa generadores ni conoce AIDA. [Recorrido del núcleo](docs/zigma.md).
 * `src/postgres/ddl.zig`: generación comptime del DDL PostgreSQL inicial.
 * `src/postgres/executor_ddl.zig`: política transaccional independiente del driver.
 * `src/postgres/libpq.zig`: adaptador bloqueante y mínimo sobre `libpq`.
-* `src/postgres/migrations/schema.zig`: snapshot, diff estructural y drafts formatted-SQL.
+* `src/postgres/migrations/schema.zig`: entrada pública de `zigma_postgres_migrations`;
+  reexporta los tipos y funciones sin cambiar los imports de sus consumidores.
+* `src/postgres/migrations/snapshot.zig`: tipos del snapshot, serialización canónica,
+  parsing, comprobación del estado aceptado, hashes y helpers estructurales compartidos.
+* `src/postgres/migrations/diff.zig`: clasificación de diferencias e inferencia de nombres
+  de migración; comparte con los drafts la detección de cambios de orden de columnas.
+* `src/postgres/migrations/draft.zig`: SQL Liquibase, bloqueos y verificación de los hashes
+  de origen y destino. Consume `snapshot.zig` y `diff.zig`, sin acceder al entorno.
 * `src/postgres/migrations/liquibase_runner.zig`: invocación runtime directa y bloqueante de Liquibase.
-* `src/rest/api.zig`: codecs, routing, JSON, validación y respuestas REST, sin sockets ni base.
+* `src/rest/api.zig`: entrada pública de `zigma_rest`, composición con `Model`, rutas
+  y secuencia de operaciones CRUD. Reexporta los tipos y funciones que usan los consumidores.
+* `src/rest/types.zig`: solicitudes, respuestas, configuración y tipos de intercambio
+  con los repositorios actuales; centraliza las declaraciones sin imports circulares.
+* `src/rest/codecs.zig`: codecs de dominio y comprobación de su registro en compilación.
+* `src/rest/request.zig`: parsing de query/JSON y construcción de filtros y valores
+  de INSERT/UPDATE según los campos y la nulabilidad del modelo.
+* `src/rest/response.zig`: serialización de filas y traducción de errores a estados y JSON HTTP.
+* `src/rest/validation.zig`: registro de validadores y validación de filas combinadas
+  con el patch de PUT; no consulta repositorios ni construye respuestas HTTP.
 * `src/postgres/crud.zig`: CRUD PostgreSQL parametrizado derivado de las entidades.
 * `src/rest/std_http.zig`: adaptador HTTP bloqueante y secuencial sobre `std.http`.
-* `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
-* `examples/aida_postgres.zig`: mappings y modelo PostgreSQL compilado de AIDA.
-* `examples/aida_rest.zig`: codecs de `fecha`/`email` y API REST compilada de AIDA.
-* `examples/aida_rest_server.zig`: composición Liquibase → libpq → REST → `std.http`.
+* `examples/aida/src/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
+* `examples/aida/src/postgres.zig`: mappings y modelo PostgreSQL compilado de AIDA.
+* `examples/aida/src/rest.zig`: codecs de `fecha`/`email` y API REST compilada de AIDA.
+* `examples/aida/src/server.zig`: composición Liquibase → libpq → REST → `std.http`.
 * `db/`: snapshot aceptado, changelog raíz, changesets inmutables y drafts.
 * `tools/`: comandos de desarrollo para crear/aceptar migraciones, adoptar bases existentes
   y comparar estructuralmente schemas vía `pg_catalog`.
 * `test/*_test.zig`: tests positivos del descriptor, el DDL y el executor.
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
-  error esperado listado en `build.zig`.
+  error esperado listado en `build/tests.zig`.
 
 ## Forma de trabajo
 
@@ -289,6 +342,9 @@ prueban los rechazos esperados como casos de "no compila".
 `zig build test-model` verifica los tipos generados, la nulabilidad compartida, los
 diagnósticos de compilación y la igualdad de DDL/snapshot con las referencias anteriores.
 `zig build test` incluye ese conjunto y los demás tests de runtime y casos de no-compila.
+`zig build test-local` agrega los tests del lanzador, la interfaz de comandos del build
+y las suites frontend/WASM y HTTP en memoria del consumidor. Requiere Node y Python;
+las integraciones PostgreSQL continúan siendo pasos separados.
 
 ## Estado
 
@@ -340,7 +396,7 @@ const postgres_libpq = b.dependency("zigma_definition", .{}).module("zigma_postg
 exe.root_module.addImport("zigma_postgres_libpq", postgres_libpq);
 ```
 
-El paquete también exporta `aida`, descripto en `examples/aida.zig`.
+El paquete también exporta `aida`, descripto en `examples/aida/src/aida.zig`.
 
 ## DDL inicial para PostgreSQL
 
@@ -406,7 +462,8 @@ operación explícita y `accept-migration` prueba el catálogo resultante.
 
 ### Startup versionado
 
-La aplicación ejecuta Liquibase antes de aceptar tráfico. La URL debe ser JDBC; usuario y
+La aplicación ejecuta Liquibase antes de aceptar tráfico. Para aplicar el mismo historial
+y terminar sin iniciar HTTP, usá `apply-migrations`. La URL debe ser JDBC; usuario y
 password se heredan al hijo mediante variables de ambiente y no aparecen en sus argumentos:
 
 ```sh
@@ -415,7 +472,7 @@ LIQUIBASE_USERNAME=zigma \
 LIQUIBASE_PASSWORD=secret \
 LIQUIBASE_CHANGELOG=db/changelog-root.yaml \
 LIQUIBASE_BIN=/ruta/a/liquibase \
-zig build run-postgres-liquibase-bootstrap
+zig build apply-migrations
 ```
 
 Liquibase aporta checksums y locking para startups concurrentes. Un error de ejecutable,
@@ -430,7 +487,7 @@ sin `IF NOT EXISTS` y el snapshot inicial. Este repositorio ya contiene esa revi
 `baseline-existing` se permite únicamente mientras `db/changes` contiene solo
 `000001_baseline.sql`. Sirve para incorporar a Liquibase una base que ya tenía sus tablas;
 un compañero que clona el historial completo y arranca sobre una base vacía usa el
-[arranque normal](README.md#arrancar-aida).
+[arranque normal](README.md#arrancar-aida-con-postgresql).
 
 Para adoptar una base creada previamente por `postgres_bootstrap`, el comando exige tanto la
 URL libpq como la JDBC. Primero construye un schema esperado temporal, compara tablas,
@@ -519,22 +576,27 @@ zig build test-postgres \
 `pg_config` debe corresponder a la instalación de libpq que se quiere utilizar. Las
 opciones también se aplican a los demás pasos que compilan consumidores de libpq.
 
-### Ejemplo ejecutable
+### Auxiliar de integración DDL
 
-`examples/postgres_bootstrap.zig` muestra la composición completa. Sus entidades, mappings
-y `schema_sql` son constantes evaluadas en compilación; `main` solo lee la conexión y aplica
-ese string durante la ejecución:
+`test/integration/postgres_bootstrap.zig` prepara las bases descartables de
+`test-postgres` y `test-rest-postgres`. Comparte los mappings de AIDA y genera
+`schema_ddl` en compilación; en runtime lee `DATABASE_URL` y aplica el SQL mediante el
+ejecutor transaccional. No expone un comando público de arranque.
 
-```sh
-DATABASE_URL="postgresql://user:password@localhost/database" \
-zig build run-postgres-bootstrap -Dlibpq-prefix="$(brew --prefix libpq)"
-```
-
-La URL no se incorpora al binario: se obtiene del ambiente en runtime. El comando termina
-con error y muestra el diagnóstico retenido por `libpq` si no puede conectar o aplicar el
-schema.
+La aplicación real usa `run-aida` o `run-aida-rest`, que aplican el historial aceptado
+de Liquibase. `apply-migrations` permite aplicar ese historial y terminar sin HTTP.
+El generador DDL y su ejecutor siguen disponibles como módulos independientes.
 
 ## REST CRUD derivado de las entidades
+
+Para seguir el recorrido de una solicitud, empezar por `handle` en `src/rest/api.zig`:
+gestiona la arena temporal y selecciona la entidad. `handleEntity` prepara los filtros
+y coordina GET, POST, PUT y DELETE. Los detalles de entrada viven en `request.zig`,
+los de salida en `response.zig` y las reglas en `validation.zig`. Ninguno de estos
+archivos importa el controlador; comparten las declaraciones de `types.zig`.
+`codecs.zig` conserva las conversiones entre HTTP/JSON y texto del repositorio.
+Esta distribución mantiene la representación textual y los bindings de validadores
+actuales; los codecs y repositorios tipados siguen siendo una etapa posterior.
 
 `zigma_rest.Api(Model, codecs)` produce en compilación la tabla de rutas y el dispatch
 para todas las entidades. Los codecs se mantienen separados tanto de `TypeDef` como de los

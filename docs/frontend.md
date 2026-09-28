@@ -62,7 +62,7 @@ flowchart TB
 
 | Boundary | Contract |
 | --- | --- |
-| `system.zig` → WASM | Same `type_defs` / `entity_defs` baked into `frontend.wasm`. Catalog JSON is `stringifyEntityCatalog` of those Defs (Infos via `completeEntity`). Seeds are **not** in WASM. |
+| `system.zig` → WASM | Same `type_defs` / `entity_defs` baked into `frontend.wasm`. El catálogo se genera con `stringifyEntityCatalog(Model, buf)` sobre `Model.info`. Seeds are **not** in WASM. |
 | `system.zig` → HTTP | Same Defs plus optional `seeds`. Seeds se convierten a celdas del repositorio en memoria al iniciar. |
 | HTML → JS | Shell only: `#entity-nav`, `#sheet-title`, `#sheet-table` (`thead`/`tbody`/`tfoot`), `#status`. `<script src="title.js">` sets `document.title` from `addApp` `.title` (empty if omitted). No columns until JS runs. |
 | JS → WASM exports | Pointer/length accessors plus `build_row(entity_index)` / `create_row(entity_index)`. `entity_index` is field order on `entity_defs` (same order as the catalog array). |
@@ -71,7 +71,7 @@ flowchart TB
 
 **Responsibility split (why WASM exists)**
 
-JS owns DOM, navigation, `fetch`, and packing cell **strings** into WASM memory. Zig owns typing: `RecordInstanceType` + `parseFieldValue` + `stringifyRecord`. A cell that is not a value of that field’s Zig type never becomes a POST/PUT body; the page shows `error: {field}: not {storage}` from `error_ptr`.
+JS owns DOM, navigation, `fetch`, and packing cell **strings** into WASM memory. Zig owns typing: `Model.Row(entity)` + `parseFieldValue` + `stringifyRecord`. A cell that is not a value of that field’s Zig type never becomes a POST/PUT body; the page shows `error: {field}: not {storage}` from `error_ptr`.
 
 Buffers live in WASM (not allocated from JS):
 
@@ -80,26 +80,39 @@ Buffers live in WASM (not allocated from JS):
 | `schema_buf` | 32768 | Catalog JSON, filled once on first `schema_ptr` / `schema_len` |
 | `input_buf` | 8192 | Concatenated UTF-8 cell strings |
 | `lengths_buf` | `max_field_count` × `usize` | Length of each packed field, in entity field order |
-| `json_buf` | 8192 | Last successfully built row JSON |
-| `error_buf` | 256 | Last `build_row` / `create_row` error message |
+| `json_buf` | 8192 | JSON de la operación actual; longitud cero tras un error |
+| `error_buf` | 256 | Error de catálogo o construcción de fila |
 
-`max_field_count` is the largest `.fields` count among entities in `entity_defs` (comptime).
+`max_field_count` se obtiene de las filas generadas por `Model` en compilación.
 
 ---
 
 ## 2. Catalog JSON the page actually sees
 
-On first read of `schema_ptr` / `schema_len`, WASM calls `zigma_json.stringifyEntityCatalog(type_defs, entity_defs, &schema_buf)`. That walks every entity name on `entity_defs` and, per entity, `stringifyEntitySchema` → `zigma.completeEntity` then writes one object:
+El WASM construye `Model = zigma.System(system.type_defs, system.entity_defs)`. Al leer el catálogo llama a `zigma_json.stringifyEntityCatalog(Model, &schema_buf)`. Cada entidad toma metadatos de `Model.info` y tipos de `Model.Row(entity)`, conservando el orden declarado:
 
 - `name` — entity name (struct field on `entity_defs`)
 - `pk`, `uks`, `fks` — completed keys (fks already source→target maps)
-- `fields` — array of `{ name, label, type, is_name, storage }`
+- `fields` — array of `{ name, label, type, is_name, nullable, storage }`
   - `type` is the **domain** type name (`text`, `legajo`, `fecha`, …)
   - `is_name` is the completed field flag (`true` if this column is the row’s display name)
   - `storage` is the **Zig** shape used by widgets: `text` / `integer` / `boolean` / `object`
-  - a struct also has nested `fields` (`name` + `storage`, recursively)
+  - `nullable` es la nulabilidad efectiva de entidad; las PK siempre son obligatorias
+  - los objetos incluyen `fields` anidados con `name`, `nullable` y `storage`; allí los opcionales Zig determinan la nulabilidad
 
-That catalog is the only schema the page uses.
+El catálogo es la descripción que consume la página. No publica las reglas de negocio.
+
+`src/json.zig` conserva tres responsabilidades: proyectar este catálogo, interpretar
+celdas y serializar filas. Toda escritura utiliza `std.json.Stringify` con un writer
+fijo sobre el buffer del llamador; escapa valores y metadatos y devuelve `NoSpaceLeft`
+si no caben. Las firmas de entidad son `stringifyEntitySchema(Model, entity_name, buf)`
+y `stringifyEntityCatalog(Model, buf)`. `stringifyRecord`, `stringifyRecords` y
+`stringifyRecordSchema` conservan sus firmas. No hay wrappers para las APIs anteriores.
+
+El parser de celdas conserva su contrato de memoria: los textos toman prestada la
+entrada y las estructuras que requieren copiar strings escapados siguen siendo
+rechazadas. La conversión de dominios compartida con REST se abordará con los codecs
+tipados; este cambio no reemplaza los codecs ni el repositorio textual actuales.
 
 ---
 
@@ -113,9 +126,9 @@ Notation: `file: function` then callees. Browser APIs are included when they are
 examples/aida/build.zig
   └─ @import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .rest_root, .aida_root?, .widgets_js?, .title?, .target, .optimize })
        └─ build.zig: addApp
-            ├─ zigmaModule / jsonModule / systemModule   (host)
+            ├─ zigma + aida/system + REST + repositorio en memoria + std_http (host)
             │    └─ testing-backend executable ← src/testing_backend/main.zig
-            ├─ zigmaModule / jsonModule / systemModule   (wasm32-freestanding, .small)
+            ├─ zigma + zigma_json + aida/system         (wasm32-freestanding, .small)
             │    └─ frontend executable ← src/frontend/main.zig
             │         .entry = .disabled, .rdynamic, .export_memory
             ├─ install artifact → zig-out/frontend/frontend.wasm
@@ -150,9 +163,9 @@ main.js  (top level)
        ├─ [success]
        │    wasmExports = obj.instance.exports
        │    window.wasmInstance = obj.instance
-       │    catalog = JSON.parse(
-       │         readWasmString(schema_ptr, schema_len)
-       │    )
+       │    schemaLength = schema_len()
+       │    si es cero: mostrar error_ptr/error_len y detener la carga
+       │    catalog = JSON.parse(readMemoryString(schema_ptr(), schemaLength))
        │
        │    readWasmString(ptrFn, lenFn)
        │      └─ readMemoryString(ptrFn(), lenFn())
@@ -162,14 +175,13 @@ main.js  (top level)
        │      schema_ptr() / schema_len()
        │        └─ schemaBytes()
        │             if !schema_ready:
-       │               zigma_json.stringifyEntityCatalog(type_defs, entity_defs, &schema_buf)
+       │               zigma_json.stringifyEntityCatalog(Model, &schema_buf)
        │                 for each entity name:
-       │                   stringifyEntitySchema(…)
-       │                     zigma.completeEntity(entity_def)
-       │                     writeNameList(pk), writeUks, writeFks
-       │                     writeEntityFields → fieldStorage(zig_type)
-       │                       if struct: writeNestedFields
-       │             schema_ready = true
+       │                   writeEntity: Model.info + Model.Row(entity)
+       │                     std.json.Stringify → writer fijo
+       │                     fieldStorage(T), writeNestedFields
+       │             éxito: schema_ready = true
+       │             falta de espacio: longitud cero y setError
        │
        │    fromHash = location.hash without '#'
        │    selectEntity(fromHash || catalog[0].name)
@@ -222,7 +234,10 @@ makeInput(field, value, locked)
   if widgets[field.type].make: return that element
   if field.storage === "object" && field.fields:
     div.object-fields[data-field=name]
+    si nullable: control Sin valor y fieldset deshabilitado cuando está ausente
     for each nested field: append makeInput(sub, obj[sub.name], locked)
+  si boolean nullable:
+    selector Sin valor / Sí / No → "" / "true" / "false"
   else:
     <input data-field=name autocomplete=off>
     integer → type=text, inputmode=numeric, value
@@ -231,7 +246,7 @@ makeInput(field, value, locked)
     if locked: disabled; tabIndex = -1
 ```
 
-Aida registers `fecha` as `<input type="date">`. Click the cell (or the calendar glyph) to open the browser date picker. `read` converts ISO `yyyy-mm-dd` ↔ `{año, mes, día}`; packing is still JSON for WASM.
+Aida registers `fecha` as `<input type="date">`. Click the cell (or the calendar glyph) to open the browser date picker. `read` convierte ISO `yyyy-mm-dd` a `{año, mes, día}` y devuelve `null` si está vacío. WASM recibe un objeto JSON o una celda vacía; `Model.Row` determina si el campo admite ausencia.
 
 ---
 
@@ -296,20 +311,21 @@ click New
 Reading cells:
 
 ```
-readFieldValue(td, field)
-  if object:
-    return JSON.stringify(readLeaf(td, field))
-  boolean → input.checked ? "true" : "false"
-  else    → input.value
+readFieldValue(root, field)
+  widget → null se convierte a ""; objetos a JSON; escalares a string
+  objeto genérico → "" si está marcado Sin valor
+    si está presente: construir JSON de hijos con readNestedJson
+  select → value (incluye "" para el booleano ausente)
+  checkbox obligatorio → "true" / "false"
+  otro input → value
 
-readLeaf(root, field)
-  if object:
-    wrap = .object-fields[data-field=name]
-    obj[sub.name] = readLeaf(wrap, sub) for each nested field
-    return obj
-  boolean → input.checked                         // JS boolean, then stringify at object parent
-  integer → Number(input.value) or "" if empty
-  else    → input.value
+readNestedJson(root, field)
+  ausencia nullable → null JSON
+  ausencia obligatoria → error
+  entero → decimal exacto mediante BigInt, antes de validar el tipo en WASM
+  booleano → true / false
+  objeto → JSON anidado
+  texto → JSON.stringify(value)
 ```
 
 Packing into WASM (entity field order, concatenated UTF-8):
@@ -340,18 +356,18 @@ export create_row(entity_index)
   return len
 
 export build_row(entity_index)
+  json_len_value = 0; error_len_value = 0
   inline for entity_names, i:
-    if entity_index == i → return buildRowJson(@field(entity_defs, name))
+    if entity_index == i → return buildRowJson(name)
   setError("error: unknown entity")
   return 0
 
-buildRowJson(entity)
-  error_len_value = 0
-  Row = zigma.RecordInstanceType(type_defs, entity.fields)
+buildRowJson(entity_name)
+  Row = Model.Row(entity_name)
   offset = 0
   for each field name i:
     len = lengths_buf[i]
-    if offset+len > input_buf.len → setError("error: input too long"); return 0
+    if len > input_buf.len-offset → setError("error: input too long"); return 0
     bytes = input_buf[offset..][0..len]
     @field(row, name) = zigma_json.parseFieldValue(@FieldType(Row, name), bytes)
       catch setError("error: {s}: not {s}", name, fieldStorage(T)); return 0
@@ -373,7 +389,13 @@ buildRowJson(entity)
 
 Before PUT, JS omits PK fields from the WASM row JSON (REST rejects primary-key updates). POST keeps the full row. Domain shapes such as `fecha` objects are unchanged on the wire. URLs are `/api/{entity}` (and `/api/{entity}?pk…` for PUT/DELETE).
 
-**Boolean UI gap:** default checkboxes only pack `"true"` / `"false"` (`input.checked`). An optional boolean (`?bool`) can be Zig `null` from an empty packed cell, but the stock checkbox never emits empty — leaving it unchecked posts `false`, not null. A tri-state control (or clear action) would be needed before the page can set optional booleans to null.
+**Nulabilidad de controles:** texto y números opcionales vacíos representan null;
+booleanos opcionales ofrecen Sin valor / Sí / No y los obligatorios conservan el
+checkbox. Fechas vacías y objetos opcionales marcados Sin valor también representan
+null. Una PK vacía falla antes de enviar la solicitud. El formulario de alta y su
+reinicio posterior a POST usan `initialFieldValue`, derivado de `nullable`.
+El texto literal `"null"` sigue siendo texto; esta interfaz no distingue una cadena
+vacía presente de un texto opcional ausente. REST mantiene su política actual.
 
 JS import (called from `create_row`):
 
@@ -393,7 +415,7 @@ sendJson(url, method, jsonString)
   console.log("Server response:", result)
   if response.ok:
     if method === "POST":
-      #new-row inputs: checkboxes unchecked, others value ""
+      #new-row: recrear controles con initialFieldValue(field)
     loadRows()                      // §3.4 again
 ```
 
@@ -444,9 +466,9 @@ resourceUrl(entity, row)
   `${apiBase}/${entity.name}?${query}`
 
 pkString(name, value)
-  storage object  → JSON.stringify(value ?? {})
-  storage boolean → "true" / "false"
   nullish         → ""
+  storage object  → JSON.stringify(value)
+  storage boolean → "true" / "false"
   else            → String(value)
 ```
 
@@ -519,3 +541,13 @@ JS does not call this explicitly; `fetch` does.
 | `build.zig` `addApp` | Native HTTP + WASM + copy of html/js (+ generated `title.js`, optional `widgets.js`) |
 
 Nothing is written to disk at runtime. Restarting the backend restores `seeds`.
+
+
+## Verificación
+
+En la raíz, `zig build test-json` verifica serialización y catálogo, con contratos
+AIDA y alternativos. Desde `examples/aida`, `zig build test-frontend` usa Node y el
+WASM compilado para verificar tipos, nulabilidad, errores de buffers y controles
+escalares; `zig build test-backend` verifica HTTP en un proceso propio (Python 3).
+La guía de comprobaciones visuales está en
+[frontend_review.md](../test/integration/frontend_review.md).

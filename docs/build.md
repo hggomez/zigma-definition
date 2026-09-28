@@ -1,6 +1,62 @@
-# Building the project
+# Build del proyecto
 
-From the repository root. Zig **0.17.0-dev** or newer is required (`minimum_zig_version` in `build.zig.zon`).
+Los comandos siguientes se ejecutan desde la raíz. Usá la versión de Zig indicada en
+`minimum_zig_version` de `build.zig.zon`.
+
+## Cómo leer el build
+
+Empezá por [build.zig](../build.zig). Su función `build(b)` elige target y optimización,
+crea los módulos compartidos, declara la aplicación AIDA y conecta las suites de tests.
+Las implementaciones están separadas por responsabilidad:
+
+| Archivo | Qué buscar allí |
+| --- | --- |
+| [build.zig](../build.zig) | Opciones generales, API pública y comportamiento de `zig build` sin argumentos. |
+| [build/modules.zig](../build/modules.zig) | Bibliotecas publicadas, imports entre módulos y opciones de libpq. |
+| [build/app.zig](../build/app.zig) | `addApp` / `addAppFromDep`: backend en memoria, WASM y archivos estáticos para consumidores. |
+| [build/aida.zig](../build/aida.zig) | Servidor real, lanzador, comprobación del snapshot y comandos de migración. |
+| [build/tests.zig](../build/tests.zig) | Suites, integración con servicios y lista de rechazos de compilación esperados. |
+
+`build()` es un programa Zig que **describe un grafo de tareas**. Crear un nodo con
+`addExecutable` no inicia el servidor ni compila inmediatamente todo el proyecto.
+Después de describir el grafo, Zig ejecuta los nodos necesarios para el comando elegido.
+
+| Concepto | Función dentro del grafo |
+| --- | --- |
+| `b.createModule(...)` | Describe fuentes, target, optimización e imports de un módulo interno. |
+| `b.addModule("zigma", ...)` | Además publica ese módulo para que otro paquete lo obtenga con `.module("zigma")`. |
+| `b.addExecutable(...)` / `b.addTest(...)` | Declara la compilación de un ejecutable o una suite de tests. |
+| `b.addRunArtifact(exe)` | Declara la ejecución de un artefacto y depende de su compilación. |
+| `b.step("nombre", "descripción")` | Crea un comando público, seleccionable con `zig build nombre`. |
+| `paso.dependOn(otro)` | Expresa que `otro` debe completarse antes que `paso`. |
+
+Por ejemplo, en `build/aida.zig` ambos comandos reutilizan el mismo ejecutable:
+
+```zig
+const run_aida_rest_server = b.addRunArtifact(aida_rest_server);
+aida_rest_server_step.dependOn(&run_aida_rest_server.step);
+check_aida_rest_server_step.dependOn(&aida_rest_server.step);
+```
+
+`run-aida-rest` necesita compilar **y ejecutar** el servidor. `check-aida-rest` solo
+depende de su compilación. El orden textual de estas líneas no ordena las tareas:
+las dependencias lo hacen; las ramas independientes pueden correr en paralelo.
+
+El paso por defecto de la raíz depende del guard de compilación y de la comprobación
+del snapshot. `test-local` agrega las suites locales, mientras que las integraciones
+PostgreSQL pertenecen a ramas separadas. Por eso declarar libpq en `modules.zig` no
+obliga a tenerlo instalado para ejecutar los tests locales.
+
+`Modules` y `Artifacts` agrupan referencias a nodos ya creados para reutilizarlos.
+Los archivos de `build/` son auxiliares del programa de build; no son nuevos módulos
+runtime del framework. La API pública sigue en `build.zig`, incluido `addAppFromDep`.
+El backend nativo y el frontend WASM conservan grafos de módulos separados porque
+usan targets distintos.
+
+Las rutas también conservan su dueño: `b.path("src/...")` se refiere al paquete que
+posee `b`, aunque la función esté escrita en `build/app.zig`. `dep.path("src/...")`
+se refiere al paquete de la dependencia. `build/` está incluido en los archivos
+publicados de `build.zig.zon` para que estos helpers estén disponibles fuera del repo.
 
 ## Default build (the library)
 
@@ -8,19 +64,25 @@ From the repository root. Zig **0.17.0-dev** or newer is required (`minimum_zig_
 zig build
 ```
 
-Exports modules; does not compile the example app. Generators live in this package so a consumer can call `addAppFromDep`.
+Exporta módulos y comprueba el snapshot aceptado de AIDA; no compila la aplicación.
+Los generadores permiten que un consumidor componga su build con `addAppFromDep`.
 
 ## Tests
 
 ```sh
-zig build test
+zig build test-local # todas las suites locales; requiere Node y Python
 ```
 
-Runs:
+`test-local` ejecuta la suite Zig `test`, las pruebas del lanzador y de los comandos del
+build, y una única invocación de `test-backend test-frontend` en el consumidor AIDA.
+Usa el mismo compilador y conserva target, CPU y optimización. No requiere libpq,
+Docker, PostgreSQL ni Liquibase, y propaga cualquier fallo.
 
-- runtime tests in `test/aida_test.zig` (the aida fixture against the `zigma` vocabulary)
-- runtime tests in `test/json_test.zig` (JSON writer; aida plus `test/tiny_system.zig`)
-- expected compile-error cases in `test/compile_errors/` (the step succeeds only if the compiler error matches `build.zig`)
+Los pasos específicos siguen disponibles: `test` conserva las suites Zig de contrato,
+modelo, JSON, REST, PostgreSQL sin servicios, migraciones, rechazos de compilación y
+snapshot; `test-model` y `test-json` ejecutan subconjuntos. Ninguno de esos tres requiere
+Node o Python. Las integraciones `test-postgres`, `test-rest-postgres` y `test-migrations`
+son separadas y usan PostgreSQL descartable; la última también requiere Liquibase.
 
 ## Example app
 
@@ -32,6 +94,7 @@ zig build              # zig-out/frontend/ + zig-out/bin/testing-backend
 zig build frontend     # WASM page only
 zig build testing-backend # run the in-memory testing backend (port 8080)
 zig build test-backend    # HTTP integration check (Python 3; own process and port)
+zig build test-frontend   # catálogo, controles y WASM real (Node)
 ```
 
 How to run it in a browser: [run-example.md](run-example.md).
@@ -44,24 +107,38 @@ zig build check-aida -Dlibpq-prefix=/opt/homebrew/opt/libpq # solo compilar
 zig build test-aida-launcher # procesos simulados; sin PostgreSQL
 ```
 
-`run-aida` requiere Python 3 y las variables de conexión del [README](../README.md).
+`run-aida` requiere las variables de conexión del [README](../README.md), sin Python.
 El build compila el backend real y ejecuta el paso `frontend` del consumidor AIDA con el
-mismo compilador. El lanzador espera la API, sirve los archivos y cierra ambos con Ctrl+C.
+mismo compilador. El lanzador Zig espera la API, sirve los archivos y cierra ambos con
+Ctrl+C en macOS/Linux. Solo `test-aida-launcher` requiere Python 3 para sus procesos
+simulados; el ejecutable que se prueba es el mismo que utiliza `run-aida`.
 
 ## What the library build graph contains
 
 | Step | Command | Result |
 | --- | --- | --- |
-| install (default) | `zig build` | package modules only (no demo binaries) |
-| `test` | `zig build test` | runtime tests + expected compile errors |
+| install (default) | `zig build` | módulos y comprobación del schema; sin binarios de la app |
+| `run-aida` | `zig build run-aida` | aplicación PostgreSQL y frontend |
+| `check-aida` | `zig build check-aida` | compilar aplicación y lanzador sin ejecutarlos |
+| `test-local` | `zig build test-local` | suite Zig, frontend, backend en memoria, lanzador y comandos |
+| `test` | `zig build test` | suite Zig y schema; sin Node ni Python |
+| `apply-migrations` | `zig build apply-migrations` | aplicar el historial aceptado y terminar, sin HTTP |
 
-Modules wired in the library `build.zig`:
+`run-aida-rest` y `check-aida-rest` conservan las operaciones exclusivas del backend.
+`check-schema`, `migration` y `accept-migration` forman el flujo de cambios de schema;
+`init-migrations` y `baseline-existing` quedan para inicialización/adopción avanzadas.
+El bootstrap DDL es un auxiliar de integración y no tiene un paso público de arranque.
+
+Módulos principales publicados por `build.zig`:
 
 - `zigma` → `src/core/zigma.zig` (exported; leaf)
-- `zigma_json` → `src/json.zig` (exported; imports `zigma`)
+- `zigma_json` → `src/json.zig` (exportado; recibe Model y utiliza std.json)
 - `aida` → `examples/aida/src/aida.zig` (exported fixture; imports `zigma`)
 
-`addApp` / `addAppFromDep` are called from a **consumer** `build.zig`, not from this package’s `build()`. They compile the `testing-backend` executable (shared `zigma_std_http` + REST + memory repository) and WASM frontend with **separate** `zigma` / `zigma_json` / `system` module instances per target.
+`addApp` / `addAppFromDep` se implementan en `build/app.zig` y se reexportan desde
+`build.zig`. Los llama el build del **consumidor**, no el `build()` raíz del framework.
+Componen `testing-backend` (HTTP compartido + REST + repositorio en memoria) y el
+frontend WASM, con instancias de módulos separadas para cada target.
 
 List every step:
 
@@ -103,5 +180,4 @@ In-tree, `examples/aida/` does the same with `.path = "../.."`.
 The package also exports `aida` (`examples/aida/src/aida.zig`) and `zigma_json`.
 
 The returned `App` exposes `testing_backend`, `run_testing_backend`, and `frontend`.
-`PackageFiles` supplies `testing_backend` and `std_http` separately. The previous
-`backend` / `dummy` steps are replaced by `testing-backend`.
+`PackageFiles` supplies `testing_backend` and `std_http` separately.

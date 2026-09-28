@@ -1,11 +1,11 @@
-//! Inicialización en runtime del schema PostgreSQL de AIDA generado en compilación.
+//! Preparación del schema PostgreSQL para las integraciones de DDL y REST.
 //!
 //! `schema_ddl` se genera y valida al compilar este ejecutable.
 //! Solo la conexión y los efectos sobre la base de datos ocurren en runtime.
 
 const std = @import("std");
-const zigma = @import("zigma");
 const aida = @import("aida");
+const postgres = @import("aida_postgres");
 const postgres_ddl = @import("zigma_postgres_ddl");
 const postgres_executor_ddl = @import("zigma_postgres_executor_ddl");
 const postgres_libpq = @import("zigma_postgres_libpq");
@@ -19,15 +19,7 @@ comptime {
 
 // Todo esto sigue siendo información comptime: la proyección de dominios a SQL
 // produce un string de schema inmutable y validado, incorporado al ejecutable.
-const type_mappings = postgres_ddl.defineTypeMappings(zigma.merge(.{
-    postgres_ddl.common_type_mappings,
-    .{
-        .fecha = postgres_ddl.TypeMapping{ .sql_type = "DATE" },
-        .email = postgres_ddl.TypeMapping{ .sql_type = "TEXT" },
-    },
-}));
-
-const schema_ddl = postgres_ddl.createSchemaDdl(aida.Model, type_mappings);
+const schema_ddl = postgres_ddl.createSchemaDdl(aida.Model, postgres.type_mappings);
 
 pub fn main(init: std.process.Init) !void {
     // El acceso al ambiente, la reserva de memoria, la conexión y la ejecución de SQL

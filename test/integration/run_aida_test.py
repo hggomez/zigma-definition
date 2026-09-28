@@ -12,7 +12,8 @@ import tempfile
 import time
 import unittest
 
-ROOT = Path(__file__).resolve().parents[2]
+# El build entrega el lanzador nativo a probar; solo los backends simulados usan Python.
+LAUNCHER = Path(sys.argv.pop(1)).resolve()
 
 
 def free_port():
@@ -47,7 +48,9 @@ class LauncherTest(unittest.TestCase):
         self.marker = self.directory / "backend.pid"
         self.backend = self.directory / "backend"
         self.backend.write_text(f"#!{sys.executable}\n" + '''
-import http.server, os, pathlib, subprocess, sys, time
+import http.server, os, pathlib, signal, subprocess, sys, time
+if os.environ.get("IGNORE_TERM") == "1":
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
 pathlib.Path(os.environ["PID_FILE"]).write_text(str(os.getpid()))
 if os.environ.get("FAIL_BACKEND") == "1":
     raise SystemExit(17)
@@ -64,7 +67,8 @@ time.sleep(60)
 time.sleep(float(os.environ.get("BACKEND_DELAY", "0")))
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_OPTIONS(self):
-        self.send_response(204)
+        time.sleep(float(os.environ.get("OPTIONS_DELAY", "0")))
+        self.send_response(int(os.environ.get("OPTIONS_STATUS", "204")))
         self.end_headers()
     def do_GET(self):
         self.send_response(200)
@@ -81,7 +85,7 @@ http.server.HTTPServer(("127.0.0.1", int(os.environ["HTTP_PORT"])), Handler).ser
         env = {**os.environ, "HTTP_ADDRESS": "127.0.0.1", "HTTP_PORT": str(self.backend_port),
                "FRONTEND_PORT": str(self.frontend_port), "PID_FILE": str(self.marker), **extra}
         self.process = subprocess.Popen(
-            [sys.executable, str(ROOT / "tools/run_aida.py"), str(self.backend), str(self.frontend)],
+            [str(LAUNCHER), str(self.backend), str(self.frontend)],
             env=env, stdout=self.log, stderr=self.log,
         )
         self.addCleanup(self.stop)
@@ -139,6 +143,19 @@ http.server.HTTPServer(("127.0.0.1", int(os.environ["HTTP_PORT"])), Handler).ser
         with self.assertRaises(OSError):
             get(self.frontend_port, "/")
 
+    def test_launcher_does_not_require_python_on_path(self):
+        # El shebang absoluto del backend simulado evita depender del PATH vacío.
+        self.start(PATH="")
+        self.wait_frontend()
+        self.assertEqual(get(self.frontend_port, "/")[0], 200)
+
+    def test_shutdown_forces_backend_that_ignores_term(self):
+        self.start(IGNORE_TERM="1")
+        self.wait_frontend()
+        self.stop()
+        self.assertEqual(self.process.returncode, 0)
+        self.assert_backend_stopped()
+
     def test_frontend_port_conflict_fails_before_starting_backend(self):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", self.frontend_port))
@@ -163,6 +180,78 @@ http.server.HTTPServer(("127.0.0.1", int(os.environ["HTTP_PORT"])), Handler).ser
         self.start(BACKEND_DELAY="5", AIDA_STARTUP_TIMEOUT="1")
         self.assertNotEqual(self.process.wait(timeout=8), 0)
         self.assert_backend_stopped()
+
+    def test_unresponsive_api_does_not_block_timeout(self):
+        self.start(OPTIONS_DELAY="60", AIDA_STARTUP_TIMEOUT="1")
+        self.assertNotEqual(self.process.wait(timeout=8), 0)
+        self.assert_backend_stopped()
+
+    def test_non_ready_http_status_does_not_start_frontend(self):
+        self.start(OPTIONS_STATUS="503", AIDA_STARTUP_TIMEOUT="1")
+        self.assertNotEqual(self.process.wait(timeout=8), 0)
+        self.assert_backend_stopped()
+        with self.assertRaises(OSError):
+            get(self.frontend_port, "/")
+
+    def test_sigterm_with_idle_http_client_stops_everything(self):
+        self.start()
+        self.wait_frontend()
+        with socket.create_connection(("127.0.0.1", self.frontend_port)) as client:
+            client.sendall(b"GET / HTTP/1.1\r\n")
+            time.sleep(0.1)
+            self.process.send_signal(signal.SIGTERM)
+            self.assertEqual(self.process.wait(timeout=8), 0)
+        self.assert_backend_stopped()
+
+    def test_idle_connection_does_not_block_other_assets(self):
+        self.start()
+        self.wait_frontend()
+        with socket.create_connection(("127.0.0.1", self.frontend_port)) as client:
+            client.sendall(b"GET / HTTP/1.1\r\n")
+            time.sleep(0.1)
+            self.assertEqual(get(self.frontend_port, "/frontend.wasm")[0], 200)
+
+    def test_missing_frontend_does_not_start_backend(self):
+        (self.frontend / "index.html").unlink()
+        self.start()
+        self.assertNotEqual(self.process.wait(timeout=8), 0)
+        self.assertFalse(self.marker.exists())
+
+    def test_equal_ports_do_not_start_backend(self):
+        self.start(FRONTEND_PORT=str(self.backend_port))
+        self.assertNotEqual(self.process.wait(timeout=8), 0)
+        self.assertFalse(self.marker.exists())
+
+    def test_invalid_configuration_does_not_start_backend(self):
+        for name, value in (("HTTP_PORT", "0"), ("FRONTEND_PORT", "65536"),
+                            ("AIDA_STARTUP_TIMEOUT", "nan"), ("AIDA_STARTUP_TIMEOUT", "-1")):
+            with self.subTest(name=name, value=value):
+                self.start(**{name: value})
+                self.assertNotEqual(self.process.wait(timeout=8), 0)
+                self.assertFalse(self.marker.exists())
+
+    def test_static_http_paths_headers_and_missing_assets(self):
+        (self.frontend / "hello world.js").write_text("const greeting = '¡Hola!';")
+        (self.directory / "private.txt").write_text("No pertenece al frontend")
+        self.start()
+        self.wait_frontend()
+        status, body, content_type = get(self.frontend_port, "/hello%20world.js?v=1")
+        self.assertEqual(status, 200)
+        self.assertEqual(body.decode(), "const greeting = '¡Hola!';")
+        self.assertIn("javascript", content_type)
+        self.assertEqual(get(self.frontend_port, "/missing.js")[0], 404)
+        for path in ("/../private.txt", "/%2e%2e/private.txt", "/%2fetc/passwd"):
+            self.assertIn(get(self.frontend_port, path)[0], (400, 404))
+        connection = http.client.HTTPConnection("127.0.0.1", self.frontend_port, timeout=1)
+        try:
+            connection.request("HEAD", "/api-config.js?v=1")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.getheader("Cache-Control"), "no-store")
+            self.assertGreater(int(response.getheader("Content-Length")), 0)
+            self.assertEqual(response.read(), b"")
+        finally:
+            connection.close()
 
     def test_ctrl_c_during_startup_stops_backend_and_its_child(self):
         ready = self.directory / "child.ready"

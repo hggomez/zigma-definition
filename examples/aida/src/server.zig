@@ -1,4 +1,4 @@
-//! Composición completa de la fase 3: primero el historial aceptado de Liquibase;
+//! Servidor PostgreSQL de AIDA: primero el historial aceptado de Liquibase;
 //! después, una conexión libpq y la API REST generada de AIDA.
 
 const std = @import("std");

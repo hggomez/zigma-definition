@@ -23,7 +23,6 @@ zig build testing-backend
 ```
 
 El mensaje inicial indica `Testing backend (in memory) listening on http://127.0.0.1:8080/api`.
-Este comando reemplaza `zig build backend` y el alias `zig build dummy`.
 
 En otra terminal, también desde la raíz:
 
@@ -90,11 +89,15 @@ propios, sin modificar los datos de otro backend que esté ejecutándose:
 
 ```sh
 zig build test-backend
+zig build test-frontend # requiere Node; ejecuta el WASM y controles escalares
 ```
 
 Verifica seeds, CORS, filtros, CRUD, reglas de negocio y que el reinicio descarte los
 cambios. El repositorio en memoria no reproduce todas las restricciones y garantías de
 PostgreSQL; las integraciones con la base se ejecutan por separado.
+
+Desde la raíz, `zig build test-local` coordina estas dos suites junto con la suite Zig,
+los tests del lanzador y los nombres públicos de comandos, sin requerir PostgreSQL.
 
 ## Archivos principales
 
@@ -103,7 +106,9 @@ PostgreSQL; las integraciones con la base se ejecutan por separado.
 | `examples/aida/src/aida.zig` | Contrato de AIDA. |
 | `examples/aida/src/system.zig` | Contrato y seeds del ejemplo. |
 | `examples/aida/src/rest.zig` | Codecs y API de AIDA, compartidos con el servidor PostgreSQL. |
-| `examples/aida/build.zig` | Compone la app y publica la comprobación `test-backend`. |
+| `examples/aida/src/postgres.zig` | Mappings y artefactos PostgreSQL del contrato. |
+| `examples/aida/src/server.zig` | Backend real con Liquibase, libpq y HTTP. |
+| `examples/aida/build.zig` | Compone el frontend y backend de pruebas; publica `test-backend` y `test-frontend`. |
 | `src/testing_backend/main.zig` | Inicializa API, seeds y repositorio; llama a `std_http.serve`. |
 | `src/testing_backend/memory_repository.zig` | CRUD en memoria. |
 | `src/rest/std_http.zig` | Transporte HTTP compartido y CORS. |
