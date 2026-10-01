@@ -18,12 +18,38 @@ const zigma = @import("zigma");
 const tsType = @import("zig_type_map_ts").tsType;
 
 /// A sample literal for a domain type, for the generated tests to feed the
-/// builders (the value only has to type-check, not be meaningful).
-/// `ts_samples` is supplied by the caller keyed by domain type name.
-fn tsSample(comptime ts_samples: anytype, comptime type_name: []const u8) []const u8 {
-    if (!@hasField(@TypeOf(ts_samples), type_name))
+/// builders (the value only has to type-check, not be meaningful). Derived
+/// from the domain's Zig type in `type_defs`, consistent with its `tsType`.
+fn tsSample(comptime type_defs: anytype, comptime type_name: []const u8) []const u8 {
+    if (!@hasField(@TypeOf(type_defs), type_name))
         @compileError("type '" ++ type_name ++ "' has no TS sample");
-    return @field(ts_samples, type_name);
+    return sampleOfZig(type_defs, @field(type_defs, type_name).Type);
+}
+
+fn sampleOfZig(comptime type_defs: anytype, comptime T: type) []const u8 {
+    return switch (@typeInfo(T)) {
+        .bool => "true",
+        .int => if (comptime std.mem.eql(u8, tsType(type_defs, @typeName(T)), "bigint")) "1n" else "1",
+        .@"struct" => ObjectSample(type_defs, T).ts,
+        else => if (T == []const u8) "\"s1\"" else @compileError("type '" ++ @typeName(T) ++ "' has no TS sample"),
+    };
+}
+
+/// The object literal sample of a struct, one sample per field. Built in a
+/// container-level const so it is always evaluated in comptime scope (same
+/// trick as `ObjectType` in zig_type_map_ts.zig).
+fn ObjectSample(comptime type_defs: anytype, comptime T: type) type {
+    return struct {
+        pub const ts = blk: {
+            const info = @typeInfo(T).@"struct";
+            var out: []const u8 = "{ ";
+            for (info.field_names, info.field_types, 0..) |field_name, field_type, i| {
+                if (i > 0) out = out ++ ", ";
+                out = out ++ field_name ++ ": " ++ sampleOfZig(type_defs, field_type);
+            }
+            break :blk out ++ " }";
+        };
+    };
 }
 
 // ---- names ----
@@ -140,33 +166,33 @@ fn nonPkAccessors(comptime entity: anytype, comptime obj: []const u8) []const u8
 }
 
 /// `cosa: "s1"` for all fields (the sample INSERT row).
-fn fieldsSampleObject(comptime ts_samples: anytype, comptime entity: anytype) []const u8 {
+fn fieldsSampleObject(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = "";
     inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names, 0..) |col, i| {
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ col ++ ": " ++ tsSample(ts_samples, @field(entity.fields, col).type);
+        out = out ++ sep ++ col ++ ": " ++ tsSample(type_defs, @field(entity.fields, col).type);
     }
     return out;
 }
 
 /// `a: "s1", b: "s1"` for the pk columns (the sample pk object).
-fn pkSampleObject(comptime ts_samples: anytype, comptime entity: anytype) []const u8 {
+fn pkSampleObject(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = "";
     inline for (entity.pk, 0..) |col, i| {
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ col ++ ": " ++ tsSample(ts_samples, @field(entity.fields, col).type);
+        out = out ++ sep ++ col ++ ": " ++ tsSample(type_defs, @field(entity.fields, col).type);
     }
     return out;
 }
 
 /// `nombre: "s1"` for the non-pk columns (the sample UPDATE row).
-fn nonPkSampleObject(comptime ts_samples: anytype, comptime entity: anytype) []const u8 {
+fn nonPkSampleObject(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = "";
     comptime var i: usize = 0;
     inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |col| {
         if (comptime isPkColumn(entity, col)) continue;
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ col ++ ": " ++ tsSample(ts_samples, @field(entity.fields, col).type);
+        out = out ++ sep ++ col ++ ": " ++ tsSample(type_defs, @field(entity.fields, col).type);
         i += 1;
     }
     return out;
@@ -266,27 +292,27 @@ fn queryObjectTest(comptime fn_name: []const u8, comptime args: []const u8) []co
         "});";
 }
 
-pub fn insertFnTest(comptime ts_samples: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
-    return queryObjectTest(opFnName("insert", name, ""), "{ " ++ fieldsSampleObject(ts_samples, entity) ++ " }");
+pub fn insertFnTest(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+    return queryObjectTest(opFnName("insert", name, ""), "{ " ++ fieldsSampleObject(type_defs, entity) ++ " }");
 }
 
-pub fn selectByPkFnTest(comptime ts_samples: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
-    return queryObjectTest(opFnName("select", name, "ByPk"), "{ " ++ pkSampleObject(ts_samples, entity) ++ " }");
+pub fn selectByPkFnTest(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+    return queryObjectTest(opFnName("select", name, "ByPk"), "{ " ++ pkSampleObject(type_defs, entity) ++ " }");
 }
 
 pub fn selectAllFnTest(comptime name: []const u8) []const u8 {
     return queryObjectTest(opFnName("selectAll", name, ""), "");
 }
 
-pub fn updateFnTest(comptime ts_samples: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+pub fn updateFnTest(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     return queryObjectTest(
         opFnName("update", name, ""),
-        "{ " ++ pkSampleObject(ts_samples, entity) ++ " }, { " ++ nonPkSampleObject(ts_samples, entity) ++ " }",
+        "{ " ++ pkSampleObject(type_defs, entity) ++ " }, { " ++ nonPkSampleObject(type_defs, entity) ++ " }",
     );
 }
 
-pub fn deleteFnTest(comptime ts_samples: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
-    return queryObjectTest(opFnName("delete", name, ""), "{ " ++ pkSampleObject(ts_samples, entity) ++ " }");
+pub fn deleteFnTest(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+    return queryObjectTest(opFnName("delete", name, ""), "{ " ++ pkSampleObject(type_defs, entity) ++ " }");
 }
 
 // ---- whole-system aggregation ----
@@ -314,12 +340,12 @@ fn entityBuilderNames(comptime name: []const u8, comptime entity: anytype) []con
 
 /// The generated test for every builder of one entity, matching
 /// `entityBuilders`; blank-line separated.
-fn entityBuilderTests(comptime ts_samples: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
-    comptime var out: []const u8 = insertFnTest(ts_samples, name, entity);
-    out = out ++ "\n\n" ++ selectByPkFnTest(ts_samples, name, entity);
+fn entityBuilderTests(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+    comptime var out: []const u8 = insertFnTest(type_defs, name, entity);
+    out = out ++ "\n\n" ++ selectByPkFnTest(type_defs, name, entity);
     out = out ++ "\n\n" ++ selectAllFnTest(name);
-    if (hasNonPkColumns(entity)) out = out ++ "\n\n" ++ updateFnTest(ts_samples, name, entity);
-    out = out ++ "\n\n" ++ deleteFnTest(ts_samples, name, entity);
+    if (hasNonPkColumns(entity)) out = out ++ "\n\n" ++ updateFnTest(type_defs, name, entity);
+    out = out ++ "\n\n" ++ deleteFnTest(type_defs, name, entity);
     return out;
 }
 
@@ -347,7 +373,7 @@ const impl_module_path = "./dml.ts";
 /// `node:assert` imports, a named import of every builder from the generated
 /// impl module, then the generated test for every builder in declaration
 /// order, blank-line separated. The test counterpart of `generateTsBackend`.
-pub fn generateTsBackendTests(comptime ts_samples: anytype, comptime entity_defs: anytype) []const u8 {
+pub fn generateTsBackendTests(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     @setEvalBranchQuota(100000);
     const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
 
@@ -360,7 +386,7 @@ pub fn generateTsBackendTests(comptime ts_samples: anytype, comptime entity_defs
             tests = tests ++ "\n\n";
         }
         imports = imports ++ entityBuilderNames(entity_name, entity);
-        tests = tests ++ entityBuilderTests(ts_samples, entity_name, entity);
+        tests = tests ++ entityBuilderTests(type_defs, entity_name, entity);
     }
 
     return "import { test } from \"node:test\";\n" ++

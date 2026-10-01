@@ -12,8 +12,6 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
 
 ## Pendientes (módulo `ts_backend_generator` — interfaz de DML en TS)
 
-* Caso "no compila": tipo de dominio sin entrada en `ts_type_defs` / `ts_sample_defs` →
-  `@compileError` propio (paralelo a `sql_unknown_type_mapping.zig`).
 * Test #2/#3 sobre los builders generados (invariantes que no repiten al generador): un
   `$n` y un valor por columna; orden de `values` = orden de columnas, independiente del
   orden de claves del objeto de entrada.
@@ -25,12 +23,11 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
   escrito, `clases`); se arregla con tipos compuestos de Postgres, ver la decisión en
   `GOALS.md`. Pendientes de esa misma decisión: `fecha` en una pk (`mesas`, keys en otro
   orden), `fecha` nullable en `NULL`, y que la columna sea el compuesto y no `TEXT`.
-* Inconsistencia de enteros de 64 bits: `common_type_defs.integer` es `i64`
-  (`src/zigma.zig`) pero `aida.sql_type_defs.integer` es `INTEGER` (32 bits): un valor
-  mayor a ~2.1e9 desborda en Postgres. Lo honesto es `BIGINT`, pero `pg` devuelve
-  `BIGINT` como `string` en TS. Opciones: `BIGINT`/`string`, o `BIGINT`/`bigint` con
-  `pg.types.setTypeParser(20, BigInt)`. Por ahora los mapas de primitivos (`zig_type_map_sql.sql_type_defs` / `zig_type_map_ts.ts_type_defs`) no mapean
-  `i64` (no compila) hasta resolverlo.
+* `bigint` en el backend: `integer` es `i64` → `BIGINT` / `bigint`. Falta registrar
+  `pg.types.setTypeParser(20, BigInt)` en el backend (hoy `pg` devuelve `BIGINT` como
+  `string`) y un test de integración que lo muestre (ida y vuelta de un `orden`).
+* Caso "no compila": sample TS para un tipo de Zig sin sample (`f32` detrás de un
+  dominio) → `"type 'f32' has no TS sample"`.
 * Caso "no compila": un sistema que nombra un tipo de dominio igual que un primitivo de
   Zig (`.u8`, `.bool`, …) → `@compileError` propio en `defineTypes`. Hoy no hay colisión
   real (el mapa de primitivos, `zig_type_map_sql.sql_type_defs` / `zig_type_map_ts.ts_type_defs`,
@@ -53,7 +50,8 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
   para entidades all-pk (`hasNonPkColumns`).
 * `insertFnTest` .. `deleteFnTest` / `generateTsBackendTests`: el test #1 por builder y el
   módulo de tests entero (imports `node:test`/`node:assert` + import de `./dml.ts`).
-* `ts_type_defs` / `ts_sample_defs` en `aida.zig`, paralelos a `sql_type_defs`.
+* Tipos TS resueltos desde `type_defs` con `zig_type_map_ts.tsType`; samples de los tests
+  derivados del tipo de Zig (`muestra`: slice, `i64` → `1n`, bool, struct → objeto).
 * `zig build ts-backend`: genera `dml.ts` + `dml.test.ts` y corre `node --test`.
 
 ## Hechos (referencia rápida, no repetir)
@@ -82,6 +80,10 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
   framework.
 * Tipo sin mapeo SQL no compila (`test/compile_errors/
   sql_unknown_type_mapping.zig`, mensaje `"type 'x' has no SQL mapping"`).
+* Resolución de tipos (`test/zig_type_map_test.zig`): primitivos por `@typeName` (incl.
+  `i64` → `BIGINT`/`bigint`), dominios a través de su tipo de Zig (`email`), struct →
+  compuesto en SQL / objeto en TS; no compilan: `f32`, dominio sobre `f32`, nombre
+  inexistente.
 * Pk siempre `NOT NULL`, sin importar el `nullable` del campo (fixture
   `combinacion`, pk `a`,`b`, ninguno con `nullable: false` explícito).
 * Esquema completo de aida (`schemaSql` sobre las 11 entidades de

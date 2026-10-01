@@ -217,11 +217,22 @@ guarda como `2026-03-13`; backend en contenedor UTC vs host en -03 dan días dis
 Lo preferido para ese tipo: `DATE` en Postgres con `pg.types.setTypeParser(1082, s => s)`,
 o el par encode/decode de la tabla, de modo que TS nunca vea un `Date`.
 
-**Dónde están hoy los mapeos de tipos** (contexto de la decisión). No hay un mapa
-Postgres↔TS: cada sistema declara, por tipo de dominio, mapas paralelos en `aida.zig`
-(`type_defs` → Zig, `sql_type_defs` → Postgres, `ts_type_defs` → TS, `ts_sample_defs` →
-literal de ejemplo), unidos por el nombre del tipo de dominio. La conversión real en el
-cable la hace `pg` con sus parsers por defecto, implícitos y fuera de nuestro código
+**Dónde viven los mapeos de tipos (decidido y hecho).** Toda la información de conversión
+entre lenguajes vive solo en el framework: `src/zig_type_map_sql.zig`
+(`sql_type_defs`) y `src/zig_type_map_ts.zig` (`ts_type_defs`), tablas indexadas por
+`@typeName` del tipo de Zig (`.u8`, `.i64`, `.@"[]const u8"`, …). Un sistema solo nombra
+sus dominios en `type_defs` (`email`, `fecha`, …); ya no declara mapas SQL/TS/samples
+(se borraron `sql_type_defs`, `ts_type_defs` y `ts_sample_defs` de `aida.zig`).
+`sqlType(type_defs, nombre)` / `tsType(type_defs, nombre)` resuelven en orden: entrada en
+la tabla del framework; dominio de `type_defs` a través de su tipo de Zig (un struct es el
+compuesto con el nombre del dominio en SQL, y un objeto inline en TS); si no, error de
+compilación. Un dominio con mapeo propio (el `fecha` del framework sobre `DATE`) se agrega
+como entrada en esas tablas. Los generadores reciben `type_defs`; los samples de los tests
+TS se derivan del tipo de Zig dentro de `ts_backend_generator` (`1n` para `bigint`, un
+objeto para un struct). `i64` → `BIGINT` / `bigint` (el backend tiene que registrar
+`pg.types.setTypeParser(20, BigInt)`), así que el dominio `integer` ahora es `BIGINT`.
+
+La conversión real en el cable la sigue haciendo `pg` con sus parsers por defecto
 (`INTEGER`→`number`, `BOOLEAN`→`boolean`, `TEXT`→`string`, `jsonb`→objeto; ojo,
 `BIGINT`→`string` y `DATE`→`Date` en hora local).
 

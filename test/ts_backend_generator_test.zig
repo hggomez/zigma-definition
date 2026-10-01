@@ -10,8 +10,6 @@ const aida = @import("aida");
 const ts = @import("ts_backend_generator");
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-const minimal_ts_samples = .{ .text = "\"s1\"" };
-
 // cosa: one text column, that same column is the pk (all-pk: no update).
 const cosa = zigma.defineEntity(.{
     .pk = .{"cosa"},
@@ -62,7 +60,7 @@ test "insertFn: a typed INSERT builder for an entity with one column" {
     , cosa_insert_ts);
 }
 
-const cosa_insert_test_ts = ts.insertFnTest(minimal_ts_samples, "cosa", cosa_info);
+const cosa_insert_test_ts = ts.insertFnTest(zigma.common_type_defs, "cosa", cosa_info);
 
 test "insertFnTest: a TS test that the insert builder runs and returns a query object" {
     try expectEqualStrings(
@@ -72,6 +70,35 @@ test "insertFnTest: a TS test that the insert builder runs and returns a query o
         \\  assert.ok(Array.isArray(q.values));
         \\});
     , cosa_insert_test_ts);
+}
+
+// muestra: one field of each kind of Zig type behind a domain (slice, i64,
+// bool, struct), to check the sample literal derived from each type.
+const Punto = struct { x: i16, y: u16 };
+const muestra_type_defs = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{
+    .punto = zigma.TypeDef{ .Type = Punto },
+} }));
+const muestra = zigma.defineEntity(.{
+    .pk = .{"id"},
+    .fields = zigma.record(muestra_type_defs, .{
+        .id = .{ .type = "text" },
+        .cantidad = .{ .type = "integer" },
+        .activo = .{ .type = "boolean" },
+        .ubicacion = .{ .type = "punto" },
+    }),
+});
+const muestra_insert_test_ts = ts.insertFnTest(muestra_type_defs, "muestra", zigma.completeEntity(muestra));
+
+test "insertFnTest: the sample literal of each field is derived from its Zig type" {
+    // i64 is a TS bigint, hence 1n; a struct is an object literal, one sample
+    // per field.
+    try expectEqualStrings(
+        \\test("insertMuestra: returns a { text, values } query object", () => {
+        \\  const q = insertMuestra({ id: "s1", cantidad: 1n, activo: true, ubicacion: { x: 1, y: 1 } });
+        \\  assert.equal(typeof q.text, "string");
+        \\  assert.ok(Array.isArray(q.values));
+        \\});
+    , muestra_insert_test_ts);
 }
 
 // ---- selectByPk ----
@@ -102,7 +129,7 @@ test "selectByPkFn: composite pk -> WHERE a = $1 AND b = $2, in pk order" {
     , combo_select_by_pk_ts);
 }
 
-const cosa_select_by_pk_test_ts = ts.selectByPkFnTest(minimal_ts_samples, "cosa", cosa_info);
+const cosa_select_by_pk_test_ts = ts.selectByPkFnTest(zigma.common_type_defs, "cosa", cosa_info);
 
 test "selectByPkFnTest: a TS test that the selectByPk builder runs and returns a query object" {
     try expectEqualStrings(
@@ -169,7 +196,7 @@ test "updateFn: composite pk -> WHERE placeholders continue after the SET list" 
     , combo_update_ts);
 }
 
-const articulo_update_test_ts = ts.updateFnTest(minimal_ts_samples, "articulo", articulo_info);
+const articulo_update_test_ts = ts.updateFnTest(zigma.common_type_defs, "articulo", articulo_info);
 
 test "updateFnTest: a TS test that the update builder runs and returns a query object" {
     try expectEqualStrings(
@@ -196,7 +223,7 @@ test "deleteFn: DELETE ... WHERE the pk" {
     , cosa_delete_ts);
 }
 
-const cosa_delete_test_ts = ts.deleteFnTest(minimal_ts_samples, "cosa", cosa_info);
+const cosa_delete_test_ts = ts.deleteFnTest(zigma.common_type_defs, "cosa", cosa_info);
 
 test "deleteFnTest: a TS test that the delete builder runs and returns a query object" {
     try expectEqualStrings(
@@ -283,7 +310,7 @@ test "generateTsBackend: every builder of every entity, in declaration order" {
     , dos_entidades_ts);
 }
 
-const dos_entidades_tests_ts = ts.generateTsBackendTests(minimal_ts_samples, dos_entidades);
+const dos_entidades_tests_ts = ts.generateTsBackendTests(zigma.common_type_defs, dos_entidades);
 
 test "generateTsBackendTests: imports plus the generated test for every builder, in declaration order" {
     try expectEqualStrings(
