@@ -8,7 +8,7 @@ const sql_generator = @import("sql_generator");
 // A container-level const is always evaluated in comptime scope; calling
 // schemaSql from inside main (runtime scope) only yields a runtime copy of
 // the result, not comptime-known enough for its internal @field lookups.
-const schema_ddl = sql_generator.schemaSql(aida.sql_type_defs, aida.entity_defs);
+const schema_ddl = sql_generator.schemaSql(aida.type_defs, aida.entity_defs);
 
 // Writes to stdout, not std.debug.print (which always goes to stderr): the
 // `create-database` build step pipes this output into psql via

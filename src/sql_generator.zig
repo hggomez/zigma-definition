@@ -1,6 +1,6 @@
 //! DDL (CREATE TABLE) generation from zigma EntityInfo. Does not know about
-//! any concrete system: the domain-type -> SQL-type mapping is supplied by
-//! the caller, the same way a system supplies its own `type_defs` to zigma.
+//! any concrete system: it receives the system's `type_defs` and resolves each
+//! field's SQL type with `zig_type_map_sql.sqlType`.
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -16,8 +16,8 @@ fn isPkField(comptime pk: anytype, comptime name: []const u8) bool {
 /// Pk columns are always `NOT NULL` regardless of `field.nullable`: standard
 /// SQL implies it for the pk, but SQLite is the exception and does not
 /// enforce it unless declared explicitly.
-fn columnClause(comptime sql_types: anytype, comptime pk: anytype, comptime name: []const u8, comptime field: anytype) []const u8 {
-    const base = name ++ " " ++ sqlType(sql_types, field.type);
+fn columnClause(comptime type_defs: anytype, comptime pk: anytype, comptime name: []const u8, comptime field: anytype) []const u8 {
+    const base = name ++ " " ++ sqlType(type_defs, field.type);
     return if (field.nullable and !isPkField(pk, name)) base else base ++ " NOT NULL";
 }
 
@@ -54,14 +54,13 @@ fn appendClause(comptime acc: []const u8, comptime clause: []const u8) []const u
 /// Generates the `CREATE TABLE` statement for one entity: one line per
 /// field (with `NOT NULL` when `nullable: false`), then `PRIMARY KEY`, then
 /// one `UNIQUE` per uk, then one `FOREIGN KEY` per fk - in that order, each
-/// in declaration order. `sql_types` maps each domain type name used by
-/// `entity.fields` to its SQL type (e.g. `.{ .text = "TEXT" }`), the same
-/// way a system's `type_defs` maps them to Zig types.
-pub fn createTableSql(comptime sql_types: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+/// in declaration order. `type_defs` is the system's collection of domain
+/// types; each field's SQL type is resolved from it with `sqlType`.
+pub fn createTableSql(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     const field_names = @typeInfo(@TypeOf(entity.fields)).@"struct".field_names;
     comptime var clauses: []const u8 = "";
     inline for (field_names) |field_name| {
-        clauses = appendClause(clauses, columnClause(sql_types, entity.pk, field_name, @field(entity.fields, field_name)));
+        clauses = appendClause(clauses, columnClause(type_defs, entity.pk, field_name, @field(entity.fields, field_name)));
     }
     clauses = appendClause(clauses, columnListClause("PRIMARY KEY", entity.pk));
 
@@ -81,7 +80,7 @@ pub fn createTableSql(comptime sql_types: anytype, comptime name: []const u8, co
 /// Generates one `CREATE TABLE` per entity of `entity_defs` (as produced by
 /// `zigma.defineEntity`/`zigma.defineEntities`, not yet completed), in
 /// declaration order, separated by a blank line.
-pub fn schemaSql(comptime sql_types: anytype, comptime entity_defs: anytype) []const u8 {
+pub fn schemaSql(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     // completeEntity's fk-completion loop costs comptime branches per fk;
     // across a whole system's worth of entities that adds up past the
     // default 1000-branch quota (hit at aida's 11 entities).
@@ -91,7 +90,7 @@ pub fn schemaSql(comptime sql_types: anytype, comptime entity_defs: anytype) []c
     inline for (entity_names, 0..) |entity_name, i| {
         if (i > 0) statements = statements ++ "\n\n";
         const entity_info = zigma.completeEntity(@field(entity_defs, entity_name));
-        statements = statements ++ createTableSql(sql_types, entity_name, entity_info);
+        statements = statements ++ createTableSql(type_defs, entity_name, entity_info);
     }
     return statements;
 }

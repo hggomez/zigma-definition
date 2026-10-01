@@ -1,21 +1,34 @@
-//! Tests for the framework's Zig primitive type -> Postgres / TypeScript maps
-//! (`zig_type_map_sql.primitive_sql_types`, `zig_type_map_ts.primitive_ts_types`), looked up with
-//! the same `sqlType` / `tsType` used for a system's domain maps, keyed by
-//! `@typeName`. The unsupported types are covered as "does not compile" cases
+//! Tests for the type resolution of `zig_type_map_sql.sqlType` /
+//! `zig_type_map_ts.tsType`: all the conversion information lives in the
+//! framework's `sql_type_defs` / `ts_type_defs` (keyed by `@typeName` of the
+//! Zig type); a system only names its domains in `type_defs`, which resolve
+//! through their Zig type. The unmapped cases are "does not compile" cases
 //! (test/compile_errors/zig_type_map_*).
 
 const std = @import("std");
+const zigma = @import("zigma");
 const map_sql = @import("zig_type_map_sql");
 const map_ts = @import("zig_type_map_ts");
 const expectEqualStrings = std.testing.expectEqualStrings;
 
+const Punto = struct { x: i16, y: u16 };
+
+/// A minimal system: the framework's common types plus an alias of a
+/// primitive (`email`) and a struct-backed domain (`punto`).
+const type_defs = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{
+    .email = zigma.common_type_defs.text,
+    .punto = zigma.TypeDef{ .Type = Punto },
+} }));
+
 fn sqlTypeOf(comptime T: type) []const u8 {
-    return map_sql.sqlType(map_sql.primitive_sql_types, @typeName(T));
+    return map_sql.sqlType(type_defs, @typeName(T));
 }
 
 fn tsTypeOf(comptime T: type) []const u8 {
-    return map_ts.tsType(map_ts.primitive_ts_types, @typeName(T));
+    return map_ts.tsType(type_defs, @typeName(T));
 }
+
+// ---- Zig primitives, by @typeName ----
 
 test "bool maps to BOOLEAN / boolean" {
     try expectEqualStrings("BOOLEAN", sqlTypeOf(bool));
@@ -39,7 +52,38 @@ test "integers that fit in 32 signed bits but not 16 map to INTEGER / number" {
     try expectEqualStrings("number", tsTypeOf(i32));
 }
 
+test "i64 maps to BIGINT / bigint" {
+    // pg returns BIGINT as a string by default; the backend registers
+    // `pg.types.setTypeParser(20, BigInt)` so TS really sees a bigint.
+    try expectEqualStrings("BIGINT", sqlTypeOf(i64));
+    try expectEqualStrings("bigint", tsTypeOf(i64));
+}
+
 test "a byte slice maps to TEXT / string" {
     try expectEqualStrings("TEXT", sqlTypeOf([]const u8));
     try expectEqualStrings("string", tsTypeOf([]const u8));
+}
+
+// ---- named domains, resolved through their Zig type ----
+
+test "a common domain resolves through its Zig type" {
+    try expectEqualStrings("TEXT", map_sql.sqlType(type_defs, "text"));
+    try expectEqualStrings("BIGINT", map_sql.sqlType(type_defs, "integer"));
+    try expectEqualStrings("BOOLEAN", map_sql.sqlType(type_defs, "boolean"));
+    try expectEqualStrings("string", map_ts.tsType(type_defs, "text"));
+    try expectEqualStrings("bigint", map_ts.tsType(type_defs, "integer"));
+    try expectEqualStrings("boolean", map_ts.tsType(type_defs, "boolean"));
+}
+
+test "a system domain aliasing a primitive keeps its name and resolves through its Zig type" {
+    try expectEqualStrings("TEXT", map_sql.sqlType(type_defs, "email"));
+    try expectEqualStrings("string", map_ts.tsType(type_defs, "email"));
+}
+
+test "a struct-backed domain is the composite type named after the domain in SQL" {
+    try expectEqualStrings("punto", map_sql.sqlType(type_defs, "punto"));
+}
+
+test "a struct-backed domain is an inline object type in TS, one member per field" {
+    try expectEqualStrings("{ x: number; y: number }", map_ts.tsType(type_defs, "punto"));
 }

@@ -10,7 +10,6 @@ const aida = @import("aida");
 const ts = @import("ts_backend_generator");
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-const minimal_ts_types = .{ .text = "string" };
 const minimal_ts_samples = .{ .text = "\"s1\"" };
 
 // cosa: one text column, that same column is the pk (all-pk: no update).
@@ -50,7 +49,7 @@ const combo_info = zigma.completeEntity(combo);
 
 // ---- insert ----
 
-const cosa_insert_ts = ts.insertFn(minimal_ts_types, "cosa", cosa_info);
+const cosa_insert_ts = ts.insertFn(zigma.common_type_defs, "cosa", cosa_info);
 
 test "insertFn: a typed INSERT builder for an entity with one column" {
     try expectEqualStrings(
@@ -77,7 +76,7 @@ test "insertFnTest: a TS test that the insert builder runs and returns a query o
 
 // ---- selectByPk ----
 
-const cosa_select_by_pk_ts = ts.selectByPkFn(minimal_ts_types, "cosa", cosa_info);
+const cosa_select_by_pk_ts = ts.selectByPkFn(zigma.common_type_defs, "cosa", cosa_info);
 
 test "selectByPkFn: SELECT * ... WHERE the single pk column" {
     try expectEqualStrings(
@@ -90,7 +89,7 @@ test "selectByPkFn: SELECT * ... WHERE the single pk column" {
     , cosa_select_by_pk_ts);
 }
 
-const combo_select_by_pk_ts = ts.selectByPkFn(minimal_ts_types, "combo", combo_info);
+const combo_select_by_pk_ts = ts.selectByPkFn(zigma.common_type_defs, "combo", combo_info);
 
 test "selectByPkFn: composite pk -> WHERE a = $1 AND b = $2, in pk order" {
     try expectEqualStrings(
@@ -144,7 +143,7 @@ test "selectAllFnTest: a TS test that the selectAll builder runs and returns a q
 
 // ---- update ----
 
-const articulo_update_ts = ts.updateFn(minimal_ts_types, "articulo", articulo_info);
+const articulo_update_ts = ts.updateFn(zigma.common_type_defs, "articulo", articulo_info);
 
 test "updateFn: SET every non-pk column, WHERE the pk, placeholders SET-then-WHERE" {
     try expectEqualStrings(
@@ -157,7 +156,7 @@ test "updateFn: SET every non-pk column, WHERE the pk, placeholders SET-then-WHE
     , articulo_update_ts);
 }
 
-const combo_update_ts = ts.updateFn(minimal_ts_types, "combo", combo_info);
+const combo_update_ts = ts.updateFn(zigma.common_type_defs, "combo", combo_info);
 
 test "updateFn: composite pk -> WHERE placeholders continue after the SET list" {
     try expectEqualStrings(
@@ -184,7 +183,7 @@ test "updateFnTest: a TS test that the update builder runs and returns a query o
 
 // ---- delete ----
 
-const cosa_delete_ts = ts.deleteFn(minimal_ts_types, "cosa", cosa_info);
+const cosa_delete_ts = ts.deleteFn(zigma.common_type_defs, "cosa", cosa_info);
 
 test "deleteFn: DELETE ... WHERE the pk" {
     try expectEqualStrings(
@@ -215,7 +214,7 @@ test "deleteFnTest: a TS test that the delete builder runs and returns a query o
 // per-entity builder order, the update-skipped branch, and the order between
 // entities (declaration order).
 const dos_entidades = zigma.defineEntities(.{ .cosa = cosa, .articulo = articulo });
-const dos_entidades_ts = ts.generateTsBackend(minimal_ts_types, dos_entidades);
+const dos_entidades_ts = ts.generateTsBackend(zigma.common_type_defs, dos_entidades);
 
 test "generateTsBackend: every builder of every entity, in declaration order" {
     try expectEqualStrings(

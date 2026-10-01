@@ -29,11 +29,11 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
   (`src/zigma.zig`) pero `aida.sql_type_defs.integer` es `INTEGER` (32 bits): un valor
   mayor a ~2.1e9 desborda en Postgres. Lo honesto es `BIGINT`, pero `pg` devuelve
   `BIGINT` como `string` en TS. Opciones: `BIGINT`/`string`, o `BIGINT`/`bigint` con
-  `pg.types.setTypeParser(20, BigInt)`. Por ahora los mapas de primitivos (`zig_type_map_sql.primitive_sql_types` / `zig_type_map_ts.primitive_ts_types`) no mapean
+  `pg.types.setTypeParser(20, BigInt)`. Por ahora los mapas de primitivos (`zig_type_map_sql.sql_type_defs` / `zig_type_map_ts.ts_type_defs`) no mapean
   `i64` (no compila) hasta resolverlo.
 * Caso "no compila": un sistema que nombra un tipo de dominio igual que un primitivo de
   Zig (`.u8`, `.bool`, …) → `@compileError` propio en `defineTypes`. Hoy no hay colisión
-  real (el mapa de primitivos, `zig_type_map_sql.primitive_sql_types` / `zig_type_map_ts.primitive_ts_types`,
+  real (el mapa de primitivos, `zig_type_map_sql.sql_type_defs` / `zig_type_map_ts.ts_type_defs`,
   está separado del mapa de dominio del sistema), pero es confuso y queremos prohibirlo.
 * Los tipos TS generados ignoran `nullable` (`insertCursos` declara `docente: string`
   aunque es nullable): deberían ser `T | null`.

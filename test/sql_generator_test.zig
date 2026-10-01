@@ -9,7 +9,6 @@ const aida = @import("aida");
 const sql = @import("sql_generator");
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-const minimal_sql_types = .{ .text = "TEXT" };
 
 const cosa = zigma.defineEntity(.{
     .pk = .{"cosa"},
@@ -24,9 +23,9 @@ const cosa = zigma.defineEntity(.{
 // call itself needs to happen here too, not inside the test body: calling a
 // zigma-style comptime function from a runtime scope only yields a runtime
 // copy of its result, which is not comptime-known enough for createTableSql
-// to do `@field(sql_types, field.type)` internally.
+// to resolve `field.type` against `type_defs` internally.
 const cosa_info = zigma.completeEntity(cosa);
-const cosa_ddl = sql.createTableSql(minimal_sql_types, "cosa", cosa_info);
+const cosa_ddl = sql.createTableSql(zigma.common_type_defs, "cosa", cosa_info);
 
 test "generates a CREATE TABLE with the entity's single column and its SQL type" {
     try expectEqualStrings(
@@ -37,7 +36,6 @@ test "generates a CREATE TABLE with the entity's single column and its SQL type"
     , cosa_ddl);
 }
 
-const varias_sql_types = .{ .text = "TEXT", .integer = "INTEGER", .boolean = "BOOLEAN" };
 
 const varias = zigma.defineEntity(.{
     .pk = .{"id"},
@@ -48,13 +46,13 @@ const varias = zigma.defineEntity(.{
     }),
 });
 const varias_info = zigma.completeEntity(varias);
-const varias_ddl = sql.createTableSql(varias_sql_types, "varias", varias_info);
+const varias_ddl = sql.createTableSql(zigma.common_type_defs, "varias", varias_info);
 
 test "maps each field to the SQL type that corresponds to it, not just the first one" {
     try expectEqualStrings(
         \\CREATE TABLE varias (
         \\    id TEXT NOT NULL,
-        \\    cantidad INTEGER,
+        \\    cantidad BIGINT,
         \\    activo BOOLEAN,
         \\    PRIMARY KEY (id)
         \\);
@@ -64,7 +62,7 @@ test "maps each field to the SQL type that corresponds to it, not just the first
 // cosa and varias are independent (no fk between them): fk clauses are a
 // later step, this one only checks the multi-entity aggregation.
 const dos_entidades = zigma.defineEntities(.{ .cosa = cosa, .varias = varias });
-const dos_entidades_ddl = sql.schemaSql(varias_sql_types, dos_entidades);
+const dos_entidades_ddl = sql.schemaSql(zigma.common_type_defs, dos_entidades);
 
 test "schemaSql generates one CREATE TABLE per entity, in declaration order, for more than one entity" {
     try expectEqualStrings(
@@ -75,7 +73,7 @@ test "schemaSql generates one CREATE TABLE per entity, in declaration order, for
         \\
         \\CREATE TABLE varias (
         \\    id TEXT NOT NULL,
-        \\    cantidad INTEGER,
+        \\    cantidad BIGINT,
         \\    activo BOOLEAN,
         \\    PRIMARY KEY (id)
         \\);
@@ -83,9 +81,9 @@ test "schemaSql generates one CREATE TABLE per entity, in declaration order, for
 }
 
 // aida.fecha is backed by a nested struct (Fecha{ año, mes, día }), not a
-// primitive; createTableSql never looks at the underlying Zig type (only at
-// the domain type name), so it maps to one opaque SQL column same as any
-// other type - the system decides how the value gets serialized into it.
+// primitive: its column is the Postgres composite type named after the
+// domain (`fecha`). The `CREATE TYPE` itself is not emitted yet (plan B,
+// see GOALS.md). `integer` is i64, hence BIGINT.
 const con_todos_los_tipos = zigma.defineEntity(.{
     .pk = .{"id"},
     .fields = zigma.record(aida.type_defs, .{
@@ -97,15 +95,15 @@ const con_todos_los_tipos = zigma.defineEntity(.{
     }),
 });
 const con_todos_los_tipos_info = zigma.completeEntity(con_todos_los_tipos);
-const con_todos_los_tipos_ddl = sql.createTableSql(aida.sql_type_defs, "con_todos_los_tipos", con_todos_los_tipos_info);
+const con_todos_los_tipos_ddl = sql.createTableSql(aida.type_defs, "con_todos_los_tipos", con_todos_los_tipos_info);
 
 test "maps every domain type of the system to SQL, including one backed by a nested struct (fecha)" {
     try expectEqualStrings(
         \\CREATE TABLE con_todos_los_tipos (
         \\    id TEXT NOT NULL,
-        \\    cantidad INTEGER,
+        \\    cantidad BIGINT,
         \\    activo BOOLEAN,
-        \\    fecha_de_alta TEXT,
+        \\    fecha_de_alta fecha,
         \\    contacto TEXT,
         \\    PRIMARY KEY (id)
         \\);
@@ -115,7 +113,7 @@ test "maps every domain type of the system to SQL, including one backed by a nes
 // aida.alumnos has no fks/uks: isolates NOT NULL from the other pending
 // clauses, so this test won't need updating again once fks/uks land.
 const alumnos_info = zigma.completeEntity(aida.alumnos);
-const alumnos_ddl = sql.createTableSql(aida.sql_type_defs, "alumnos", alumnos_info);
+const alumnos_ddl = sql.createTableSql(aida.type_defs, "alumnos", alumnos_info);
 
 test "NOT NULL for nullable: false fields, omitted for the nullable: true default" {
     try expectEqualStrings(
@@ -139,7 +137,7 @@ const combinacion = zigma.defineEntity(.{
     }),
 });
 const combinacion_info = zigma.completeEntity(combinacion);
-const combinacion_ddl = sql.createTableSql(minimal_sql_types, "combinacion", combinacion_info);
+const combinacion_ddl = sql.createTableSql(zigma.common_type_defs, "combinacion", combinacion_info);
 
 test "PRIMARY KEY lists every pk field, in order, for a composite pk" {
     try expectEqualStrings(
@@ -155,7 +153,7 @@ test "PRIMARY KEY lists every pk field, in order, for a composite pk" {
 // aida.materias has a uk and no fks: isolates UNIQUE (and exercises NOT
 // NULL again, on denominacion) from FK work.
 const materias_info = zigma.completeEntity(aida.materias);
-const materias_ddl = sql.createTableSql(aida.sql_type_defs, "materias", materias_info);
+const materias_ddl = sql.createTableSql(aida.type_defs, "materias", materias_info);
 
 test "UNIQUE from uks" {
     try expectEqualStrings(
@@ -185,7 +183,7 @@ const hijo = zigma.defineEntity(.{
     }),
 });
 const hijo_info = zigma.completeEntity(hijo);
-const hijo_ddl = sql.createTableSql(minimal_sql_types, "hijo", hijo_info);
+const hijo_ddl = sql.createTableSql(zigma.common_type_defs, "hijo", hijo_info);
 
 test "FOREIGN KEY when the source and target field are named the same" {
     try expectEqualStrings(
@@ -210,7 +208,7 @@ const persona = zigma.defineEntity(.{
     }),
 });
 const persona_info = zigma.completeEntity(persona);
-const persona_ddl = sql.createTableSql(minimal_sql_types, "persona", persona_info);
+const persona_ddl = sql.createTableSql(zigma.common_type_defs, "persona", persona_info);
 
 test "FOREIGN KEY with a renamed source field (reflexive fk)" {
     try expectEqualStrings(
@@ -244,7 +242,7 @@ const disputa = zigma.defineEntity(.{
     }),
 });
 const disputa_info = zigma.completeEntity(disputa);
-const disputa_ddl = sql.createTableSql(minimal_sql_types, "disputa", disputa_info);
+const disputa_ddl = sql.createTableSql(zigma.common_type_defs, "disputa", disputa_info);
 
 test "two distinct fks to the same target entity do not overwrite each other" {
     try expectEqualStrings(
@@ -283,7 +281,7 @@ const nodo_b = zigma.defineEntity(.{
     }),
 });
 const ciclo = zigma.defineEntities(.{ .nodo_a = nodo_a, .nodo_b = nodo_b });
-const ciclo_ddl = sql.schemaSql(minimal_sql_types, ciclo);
+const ciclo_ddl = sql.schemaSql(zigma.common_type_defs, ciclo);
 
 test "cyclic fks between two distinct entities generate both CREATE TABLEs" {
     try expectEqualStrings(
@@ -303,7 +301,7 @@ test "cyclic fks between two distinct entities generate both CREATE TABLEs" {
     , ciclo_ddl);
 }
 
-const aida_schema_ddl = sql.schemaSql(aida.sql_type_defs, aida.entity_defs);
+const aida_schema_ddl = sql.schemaSql(aida.type_defs, aida.entity_defs);
 
 test "generates the full aida schema: one CREATE TABLE per entity, in declaration order" {
     try expectEqualStrings(
@@ -344,8 +342,8 @@ test "generates the full aida schema: one CREATE TABLE per entity, in declaratio
         \\CREATE TABLE clases (
         \\    periodo TEXT NOT NULL,
         \\    materia TEXT NOT NULL,
-        \\    orden INTEGER NOT NULL,
-        \\    fecha TEXT,
+        \\    orden BIGINT NOT NULL,
+        \\    fecha fecha,
         \\    tema TEXT,
         \\    PRIMARY KEY (periodo, materia, orden),
         \\    FOREIGN KEY (periodo, materia) REFERENCES cursos(periodo, materia)
@@ -362,8 +360,8 @@ test "generates the full aida schema: one CREATE TABLE per entity, in declaratio
         \\CREATE TABLE preguntas (
         \\    periodo TEXT NOT NULL,
         \\    materia TEXT NOT NULL,
-        \\    orden INTEGER NOT NULL,
-        \\    pregunta INTEGER NOT NULL,
+        \\    orden BIGINT NOT NULL,
+        \\    pregunta BIGINT NOT NULL,
         \\    formulacion TEXT NOT NULL,
         \\    aclaraciones TEXT,
         \\    tipo_respuesta TEXT NOT NULL,
@@ -374,8 +372,8 @@ test "generates the full aida schema: one CREATE TABLE per entity, in declaratio
         \\CREATE TABLE opciones (
         \\    periodo TEXT NOT NULL,
         \\    materia TEXT NOT NULL,
-        \\    orden INTEGER NOT NULL,
-        \\    pregunta INTEGER NOT NULL,
+        \\    orden BIGINT NOT NULL,
+        \\    pregunta BIGINT NOT NULL,
         \\    opcion TEXT NOT NULL,
         \\    detalle TEXT,
         \\    PRIMARY KEY (periodo, materia, orden, pregunta, opcion),
@@ -395,7 +393,7 @@ test "generates the full aida schema: one CREATE TABLE per entity, in declaratio
         \\    periodo TEXT NOT NULL,
         \\    materia TEXT NOT NULL,
         \\    alumno TEXT NOT NULL,
-        \\    orden INTEGER NOT NULL,
+        \\    orden BIGINT NOT NULL,
         \\    PRIMARY KEY (periodo, materia, alumno, orden),
         \\    FOREIGN KEY (periodo, materia, alumno) REFERENCES inscripciones(periodo, materia, alumno),
         \\    FOREIGN KEY (periodo, materia, orden) REFERENCES clases(periodo, materia, orden)
@@ -404,7 +402,7 @@ test "generates the full aida schema: one CREATE TABLE per entity, in declaratio
         \\CREATE TABLE mesas (
         \\    periodo TEXT NOT NULL,
         \\    materia TEXT NOT NULL,
-        \\    fecha TEXT NOT NULL,
+        \\    fecha fecha NOT NULL,
         \\    presidente TEXT,
         \\    vocal TEXT,
         \\    PRIMARY KEY (periodo, materia, fecha),

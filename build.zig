@@ -43,6 +43,8 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "sql_unknown_type_mapping.zig", .expected = "type 'text' has no SQL mapping" },
     .{ .file = "zig_type_map_sql_unsupported.zig", .expected = "type 'f32' has no SQL mapping" },
     .{ .file = "zig_type_map_ts_unsupported.zig", .expected = "type 'f32' has no TS mapping" },
+    .{ .file = "zig_type_map_sql_domain_unsupported.zig", .expected = "type 'f32' has no SQL mapping" },
+    .{ .file = "zig_type_map_sql_unknown_name.zig", .expected = "type 'inexistente' has no SQL mapping" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -143,6 +145,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
                 .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
                 .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
             },

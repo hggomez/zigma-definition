@@ -1,8 +1,9 @@
 //! DML entry-point generation as TypeScript source, from zigma EntityInfo.
 //! Sibling of `sql_generator.zig` (which emits DDL): same idea, but the output
-//! string is TypeScript code instead of a `CREATE TABLE` statement. The
-//! domain-type -> TS-type and domain-type -> sample-literal mappings are
-//! supplied by the caller, the same way `sql_generator` takes `sql_types`.
+//! string is TypeScript code instead of a `CREATE TABLE` statement. Each
+//! field's TS type is resolved from the system's `type_defs` with
+//! `zig_type_map_ts.tsType`; the sample literals for the generated tests are
+//! still supplied by the caller, keyed by domain type name.
 //!
 //! Per entity the generator emits up to five parameterized builders, each
 //! returning the `{ text, values }` shape a `pg` query call takes:
@@ -12,14 +13,13 @@
 const std = @import("std");
 const zigma = @import("zigma");
 
-// ---- domain-type maps, supplied by the system (like sql_types) ----
+// ---- type resolution ----
 
 const tsType = @import("zig_type_map_ts").tsType;
 
 /// A sample literal for a domain type, for the generated tests to feed the
 /// builders (the value only has to type-check, not be meaningful).
-/// `ts_samples` is supplied by the caller keyed by domain type name, the same
-/// way `ts_types` / `sql_types` are.
+/// `ts_samples` is supplied by the caller keyed by domain type name.
 fn tsSample(comptime ts_samples: anytype, comptime type_name: []const u8) []const u8 {
     if (!@hasField(@TypeOf(ts_samples), type_name))
         @compileError("type '" ++ type_name ++ "' has no TS sample");
@@ -71,23 +71,23 @@ fn hasNonPkColumns(comptime entity: anytype) bool {
 }
 
 /// `a: string, b: string` for the pk columns, in pk order.
-fn pkTypedParams(comptime ts_types: anytype, comptime entity: anytype) []const u8 {
+fn pkTypedParams(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = "";
     inline for (entity.pk, 0..) |col, i| {
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ col ++ ": " ++ tsType(ts_types, @field(entity.fields, col).type);
+        out = out ++ sep ++ col ++ ": " ++ tsType(type_defs, @field(entity.fields, col).type);
     }
     return out;
 }
 
 /// `nombre: string` for the non-pk columns, in declaration order.
-fn nonPkTypedParams(comptime ts_types: anytype, comptime entity: anytype) []const u8 {
+fn nonPkTypedParams(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = "";
     comptime var i: usize = 0;
     inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |col| {
         if (comptime isPkColumn(entity, col)) continue;
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ col ++ ": " ++ tsType(ts_types, @field(entity.fields, col).type);
+        out = out ++ sep ++ col ++ ": " ++ tsType(type_defs, @field(entity.fields, col).type);
         i += 1;
     }
     return out;
@@ -183,10 +183,10 @@ fn queryFn(comptime fn_name: []const u8, comptime params: []const u8, comptime t
         "}";
 }
 
-/// Parameterized `INSERT` builder for one entity. `ts_types` maps each domain
-/// type name to its TS type (e.g. `.{ .text = "string" }`), like a system's
-/// `type_defs` maps them to Zig types.
-pub fn insertFn(comptime ts_types: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+/// Parameterized `INSERT` builder for one entity. `type_defs` is the system's
+/// collection of domain types; each field's TS type is resolved from it with
+/// `tsType`.
+pub fn insertFn(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     const field_names = @typeInfo(@TypeOf(entity.fields)).@"struct".field_names;
 
     comptime var params: []const u8 = "";
@@ -195,7 +195,7 @@ pub fn insertFn(comptime ts_types: anytype, comptime name: []const u8, comptime 
     comptime var values: []const u8 = "";
     inline for (field_names, 0..) |field_name, i| {
         const sep = if (i > 0) ", " else "";
-        params = params ++ sep ++ field_name ++ ": " ++ tsType(ts_types, @field(entity.fields, field_name).type);
+        params = params ++ sep ++ field_name ++ ": " ++ tsType(type_defs, @field(entity.fields, field_name).type);
         columns = columns ++ sep ++ "\"" ++ field_name ++ "\"";
         placeholders = placeholders ++ sep ++ std.fmt.comptimePrint("${d}", .{i + 1});
         values = values ++ sep ++ "row." ++ field_name;
@@ -210,10 +210,10 @@ pub fn insertFn(comptime ts_types: anytype, comptime name: []const u8, comptime 
 }
 
 /// Parameterized `SELECT * ... WHERE <pk>` builder for one entity.
-pub fn selectByPkFn(comptime ts_types: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+pub fn selectByPkFn(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     return queryFn(
         opFnName("select", name, "ByPk"),
-        "pk: { " ++ pkTypedParams(ts_types, entity) ++ " }",
+        "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }",
         "SELECT * FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(entity, 0),
         pkAccessors(entity, "pk"),
     );
@@ -232,20 +232,20 @@ pub fn selectAllFn(comptime name: []const u8) []const u8 {
 /// Parameterized full-row `UPDATE` builder: every non-pk column in `SET`,
 /// the pk in `WHERE`. Not meaningful for an all-pk entity (nothing to set) -
 /// callers should guard with `hasNonPkColumns`.
-pub fn updateFn(comptime ts_types: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+pub fn updateFn(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     return queryFn(
         opFnName("update", name, ""),
-        "pk: { " ++ pkTypedParams(ts_types, entity) ++ " }, row: { " ++ nonPkTypedParams(ts_types, entity) ++ " }",
+        "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }, row: { " ++ nonPkTypedParams(type_defs, entity) ++ " }",
         "UPDATE \"" ++ name ++ "\" SET " ++ nonPkAssignments(entity) ++ " WHERE " ++ pkWhere(entity, nonPkCount(entity)),
         nonPkAccessors(entity, "row") ++ ", " ++ pkAccessors(entity, "pk"),
     );
 }
 
 /// Parameterized `DELETE ... WHERE <pk>` builder for one entity.
-pub fn deleteFn(comptime ts_types: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+pub fn deleteFn(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     return queryFn(
         opFnName("delete", name, ""),
-        "pk: { " ++ pkTypedParams(ts_types, entity) ++ " }",
+        "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }",
         "DELETE FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(entity, 0),
         pkAccessors(entity, "pk"),
     );
@@ -293,12 +293,12 @@ pub fn deleteFnTest(comptime ts_samples: anytype, comptime name: []const u8, com
 
 /// Every builder for one entity, in the order insert, selectByPk, selectAll,
 /// update (when applicable), delete; blank-line separated.
-fn entityBuilders(comptime ts_types: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
-    comptime var out: []const u8 = insertFn(ts_types, name, entity);
-    out = out ++ "\n\n" ++ selectByPkFn(ts_types, name, entity);
+fn entityBuilders(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+    comptime var out: []const u8 = insertFn(type_defs, name, entity);
+    out = out ++ "\n\n" ++ selectByPkFn(type_defs, name, entity);
     out = out ++ "\n\n" ++ selectAllFn(name);
-    if (hasNonPkColumns(entity)) out = out ++ "\n\n" ++ updateFn(ts_types, name, entity);
-    out = out ++ "\n\n" ++ deleteFn(ts_types, name, entity);
+    if (hasNonPkColumns(entity)) out = out ++ "\n\n" ++ updateFn(type_defs, name, entity);
+    out = out ++ "\n\n" ++ deleteFn(type_defs, name, entity);
     return out;
 }
 
@@ -327,13 +327,13 @@ fn entityBuilderTests(comptime ts_samples: anytype, comptime name: []const u8, c
 /// `entity_defs` (as produced by `zigma.defineEntity`/`defineEntities`, not
 /// yet completed), in declaration order, blank-line separated. The `schemaSql`
 /// of the TypeScript side. No header, for parity with `sql_generator`.
-pub fn generateTsBackend(comptime ts_types: anytype, comptime entity_defs: anytype) []const u8 {
+pub fn generateTsBackend(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     @setEvalBranchQuota(100000);
     const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
     comptime var module: []const u8 = "";
     inline for (entity_names, 0..) |entity_name, i| {
         if (i > 0) module = module ++ "\n\n";
-        module = module ++ entityBuilders(ts_types, entity_name, zigma.completeEntity(@field(entity_defs, entity_name)));
+        module = module ++ entityBuilders(type_defs, entity_name, zigma.completeEntity(@field(entity_defs, entity_name)));
     }
     return module;
 }
