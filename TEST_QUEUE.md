@@ -20,9 +20,23 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
 * Contra Postgres real (la base es el oráculo, ya no string-assert). Hecho: insert→
   selectByPk ida y vuelta (`periodos`). Falta: `update` toca solo las columnas nombradas,
   `delete` y después selectByPk → vacío, violación de uk (`materias.denominacion`) y de fk
-  mapeadas a error de dominio, `fecha` por una columna `TEXT` (hoy se rompe: `pg` recibe el
-  objeto crudo), entidad de pk compuesta (`inscripciones`, necesita `cursos`+`alumnos`
-  antes por las fks).
+  mapeadas a error de dominio, entidad de pk compuesta (`inscripciones`, necesita
+  `cursos`+`alumnos` antes por las fks). En curso: ida y vuelta de `fecha` (test rojo
+  escrito, `clases`); se arregla con tipos compuestos de Postgres, ver la decisión en
+  `GOALS.md`. Pendientes de esa misma decisión: `fecha` en una pk (`mesas`, keys en otro
+  orden), `fecha` nullable en `NULL`, y que la columna sea el compuesto y no `TEXT`.
+* Inconsistencia de enteros de 64 bits: `common_type_defs.integer` es `i64`
+  (`src/zigma.zig`) pero `aida.sql_type_defs.integer` es `INTEGER` (32 bits): un valor
+  mayor a ~2.1e9 desborda en Postgres. Lo honesto es `BIGINT`, pero `pg` devuelve
+  `BIGINT` como `string` en TS. Opciones: `BIGINT`/`string`, o `BIGINT`/`bigint` con
+  `pg.types.setTypeParser(20, BigInt)`. Por ahora los mapas de primitivos (`zig_type_map_sql.primitive_sql_types` / `zig_type_map_ts.primitive_ts_types`) no mapean
+  `i64` (no compila) hasta resolverlo.
+* Caso "no compila": un sistema que nombra un tipo de dominio igual que un primitivo de
+  Zig (`.u8`, `.bool`, …) → `@compileError` propio en `defineTypes`. Hoy no hay colisión
+  real (el mapa de primitivos, `zig_type_map_sql.primitive_sql_types` / `zig_type_map_ts.primitive_ts_types`,
+  está separado del mapa de dominio del sistema), pero es confuso y queremos prohibirlo.
+* Los tipos TS generados ignoran `nullable` (`insertCursos` declara `docente: string`
+  aunque es nullable): deberían ser `T | null`.
 * `apply_aida_schema` (usado por `create-database` y `ts-backend-db`) no es idempotente:
   el DDL es `CREATE TABLE`, no `CREATE TABLE IF NOT EXISTS`, así que re-correrlo sobre una
   base ya creada tira `relation "x" already exists` (psql sigue igual, exit 0, pero

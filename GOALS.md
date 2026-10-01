@@ -145,12 +145,85 @@ igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` 
   `{ text, values }` y el script los corre con `pool.query(text, values)` directo; no hay
   capa de ejecución todavía (aparece cuando un segundo test la necesite).
 
-**Falta** para completar la interfaz de DML: más casos de integración (update toca solo lo
-nombrado, delete→selectByPk vacío, violación de uk/fk como error de dominio, entidad de pk
-compuesta), y el codec de `fecha` (hoy `insertClases` pasa el objeto `{ año, mes, día }`
-crudo a una columna `TEXT` — `pg` lo stringify a `"[object Object]"`; hay que serializar).
-Después: el resto del backend (endpoints HTTP) y el interop TS → Zig para las reglas de
-dominio.
+**Falta** para completar la interfaz de DML: el codec de los tipos compuestos (`fecha`, ver
+la decisión abajo) y más casos de integración (update toca solo lo nombrado,
+delete→selectByPk vacío, violación de uk/fk como error de dominio, entidad de pk
+compuesta). Después: el resto del backend (endpoints HTTP) y el interop TS → Zig para las
+reglas de dominio.
+
+### Decisión: tipos de dominio compuestos (structs) en Postgres y en TS
+
+**El bug que la motivó.** `fecha` es un struct en Zig (`Fecha { año, mes, día }`), un
+objeto en TS (`ts_type_defs`) y una columna `TEXT` en Postgres (`sql_type_defs`), sin
+nada que convierta entre las tres. Los builders pasan el objeto crudo como parámetro; `pg`
+lo manda como JSON, la columna guarda `'{"año":2026,"mes":3,"día":14}'` y el `SELECT`
+devuelve ese string, no el objeto. Peor en `mesas`, donde `fecha` es parte de la pk: el
+`WHERE "fecha" = $n` compara contra un `JSON.stringify` que depende del orden de las keys
+del objeto, así que la misma fecha con las keys en otro orden no encuentra la fila. Test
+rojo que lo muestra: `test/db_backend_integration_test.zig`, "a fecha column round-trips
+as { año, mes, día }".
+
+**Decisión: generalizar a cualquier tipo de dominio respaldado por un struct, con el
+codec en SQL (opción "B").**
+
+* En la base, cada struct es un **tipo compuesto** de Postgres, derivado por reflexión
+  del struct de Zig y emitido antes de las tablas:
+  `CREATE TYPE "fecha" AS ("año" INTEGER, "mes" SMALLINT, "día" SMALLINT)`. La columna es
+  de ese tipo, no `TEXT`. Esto cambia una decisión del hito 1: `sql_generator.zig` deja de
+  ignorar el `Type` de Zig subyacente cuando es un struct.
+* El codec vive en **el texto SQL de cada builder**; el TS generado no tiene lógica de
+  conversión por tipo:
+  * *Encode* (backend → base): un parámetro por campo hoja y el valor armado en SQL,
+    `ROW($4::integer, $5::smallint, $6::smallint)::"fecha"` (casts explícitos para que
+    Postgres infiera los tipos de los parámetros). En `values` van
+    `row.fecha.año, row.fecha.mes, row.fecha.día`. Mismo encode en los `WHERE` de pk
+    (`mesas`): ya no depende del orden de las keys. Si la columna es nullable:
+    `CASE WHEN $4::integer IS NULL THEN NULL ELSE ROW(...)::"fecha" END`
+    (`ROW(NULL, NULL, NULL)` no es lo mismo que `NULL`).
+  * *Decode* (base → backend): `to_jsonb("fecha") AS "fecha"` en los `SELECT`; `pg` ya
+    convierte `jsonb` en objeto JS. Por eso los `SELECT *` pasan a listar las columnas.
+  * Consecuencia: un placeholder por campo hoja, no por columna (ajusta el invariante
+    "un `$n` por columna" de `TEST_QUEUE.md`).
+* Descartadas: codec en TS (parsear el formato texto de records de Postgres `'(…)'`, con
+  quoting/escaping/NULL/anidados, y registrar un parser por OID, que es distinto en cada
+  base: lo más frágil) y mixto (se queda con la parte difícil de la opción TS). Variante
+  considerada para el encode: un solo parámetro JSON con
+  `jsonb_populate_record(NULL::"fecha", $4::jsonb)` (SQL más corto, match por nombre, pero
+  el input inválido falla recién dentro de Postgres y el NULL hay que verificarlo).
+* **Tipo de cada campo del struct: decidido.** Los campos de `Fecha` son tipos de Zig
+  (`u16`, `u8`), no tipos de dominio. El framework provee un mapeo de primitivos de Zig a
+  su tipo Postgres y su tipo TS (`u8`→`SMALLINT`/`number`, `u16`→`INTEGER`/`number`
+  porque no entra en `SMALLINT`, etc.), que consultan los generadores. Se descartó exigir
+  que los campos de un struct sean a su vez tipos de dominio.
+
+**Decisión a futuro: un `fecha` propio del framework sobre `DATE`.** Más adelante `zigma`
+va a ofrecer su propio tipo fecha (en `common_type_defs` o similar) que en Postgres use el
+tipo nativo `DATE` (validación, orden, funciones de fecha), en vez del compuesto genérico.
+El mecanismo de arriba ya lo admite: el codec de un tipo es un par de expresiones SQL con
+la misma interfaz (parámetros por campo → columna; columna → JSON), y el compuesto es solo
+el default derivado del struct. Un tipo puede declarar su propio par:
+
+| tipo | encode | decode |
+|---|---|---|
+| struct cualquiera (default) | `ROW($a, $m, $d)::"fecha"` | `to_jsonb("fecha")` |
+| `fecha` del framework → `DATE` | `make_date($a, $m, $d)` | `jsonb_build_object('año', extract(year from "fecha")::int, …)` |
+
+El TS generado no cambia entre uno y otro.
+
+Para ese `fecha` se evaluó usar la conversión por defecto de `pg` (`DATE` ↔ `Date` de JS,
+sin codec propio) y se descartó: un `Date` es un instante, no una fecha de calendario, y
+encode/decode usan la zona horaria del proceso Node (`new Date('2026-03-14')` en UTC-3 se
+guarda como `2026-03-13`; backend en contenedor UTC vs host en -03 dan días distintos).
+Lo preferido para ese tipo: `DATE` en Postgres con `pg.types.setTypeParser(1082, s => s)`,
+o el par encode/decode de la tabla, de modo que TS nunca vea un `Date`.
+
+**Dónde están hoy los mapeos de tipos** (contexto de la decisión). No hay un mapa
+Postgres↔TS: cada sistema declara, por tipo de dominio, mapas paralelos en `aida.zig`
+(`type_defs` → Zig, `sql_type_defs` → Postgres, `ts_type_defs` → TS, `ts_sample_defs` →
+literal de ejemplo), unidos por el nombre del tipo de dominio. La conversión real en el
+cable la hace `pg` con sus parsers por defecto, implícitos y fuera de nuestro código
+(`INTEGER`→`number`, `BOOLEAN`→`boolean`, `TEXT`→`string`, `jsonb`→objeto; ojo,
+`BIGINT`→`string` y `DATE`→`Date` en hora local).
 
 ### Decisiones previas
 

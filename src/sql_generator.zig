@@ -4,12 +4,7 @@
 
 const std = @import("std");
 const zigma = @import("zigma");
-
-fn sqlType(comptime sql_types: anytype, comptime type_name: []const u8) []const u8 {
-    if (!@hasField(@TypeOf(sql_types), type_name))
-        @compileError("type '" ++ type_name ++ "' has no SQL mapping");
-    return @field(sql_types, type_name);
-}
+const sqlType = @import("zig_type_map_sql").sqlType;
 
 fn isPkField(comptime pk: anytype, comptime name: []const u8) bool {
     inline for (pk) |pk_name| {

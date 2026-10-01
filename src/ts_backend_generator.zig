@@ -14,11 +14,7 @@ const zigma = @import("zigma");
 
 // ---- domain-type maps, supplied by the system (like sql_types) ----
 
-fn tsType(comptime ts_types: anytype, comptime type_name: []const u8) []const u8 {
-    if (!@hasField(@TypeOf(ts_types), type_name))
-        @compileError("type '" ++ type_name ++ "' has no TS mapping");
-    return @field(ts_types, type_name);
-}
+const tsType = @import("zig_type_map_ts").tsType;
 
 /// A sample literal for a domain type, for the generated tests to feed the
 /// builders (the value only has to type-check, not be meaningful).

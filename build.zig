@@ -41,6 +41,8 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "validar_cargo_missing_field.zig", .expected = at("validar_cargo_missing_field.zig") },
     .{ .file = "defined_type_no_field.zig", .expected = at("defined_type_no_field.zig") },
     .{ .file = "sql_unknown_type_mapping.zig", .expected = "type 'text' has no SQL mapping" },
+    .{ .file = "zig_type_map_sql_unsupported.zig", .expected = "type 'f32' has no SQL mapping" },
+    .{ .file = "zig_type_map_ts_unsupported.zig", .expected = "type 'f32' has no TS mapping" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -62,12 +64,25 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const zig_type_map_sql_mod = b.addModule("zig_type_map_sql", .{
+        .root_source_file = b.path("src/zig_type_map_sql.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const zig_type_map_ts_mod = b.addModule("zig_type_map_ts", .{
+        .root_source_file = b.path("src/zig_type_map_ts.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const sql_generator_mod = b.addModule("sql_generator", .{
         .root_source_file = b.path("src/sql_generator.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zigma", .module = zigma_mod },
+            .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
         },
     });
 
@@ -77,6 +92,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zigma", .module = zigma_mod },
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
         },
     });
 
@@ -120,6 +136,19 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_ts_backend_generator_tests = b.addRunArtifact(ts_backend_generator_tests);
+
+    const zig_type_map_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/zig_type_map_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
+                .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+            },
+        }),
+    });
+    const run_zig_type_map_tests = b.addRunArtifact(zig_type_map_tests);
 
     const print_schema_exe = b.addExecutable(.{
         .name = "print_schema",
@@ -234,6 +263,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_sql_generator_tests.step);
     test_step.dependOn(&run_ts_backend_generator_tests.step);
+    test_step.dependOn(&run_zig_type_map_tests.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{
@@ -246,6 +276,8 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "zigma", .module = zigma_mod },
                     .{ .name = "aida", .module = aida_mod },
                     .{ .name = "sql_generator", .module = sql_generator_mod },
+                    .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
+                    .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
                 },
             }),
         });

@@ -35,9 +35,48 @@ const roundtrip_script =
     \\}
 ;
 
-test "generated DML builders round-trip against the docker-compose Postgres" {
+// Same pattern for a `fecha` column (domain type backed by a nested struct,
+// TS `{ año, mes, día }`): insert a `clases` row (after the periodos /
+// materias / cursos rows its fk chain needs) -> selectByPk -> the `fecha` read
+// back must be the same `{ año, mes, día }` that went in. Prints FECHA_OK.
+const fecha_roundtrip_script =
+    \\import {
+    \\  insertPeriodos, deletePeriodos, insertMaterias, deleteMaterias,
+    \\  insertCursos, deleteCursos, insertClases, selectClasesByPk, deleteClases,
+    \\} from './src/dml.ts';
+    \\import { deepStrictEqual } from 'node:assert';
+    \\import pg from 'pg';
+    \\const connectionString = process.env.DATABASE_URL ?? 'postgres://aida:aida@localhost:5432/aida';
+    \\const pool = new pg.Pool({ connectionString });
+    \\const run = (q) => pool.query(q.text, q.values);
+    \\const periodo = 'it-' + Date.now();
+    \\const materia = periodo;
+    \\const curso = { periodo, materia };
+    \\const clase = { ...curso, orden: 1 };
+    \\const fecha = { año: 2026, mes: 3, día: 14 };
+    \\try {
+    \\  await run(insertPeriodos({ periodo }));
+    \\  await run(insertMaterias({ materia, denominacion: materia }));
+    \\  await run(insertCursos({ ...curso, docente: null }));
+    \\  await run(insertClases({ ...clase, fecha, tema: 't' }));
+    \\  const { rows } = await run(selectClasesByPk(clase));
+    \\  console.log('stored fecha: ' + JSON.stringify(rows[0]?.fecha));
+    \\  deepStrictEqual(rows[0]?.fecha, fecha);
+    \\  console.log('FECHA_OK');
+    \\} finally {
+    \\  await run(deleteClases(clase));
+    \\  await run(deleteCursos(curso));
+    \\  await run(deleteMaterias({ materia }));
+    \\  await run(deletePeriodos({ periodo }));
+    \\  await pool.end();
+    \\}
+;
+
+/// Runs `script` with node from `backend/` and expects exit 0 and `marker` on
+/// stdout; on failure dumps node's stdout/stderr.
+fn expectNodeScriptOk(script: []const u8, marker: []const u8) !void {
     const result = std.process.run(std.testing.allocator, std.testing.io, .{
-        .argv = &.{ "node", "--input-type=module", "-e", roundtrip_script },
+        .argv = &.{ "node", "--input-type=module", "-e", script },
         .cwd = .{ .path = "backend" },
         .stdout_limit = .limited(1 << 20),
         .stderr_limit = .limited(1 << 20),
@@ -56,5 +95,13 @@ test "generated DML builders round-trip against the docker-compose Postgres" {
         return error.RoundTripFailed;
     }
 
-    try std.testing.expect(std.mem.indexOf(u8, result.stdout, "ROUNDTRIP_OK") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stdout, marker) != null);
+}
+
+test "generated DML builders round-trip against the docker-compose Postgres" {
+    try expectNodeScriptOk(roundtrip_script, "ROUNDTRIP_OK");
+}
+
+test "a fecha column round-trips as { año, mes, día }" {
+    try expectNodeScriptOk(fecha_roundtrip_script, "FECHA_OK");
 }
