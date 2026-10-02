@@ -8,7 +8,12 @@ revisión antes de implementar.
 
 ## Pendientes (módulo `sql_generator` — esquema de la base de datos)
 
-Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
+* Struct anidado dentro de un struct de dominio (por ejemplo un campo `Punto` dentro de
+  otro struct): hoy `createTypeSql` tipa cada campo con `sqlType(type_defs,
+  @typeName(campo))` y un struct anidado da `type 'x.Y' has no SQL mapping`. Para
+  soportarlo: emitir también el `CREATE TYPE` del struct interno (antes que el externo)
+  y usarlo como tipo del campo; del lado TS, `tsType` y los samples ya lo resuelven
+  recursivamente. Pendiente hasta que aparezca un caso real.
 
 ## Pendientes (módulo `ts_backend_generator` — interfaz de DML en TS)
 

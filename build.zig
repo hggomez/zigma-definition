@@ -41,6 +41,7 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "validar_cargo_missing_field.zig", .expected = at("validar_cargo_missing_field.zig") },
     .{ .file = "defined_type_no_field.zig", .expected = at("defined_type_no_field.zig") },
     .{ .file = "sql_unknown_type_mapping.zig", .expected = "type 'text' has no SQL mapping" },
+    .{ .file = "sql_create_type_not_struct.zig", .expected = "type 'text' is not a struct-backed domain" },
     .{ .file = "zig_type_map_sql_unsupported.zig", .expected = "type 'f32' has no SQL mapping" },
     .{ .file = "zig_type_map_ts_unsupported.zig", .expected = "type 'f32' has no TS mapping" },
     .{ .file = "zig_type_map_sql_domain_unsupported.zig", .expected = "type 'f32' has no SQL mapping" },

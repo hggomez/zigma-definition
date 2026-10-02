@@ -77,16 +77,42 @@ pub fn createTableSql(comptime type_defs: anytype, comptime name: []const u8, co
     return "CREATE TABLE " ++ name ++ " (\n    " ++ clauses ++ "\n);";
 }
 
-/// Generates one `CREATE TABLE` per entity of `entity_defs` (as produced by
-/// `zigma.defineEntity`/`zigma.defineEntities`, not yet completed), in
-/// declaration order, separated by a blank line.
+/// Generates the `CREATE TYPE` (Postgres composite type) of a struct-backed
+/// domain of `type_defs`.
+/// Each field's SQL type comes from its Zig type through `sqlType` (only leaf
+/// primitives for now: a struct nested in a struct has no mapping yet).
+pub fn createTypeSql(comptime type_defs: anytype, comptime name: []const u8) []const u8 {
+    if (!isStructDomain(type_defs, name))
+        @compileError("type '" ++ name ++ "' is not a struct-backed domain");
+    const info = @typeInfo(@field(type_defs, name).Type).@"struct";
+    comptime var clauses: []const u8 = "";
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        clauses = appendClause(clauses, field_name ++ " " ++ sqlType(type_defs, @typeName(field_type)));
+    }
+    return "CREATE TYPE " ++ name ++ " AS (\n    " ++ clauses ++ "\n);";
+}
+
+fn isStructDomain(comptime type_defs: anytype, comptime name: []const u8) bool {
+    if (!@hasField(@TypeOf(type_defs), name)) return false;
+    return @typeInfo(@field(type_defs, name).Type) == .@"struct";
+}
+
+/// Generates one `CREATE TYPE` per struct-backed domain of `type_defs`, then
+/// one `CREATE TABLE` per entity of `entity_defs` (as produced by
+/// `zigma.defineEntity`/`zigma.defineEntities`, not yet completed), each in
+/// declaration order, separated by a blank line. The types go first because
+/// the tables' columns reference them.
 pub fn schemaSql(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     // completeEntity's fk-completion loop costs comptime branches per fk;
     // across a whole system's worth of entities that adds up past the
     // default 1000-branch quota (hit at aida's 11 entities).
     @setEvalBranchQuota(10000);
-    const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
     comptime var statements: []const u8 = "";
+    inline for (@typeInfo(@TypeOf(type_defs)).@"struct".field_names) |type_name| {
+        if (comptime !isStructDomain(type_defs, type_name)) continue;
+        statements = statements ++ createTypeSql(type_defs, type_name) ++ "\n\n";
+    }
+    const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
     inline for (entity_names, 0..) |entity_name, i| {
         if (i > 0) statements = statements ++ "\n\n";
         const entity_info = zigma.completeEntity(@field(entity_defs, entity_name));

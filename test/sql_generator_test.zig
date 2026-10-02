@@ -80,6 +80,49 @@ test "schemaSql generates one CREATE TABLE per entity, in declaration order, for
     , dos_entidades_ddl);
 }
 
+// ---- struct-backed domains: Postgres composite types ----
+
+// punto: a struct-backed domain; each field's SQL type comes from its Zig
+// type through the framework's map (i16 -> SMALLINT, u16 -> INTEGER).
+const Punto = struct { x: i16, y: u16 };
+const con_punto_type_defs = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{
+    .punto = zigma.TypeDef{ .Type = Punto },
+} }));
+const punto_type_ddl = sql.createTypeSql(con_punto_type_defs, "punto");
+
+test "createTypeSql generates the composite type of a struct-backed domain, one field per line" {
+    try expectEqualStrings(
+        \\CREATE TYPE punto AS (
+        \\    x SMALLINT,
+        \\    y INTEGER
+        \\);
+    , punto_type_ddl);
+}
+
+const lugar = zigma.defineEntity(.{
+    .pk = .{"lugar"},
+    .fields = zigma.record(con_punto_type_defs, .{
+        .lugar = .{ .type = "text" },
+        .ubicacion = .{ .type = "punto" },
+    }),
+});
+const con_punto_ddl = sql.schemaSql(con_punto_type_defs, zigma.defineEntities(.{ .lugar = lugar }));
+
+test "schemaSql generates the CREATE TYPE of every struct-backed domain before the tables" {
+    try expectEqualStrings(
+        \\CREATE TYPE punto AS (
+        \\    x SMALLINT,
+        \\    y INTEGER
+        \\);
+        \\
+        \\CREATE TABLE lugar (
+        \\    lugar TEXT NOT NULL,
+        \\    ubicacion punto,
+        \\    PRIMARY KEY (lugar)
+        \\);
+    , con_punto_ddl);
+}
+
 // aida.fecha is backed by a nested struct (Fecha{ año, mes, día }), not a
 // primitive: its column is the Postgres composite type named after the
 // domain (`fecha`). The `CREATE TYPE` itself is not emitted yet (plan B,
@@ -303,8 +346,14 @@ test "cyclic fks between two distinct entities generate both CREATE TABLEs" {
 
 const aida_schema_ddl = sql.schemaSql(aida.type_defs, aida.entity_defs);
 
-test "generates the full aida schema: one CREATE TABLE per entity, in declaration order" {
+test "generates the full aida schema: the fecha composite type, then one CREATE TABLE per entity, in declaration order" {
     try expectEqualStrings(
+        \\CREATE TYPE fecha AS (
+        \\    año INTEGER,
+        \\    mes SMALLINT,
+        \\    día SMALLINT
+        \\);
+        \\
         \\CREATE TABLE docentes (
         \\    docente TEXT NOT NULL,
         \\    apellido TEXT NOT NULL,
