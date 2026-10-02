@@ -9,7 +9,7 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | API pública del núcleo | `src/core/zigma.zig` (reexporta las implementaciones; no importa generadores) |
 | Tipos de dominio / records / campos / merge | `src/core/records.zig`, `test/aida_test.zig`, `test/model_nullability_test.zig` |
 | Entidades / PK, UK y FK / metadatos de reglas | `src/core/entities.zig`, `test/aida_test.zig` |
-| System / Model.info / tipos derivados | `src/core/model.zig`, `test/system_model_test.zig`, `test/model_consumers_test.zig` |
+| Framework / Model.info / tipos derivados | `src/core/model.zig`, `test/system_model_test.zig`, `test/model_consumers_test.zig` |
 | Helpers internos de nombres | `src/core/names.zig` |
 | Example system (records, entities, `DefinedType`) | `examples/aida/src/aida.zig` |
 | Example app (`system` + seeds, own `build.zig`) | `examples/aida/` |
@@ -26,7 +26,7 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | Validadores REST actuales | `src/rest/validation.zig`, `examples/aida/src/rest.zig`, `test/aida_rest_test.zig`, `test/rest_test.zig` |
 | Backend de pruebas en memoria | `src/testing_backend/main.zig`, `src/testing_backend/memory_repository.zig`, `src/rest/std_http.zig` |
 | Comprobación HTTP del backend de pruebas | `test/integration/run_testing_backend.py`, `examples/aida/build.zig` |
-| Arranque conjunto del backend real y frontend | `tools/run_aida.zig`, `test/integration/run_aida_test.py`, `build/aida.zig`, `src/frontend/api_config.js` |
+| Entrada de AIDA / arranque conjunto del backend real y frontend | `examples/aida/src/main.zig`, `test/integration/run_aida_test.py`, `build/aida.zig`, `src/frontend/api_config.js` |
 | AIDA PostgreSQL y aplicación del historial | `examples/aida/src/postgres.zig`, `examples/aida/src/server.zig`, `tools/apply_migrations.zig` |
 | API de migraciones / snapshot canónico | `src/postgres/migrations/schema.zig`, `src/postgres/migrations/snapshot.zig` |
 | Diff, nombres y drafts SQL de migraciones | `src/postgres/migrations/diff.zig`, `src/postgres/migrations/draft.zig`, `test/postgres_migrations_test.zig` |
@@ -57,7 +57,7 @@ Los helpers compartidos entre archivos del núcleo no se reexportan.
 | `extractPk` / `mergePk` | `entities.zig` | Extrae campos PK / combina claves sin duplicados |
 | `completeEntity` | `entities.zig` | Normaliza campos, PK no-null, mapas FK y dependencias de reglas |
 | `RuleInfo` | `entities.zig` | Dependencias serializables de una regla, sin implementación |
-| `System` | `model.zig` | Construye `Model.info` y genera `Row`, `Projection`, `Patch`, `Filters`, `RuleInput` |
+| `Framework` | `model.zig` | Construye `Model.info` y genera `Row`, `Projection`, `Patch`, `Filters`, `RuleInput` |
 
 Field Def properties: `type` (required, name in `type_defs`), optional `label`, `nullable`, `is_name` (**only `true`**), `description`. Entity Def: required `fields` + `pk`; optional `fks`, `uks`, `rules`. Fk `fields`: name list (same names) or source→target map. Fk target is a **string** entity name. Cada regla declara una lista `fields`; su binding y ejecución automática siguen fuera del núcleo.
 

@@ -11,6 +11,6 @@ comptime {
         .fields = fields,
     });
     const entities = zigma.defineEntities(.{ .things = entity });
-    const Model = zigma.System(zigma.common_type_defs, entities);
+    const Model = zigma.Framework(zigma.common_type_defs, entities);
     _ = ddl.createTableDdl(Model, "things", ddl.common_type_mappings);
 }

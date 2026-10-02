@@ -17,7 +17,7 @@ fn DefaultValue(comptime T: type, comptime value: T) type {
     };
 }
 
-fn SystemInfo(comptime entity_defs: anytype) type {
+fn FrameworkInfo(comptime entity_defs: anytype) type {
     @setEvalBranchQuota(1_000_000);
     const names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
     var types: [names.len]type = undefined;
@@ -28,13 +28,13 @@ fn SystemInfo(comptime entity_defs: anytype) type {
 
 /// Interpretación única del contrato. Los tipos Zig quedan en este namespace;
 /// `info` contiene solamente metadatos serializables para los consumidores.
-pub fn System(comptime type_defs: anytype, comptime entity_defs: anytype) type {
+pub fn Framework(comptime type_defs: anytype, comptime entity_defs: anytype) type {
     @setEvalBranchQuota(1_000_000);
     records.checkTypeDefs(type_defs);
     const Model = struct {
-        pub const info: SystemInfo(entity_defs) = blk: {
+        pub const info: FrameworkInfo(entity_defs) = blk: {
             @setEvalBranchQuota(1_000_000);
-            var result: SystemInfo(entity_defs) = undefined;
+            var result: FrameworkInfo(entity_defs) = undefined;
             for (@typeInfo(@TypeOf(entity_defs)).@"struct".field_names) |name| {
                 const entity = entities.defineEntity(@field(entity_defs, name));
                 records.checkRecord(type_defs, entity.fields);

@@ -11,7 +11,7 @@ const aida = @import("aida");
 const aida_postgres = @import("aida_postgres");
 
 fn modelFor(comptime nullable: bool, comptime rules: anytype) type {
-    return zigma.System(zigma.common_type_defs, .{
+    return zigma.Framework(zigma.common_type_defs, .{
         .things = zigma.defineEntity(.{
             .pk = .{"id"},
             .fields = zigma.record(zigma.common_type_defs, .{
@@ -87,7 +87,7 @@ test "row types, DDL and snapshots agree on effective PK and field nullability" 
 test "REST POST uses Model nullability before any SQL mutation" {
     inline for (.{ true, false }) |nullable| {
         const Model = modelFor(nullable, .{});
-        const Api = rest.Api(Model, rest.common_codecs);
+        const Api = rest.Api(Model, rest.common_codecs, .{});
         var api = Api.init(.{});
         const cases = .{
             .{ .body = "{\"id\":7}", .valid = nullable },
@@ -118,7 +118,7 @@ test "REST POST uses Model nullability before any SQL mutation" {
 test "REST PUT uses Model nullability while preserving parameter order" {
     inline for (.{ true, false }) |nullable| {
         const Model = modelFor(nullable, .{});
-        const Api = rest.Api(Model, rest.common_codecs);
+        const Api = rest.Api(Model, rest.common_codecs, .{});
         var api = Api.init(.{});
         var connection = FakeConnection{
             .expected_sql = "UPDATE \"things\" SET \"note\" = $1 WHERE \"id\" = $2 RETURNING *",
@@ -140,7 +140,7 @@ test "REST PUT uses Model nullability while preserving parameter order" {
 
 test "REST and CRUD keep text null distinct from SQL NULL filters" {
     const Model = modelFor(true, .{});
-    const Api = rest.Api(Model, rest.common_codecs);
+    const Api = rest.Api(Model, rest.common_codecs, .{});
     var api = Api.init(.{});
     var connection = FakeConnection{
         .expected_sql = "SELECT * FROM \"things\" WHERE \"id\" = $1 AND \"note\" = $2",
@@ -202,7 +202,7 @@ test "existing business validator composition accepts Model and still rejects be
     const validators = rest.defineBusinessValidators(Model, .{
         .things = rest.BusinessValidator{ .validate = rejectBlockedNote },
     });
-    const Api = rest.ApiWithBusinessValidators(Model, rest.common_codecs, validators);
+    const Api = rest.Api(Model, rest.common_codecs, validators);
     var api = Api.init(.{});
     var connection = FakeConnection{ .expected_sql = "", .expected_parameters = &.{} };
     var repository = crud.Repository(Model).init(&connection);

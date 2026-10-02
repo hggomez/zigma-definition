@@ -112,6 +112,7 @@ migraciones aceptadas. Cuando la API está disponible en `http://127.0.0.1:8080/
 el frontend: abrí **[http://127.0.0.1:8000](http://127.0.0.1:8000)**. No carga seeds de
 prueba ni inicia PostgreSQL: la base debe estar disponible con la conexión configurada.
 Si el backend falla, el lanzador termina; `Ctrl+C` detiene backend y frontend juntos.
+La entrada de la aplicación es [`examples/aida/src/main.zig`](examples/aida/src/main.zig).
 
 Podés configurar `HTTP_ADDRESS`, `HTTP_PORT`, `FRONTEND_PORT` (default 8000) y
 `LIQUIBASE_SCHEMA`. El frontend recibe automáticamente la URL configurada de la API.
@@ -176,9 +177,9 @@ Los archivos aceptados de `db/changes/` se conservan: los cambios siguientes lle
 migración nueva. Para `accept-migration`, podés indicar un ejecutable específico mediante
 `-Dliquibase-bin=/ruta/a/liquibase`.
 
-`init-migrations` y `baseline-existing` se usan al crear un historial nuevo o adoptar una
-base preexistente. Un clon de este repositorio sobre una base vacía sigue el arranque normal.
-Consultá [inicialización y adopción](DOCS.md#inicialización-adopción-y-tests) para esos casos.
+`init-migrations` se usa una sola vez al crear un historial nuevo. Este repositorio ya
+incluye su historial: un clon sobre una base vacía sigue el arranque normal.
+Consultá [inicialización y tests](DOCS.md#inicialización-y-tests) para más detalles.
 
 Para aplicar las migraciones aceptadas y terminar sin iniciar HTTP, usá
 `zig build apply-migrations` con las mismas variables `LIQUIBASE_*`. Este comando no

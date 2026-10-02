@@ -107,6 +107,7 @@ los tests del lanzador y los nombres públicos de comandos, sin requerir Postgre
 | `examples/aida/src/system.zig` | Contrato y seeds del ejemplo. |
 | `examples/aida/src/rest.zig` | Codecs y API de AIDA, compartidos con el servidor PostgreSQL. |
 | `examples/aida/src/postgres.zig` | Mappings y artefactos PostgreSQL del contrato. |
+| `examples/aida/src/main.zig` | Entrada de AIDA con PostgreSQL y frontend; la raíz la ejecuta con `zig build run-aida`. |
 | `examples/aida/src/server.zig` | Backend real con Liquibase, libpq y HTTP. |
 | `examples/aida/build.zig` | Compone el frontend y backend de pruebas; publica `test-backend` y `test-frontend`. |
 | `src/testing_backend/main.zig` | Inicializa API, seeds y repositorio; llama a `std_http.serve`. |

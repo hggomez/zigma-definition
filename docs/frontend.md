@@ -89,7 +89,7 @@ Buffers live in WASM (not allocated from JS):
 
 ## 2. Catalog JSON the page actually sees
 
-El WASM construye `Model = zigma.System(system.type_defs, system.entity_defs)`. Al leer el catálogo llama a `zigma_json.stringifyEntityCatalog(Model, &schema_buf)`. Cada entidad toma metadatos de `Model.info` y tipos de `Model.Row(entity)`, conservando el orden declarado:
+El WASM construye `Model = zigma.Framework(system.type_defs, system.entity_defs)`. Al leer el catálogo llama a `zigma_json.stringifyEntityCatalog(Model, &schema_buf)`. Cada entidad toma metadatos de `Model.info` y tipos de `Model.Row(entity)`, conservando el orden declarado:
 
 - `name` — entity name (struct field on `entity_defs`)
 - `pk`, `uks`, `fks` — completed keys (fks already source→target maps)

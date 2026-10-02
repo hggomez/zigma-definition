@@ -79,6 +79,78 @@ test "a docente with cargo teorico needs at least five years of experience" {
     try aida.validarDocente(.{ .cargo = null, .experiencia = null });
 }
 
+// Las tres variantes deben aplicar la misma regla; solo cambia el tipo de entrada.
+const docente_validation_cases = [_]struct {
+    cargo: ?[]const u8,
+    experiencia: ?i64,
+    valid: bool,
+}{
+    .{ .cargo = "teorico", .experiencia = 4, .valid = false },
+    .{ .cargo = "teorico", .experiencia = 5, .valid = true },
+    .{ .cargo = "teorico", .experiencia = 6, .valid = true },
+    .{ .cargo = "teorico", .experiencia = null, .valid = false },
+    .{ .cargo = " \tTEORICO\r\n", .experiencia = 4, .valid = false },
+    .{ .cargo = " \tTEORICO\r\n", .experiencia = 5, .valid = true },
+    .{ .cargo = "practico", .experiencia = 2, .valid = true },
+    .{ .cargo = "practico", .experiencia = null, .valid = true },
+    .{ .cargo = null, .experiencia = null, .valid = true },
+};
+
+fn expectDocenteValidation(valid: bool, actual: aida.DocenteValidationError!void) !void {
+    if (valid) {
+        try actual;
+    } else {
+        try std.testing.expectError(error.TeoricoRequiereCincoAniosExperiencia, actual);
+    }
+}
+
+test "manual docente validation uses an explicitly declared subset" {
+    const validate: *const fn (aida.DocenteBusinessState) aida.DocenteValidationError!void = aida.validarDocente;
+    for (docente_validation_cases) |case| {
+        try expectDocenteValidation(case.valid, validate(.{
+            .cargo = case.cargo,
+            .experiencia = case.experiencia,
+        }));
+    }
+}
+
+test "row docente validation receives all fields but only uses cargo and experiencia" {
+    const validate: *const fn (aida.Model.Row("docentes")) aida.DocenteValidationError!void = aida.validarDocenteRow;
+    for (docente_validation_cases) |case| {
+        // Row exige construir la fila completa, incluso los campos ajenos a la regla.
+        var row: aida.Model.Row("docentes") = .{
+            .docente = "d1",
+            .apellido = null,
+            .nombres = "Ada",
+            .cargo = case.cargo,
+            .email = null,
+            .email_alternativo = null,
+            .jefe = null,
+            .telefono = null,
+            .experiencia = case.experiencia,
+            .esImportador = null,
+        };
+        try expectDocenteValidation(case.valid, validate(row));
+
+        row.nombres = "Grace";
+        row.telefono = "555-0100";
+        row.esImportador = true;
+        try expectDocenteValidation(case.valid, validate(row));
+    }
+}
+
+test "projection docente validation receives only fields derived from the contract" {
+    const Input = aida.Model.Projection("docentes", .{ "cargo", "experiencia" });
+    const validate: *const fn (Input) aida.DocenteValidationError!void = aida.validarDocenteProjection;
+    for (docente_validation_cases) |case| {
+        // No se repiten tipos ni se completan campos que la regla no necesita.
+        try expectDocenteValidation(case.valid, validate(.{
+            .cargo = case.cargo,
+            .experiencia = case.experiencia,
+        }));
+    }
+}
+
 test "completes a record def into a record info" {
     const materia_info = zigma.completeRecord(aida.materia);
     try expectEqualStrings("text", materia_info.materia.type);

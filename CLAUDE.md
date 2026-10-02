@@ -32,7 +32,7 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `docs/`: guías de build, ejecución del ejemplo, frontend, vocabulario y diseño de validadores.
 * `src/core/zigma.zig`: entrada pública del descriptor y modelo normalizado (módulo
   `zigma`). Reexporta `records.zig` (dominios, campos y records), `entities.zig`
-  (claves, relaciones y reglas declaradas) y `model.zig` (`System` y tipos derivados).
+  (claves, relaciones y reglas declaradas) y `model.zig` (`Framework` y tipos derivados).
   `names.zig` contiene los helpers internos de nombres. El núcleo no conoce ningún
   sistema concreto ni importa generadores; `docs/zigma.md` explica cómo recorrerlo.
 * `src/json.zig`: catálogo basado en `Model`, serialización con `std.json` y parsing
@@ -67,6 +67,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   contrato y los seeds, y `build.zig` compone el backend en memoria y el frontend WASM.
 * `examples/aida/src/postgres.zig`: mappings y proyección PostgreSQL compartida de AIDA.
 * `examples/aida/src/rest.zig`: codecs y validadores de negocio de AIDA para REST.
+* `examples/aida/src/main.zig`: entrada de la aplicación para macOS/Linux; sirve el frontend,
+  espera la API después de las migraciones y cierra ambos con Ctrl+C. No requiere Python.
 * `examples/aida/src/server.zig`: composición del servidor REST con libpq y migraciones Liquibase.
 * `test/integration/postgres_bootstrap.zig`: auxiliar de las integraciones DDL/REST que
   usa los mappings PostgreSQL de AIDA; no tiene comando público de arranque.
@@ -74,10 +76,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `tools/postgres_migration_tool.zig`: workflow de init/check/draft/accept-files.
 * `tools/apply_migrations.zig`: aplica el historial aceptado y termina sin iniciar HTTP;
   se ejecuta mediante `zig build apply-migrations` y también desde `test-migrations`.
-* `tools/run_aida.zig`: lanzador nativo para macOS/Linux; sirve el frontend, espera la
-  API después de las migraciones y cierra ambos con Ctrl+C. No requiere Python.
 * `tools/postgres_schema_validator.zig`: comparación SSOT↔`pg_catalog` en un schema esperado
-  temporal; se usa antes de aceptar o baselinar.
+  temporal; se usa al aceptar migraciones y en las integraciones PostgreSQL.
 * `build.zig`: opciones generales, conexiones del grafo y API pública del build.
 * `build/modules.zig`: módulos publicados e imports compartidos; configuración de libpq.
 * `build/app.zig`: implementación de `addApp` / `addAppFromDep`, reexportadas por la raíz.
@@ -112,8 +112,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `zig build test-postgres -Dlibpq-prefix=...` levanta un PostgreSQL descartable con Docker
   y prueba la ejecución real; queda separado para que la suite normal no requiera servicios.
 * `zig build test-migrations -Dlibpq-prefix=... -Dliquibase-bin=...` fija Liquibase 5.0.4 y
-  PostgreSQL 18.4, y prueba baseline, idempotencia, migraciones manuales, rollback, checksum
-  y adopción validada.
+  PostgreSQL 18.4, y prueba el historial aceptado, idempotencia, migraciones manuales,
+  rollback y checksum.
 * `zig build test-rest-postgres -Dlibpq-prefix=...` prueba el CRUD generado end-to-end con
   `std.http`, libpq y PostgreSQL descartable.
 * `python3 test/integration/build_commands_test.py`: comprueba los nombres públicos del

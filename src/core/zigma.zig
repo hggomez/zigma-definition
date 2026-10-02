@@ -37,4 +37,4 @@ pub const defineEntities = entities.defineEntities;
 pub const RuleInfo = entities.RuleInfo;
 
 // Modelo compartido por los generadores, construido desde el contrato.
-pub const System = model.System;
+pub const Framework = model.Framework;

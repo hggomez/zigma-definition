@@ -254,7 +254,6 @@ fn addPostgresTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     run_migration_tests.addFileArg(b.path("test/integration/run_migrations.sh"));
     run_migration_tests.addArtifactArg(aida.schema_validator);
     run_migration_tests.addArtifactArg(aida.migration_applier);
-    run_migration_tests.addFileArg(b.path("tools/baseline_existing.sh"));
     run_migration_tests.addArg(liquibase_bin);
     run_migration_tests.addDirectoryArg(b.path("."));
     const migration_test_step = b.step("test-migrations", "Run Liquibase migration tests against disposable PostgreSQL");

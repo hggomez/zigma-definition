@@ -13,15 +13,10 @@ const libpq = @import("zigma_postgres_libpq");
 const expected_schema = "_zigma_expected_validation";
 
 pub fn main(init: std.process.Init) !void {
-    // Adoptar el baseline agrega una comprobación de seguridad sobre el historial
-    // Liquibase; el modo normal comprueba solo la equivalencia estructural del catálogo.
+    // La configuración se recibe por ambiente; este ejecutable no admite argumentos.
     var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, init.gpa);
     defer args.deinit();
     _ = args.next();
-    const baseline_adoption = if (args.next()) |arg| blk: {
-        if (!std.mem.eql(u8, arg, "--baseline-adoption")) return error.InvalidArgument;
-        break :blk true;
-    } else false;
     if (args.next() != null) return error.InvalidArgument;
 
     const database_url = init.environ_map.get("DATABASE_URL") orelse {
@@ -65,14 +60,6 @@ pub fn main(init: std.process.Init) !void {
         printDatabaseError(&connection, err);
         return err;
     };
-    if (baseline_adoption) {
-        const history_sql = try baselineHistorySql(init.gpa, actual_schema);
-        defer init.gpa.free(history_sql);
-        connection.exec(history_sql) catch |err| {
-            printDatabaseError(&connection, err);
-            return err;
-        };
-    }
     std.debug.print("PostgreSQL schema '{s}' matches the compiled Zigma model\n", .{actual_schema});
 }
 
@@ -175,27 +162,6 @@ fn catalogComparisonSql(allocator: std.mem.Allocator, actual: []const u8) ![]u8 
         actual,          actual,
         expected_schema, expected_schema,
     });
-}
-
-fn baselineHistorySql(allocator: std.mem.Allocator, actual: []const u8) ![]u8 {
-    // Las bases existentes se pueden marcar en el baseline solo si no tienen changelog,
-    // está vacío o contiene exactamente ese changeset inicial de Zigma.
-    return std.fmt.allocPrint(allocator,
-        \\DO $$
-        \\DECLARE invalid_history boolean;
-        \\BEGIN
-        \\  IF to_regclass('"{s}"."databasechangelog"') IS NOT NULL THEN
-        \\    EXECUTE format(
-        \\      'SELECT count(*) > 1 OR count(*) FILTER (WHERE NOT (id = ''000001_baseline'' AND author = ''zigma'')) > 0 FROM %I.databasechangelog',
-        \\      '{s}'
-        \\    ) INTO invalid_history;
-        \\    IF invalid_history THEN
-        \\      RAISE EXCEPTION 'Zigma baseline adoption refused: database history is not empty or baseline-only';
-        \\    END IF;
-        \\  END IF;
-        \\END
-        \\$$;
-    , .{ actual, actual });
 }
 
 fn printDatabaseError(connection: *const libpq.Connection, err: anyerror) void {

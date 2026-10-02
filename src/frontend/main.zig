@@ -7,7 +7,7 @@ const zigma_json = @import("zigma_json");
 
 extern "env" fn js_send_post(ptr: [*]const u8, len: usize) void;
 
-const Model = zigma.System(system.type_defs, system.entity_defs);
+const Model = zigma.Framework(system.type_defs, system.entity_defs);
 const entity_names = @typeInfo(@TypeOf(Model.info)).@"struct".field_names;
 
 /// Mayor cantidad de campos; determina el tamaño del buffer de longitudes.

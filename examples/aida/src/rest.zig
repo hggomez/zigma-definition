@@ -49,4 +49,4 @@ pub const business_validators = rest.defineBusinessValidators(aida.Model, .{
     .docentes = rest.BusinessValidator{ .validate = validateDocenteBusinessRules },
 });
 
-pub const Api = rest.ApiWithBusinessValidators(aida.Model, codecs, business_validators);
+pub const Api = rest.Api(aida.Model, codecs, business_validators);

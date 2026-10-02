@@ -1,12 +1,7 @@
 //! CRUD REST derivados de entidades Zigma en compilación.
 //!
-//! Este módulo se ocupa de routing, validación de solicitudes, codecs de dominio
-//! y JSON. No posee conocimiento sobre Web Sockets ni PostgreSQL; `Api.handle` comprueba
-//! los repositorios de forma estructural.
-//!
-//! Entrada pública de zigma_rest: conserva los tipos y funciones reexportados.
-//! Para seguir una solicitud, leer handle y después handleEntity; los detalles
-//! de codecs, parsing, respuestas y reglas viven en los archivos del mismo directorio.
+//! Este módulo se ocupa del routing, validación de solicitudes y mapping de dominio.
+//! No posee conocimiento sobre Web Sockets ni PostgreSQL;
 
 const std = @import("std");
 const domain_codecs = @import("codecs.zig");
@@ -49,26 +44,18 @@ fn routeList(comptime entity_defs: anytype) [@typeInfo(@TypeOf(entity_defs)).@"s
 /// `Api` es una fábrica de tipos comptime: no crea ahora un objeto API, sino el
 /// *tipo* concreto que después guardará configuración y atenderá solicitudes.
 /// Es similar a especializar una plantilla de clase C++, salvo que Zig acepta
-/// el modelo normalizado y los codecs como entradas comptime.
+/// el modelo normalizado, los codecs y los validadores como entradas comptime.
+/// Un registro de validadores vacío (`.{}`) genera handlers sin reglas de negocio.
 pub fn Api(
-    // El namespace Model contiene los metadatos ya normalizados y validados.
     comptime Model: type,
-    // Los codecs también son datos de compilación: se comprueba que cada campo
+    // Los codecs también son datos en tiempo de compilación: se comprueba que cada campo
     // expuesto tenga conversiones HTTP/JSON/PostgreSQL antes de arrancar el servidor.
     comptime codecs: anytype,
-) type {
-    return ApiWithBusinessValidators(Model, codecs, .{});
-}
-
-/// Variante de `Api` con validación opcional de negocio por entidad. El registro
-/// es información comptime: cada handler generado incluye una llamada directa
-/// al validador o no tiene ninguna rama de validación.
-pub fn ApiWithBusinessValidators(
-    comptime Model: type,
-    comptime codecs: anytype,
+    // Cada entidad registrada incorpora una llamada directa a su validador.
+    // Las entidades omitidas no tienen ninguna rama de validación de negocio.
     comptime validators: anytype,
-) type { // Devolver `type` es lo que convierte esta función en una fábrica de tipos.
-    // System ya comprobó las entidades y resolvió la nulabilidad efectiva.
+) type {
+    // Framework ya comprobó las entidades y resolvió la nulabilidad efectiva.
     // REST consume esos mismos metadatos sin reinterpretar el contrato.
     const model_info = Model.info;
     const checked_validators = defineBusinessValidators(Model, validators);

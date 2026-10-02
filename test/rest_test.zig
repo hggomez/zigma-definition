@@ -14,7 +14,7 @@ const things = zigma.defineEntity(.{
 });
 const entity_defs = zigma.defineEntities(.{ .things = things });
 const codecs = rest.defineCodecs(zigma.common_type_defs, rest.common_codecs);
-const TestApi = rest.Api(Model, codecs);
+const TestApi = rest.Api(Model, codecs, .{});
 
 fn valueFor(values: []const rest.FieldValue, name: []const u8) ?rest.FieldValue {
     for (values) |value| {
@@ -42,7 +42,7 @@ fn validateThing(values: []const rest.FieldValue) rest.BusinessValidationError!?
 const business_validators = rest.defineBusinessValidators(Model, .{
     .things = rest.BusinessValidator{ .validate = validateThing },
 });
-const ValidatedTestApi = rest.ApiWithBusinessValidators(Model, codecs, business_validators);
+const ValidatedTestApi = rest.Api(Model, codecs, business_validators);
 
 const Operation = enum { none, select, insert, update, delete };
 
@@ -369,4 +369,4 @@ test "handle owns scratch allocations and returns only the response body" {
     try std.testing.expectEqual(@as(u16, 200), response.status);
 }
 
-const Model = zigma.System(zigma.common_type_defs, entity_defs);
+const Model = zigma.Framework(zigma.common_type_defs, entity_defs);

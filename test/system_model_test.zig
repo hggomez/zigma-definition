@@ -96,7 +96,7 @@ test "rule inputs derive types from contract dependencies" {
             .identity = .{ .fields = .{"id"} },
         },
     });
-    const RuleModel = zigma.System(zigma.common_type_defs, .{ .things = entity });
+    const RuleModel = zigma.Framework(zigma.common_type_defs, .{ .things = entity });
     const Input = RuleModel.RuleInput("things", "display");
     try std.testing.expect(Input == RuleModel.Projection("things", .{ "note", "name" }));
     try std.testing.expect(@FieldType(Input, "note") == ?[]const u8);
@@ -116,7 +116,7 @@ test "normalized metadata including rule descriptions serializes without impleme
         .fields = contract.fields,
         .rules = .{ .display = .{ .fields = .{ "note", "name" } } },
     });
-    const RuleModel = zigma.System(zigma.common_type_defs, .{ .things = entity });
+    const RuleModel = zigma.Framework(zigma.common_type_defs, .{ .things = entity });
     var output: std.Io.Writer.Allocating = .init(std.testing.allocator);
     defer output.deinit();
     var stringify: std.json.Stringify = .{ .writer = &output.writer };

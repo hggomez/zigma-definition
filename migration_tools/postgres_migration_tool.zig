@@ -43,9 +43,7 @@ pub fn main(init: std.process.Init) !void {
     _ = args.next();
     const command = args.next() orelse return usage(error.InvalidCommand);
 
-    if (std.mem.eql(u8, command, "print-snapshot")) {
-        std.debug.print("{s}", .{postgres.schema_snapshot});
-    } else if (std.mem.eql(u8, command, "init")) {
+    if (std.mem.eql(u8, command, "init")) {
         try initialize(init.io);
     } else if (std.mem.eql(u8, command, "check")) {
         try check(init.gpa, init.io);
@@ -64,7 +62,7 @@ fn usage(err: ToolError) ToolError {
     // Devuelve el error tipado original después de imprimir la ayuda, para que
     // los scripts reciban una salida no nula y distingan el uso incorrecto del éxito.
     std.debug.print(
-        "usage: postgres-migration-tool <print-snapshot|init|check|draft [NAME]|accept-files>\n",
+        "usage: postgres-migration-tool <init|check|draft [NAME]|accept-files>\n",
         .{},
     );
     return err;

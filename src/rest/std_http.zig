@@ -1,21 +1,12 @@
-//! Adaptador secuencial pequeño de HTTP/1.1 para `zigma_rest`, con las funciones
-//! de red de la biblioteca estándar de Zig. Cada conexión TCP atiende una solicitud y se
-//! cierra. Incluye CORS permisivo (`*`) para poder abrir el frontend de ejemplo desde
-//! otro origen (p. ej. `:8000` → `:8080`).
-
 const std = @import("std");
 const rest = @import("zigma_rest");
 
 pub const Config = struct {
-    // Los defaults acotados y de acceso solo local son adecuados para un servidor
-    // de referencia. Un adaptador de producción puede conservar Api y agregar concurrencia y
-    // TLS.
+    // Defaults utiles para un MVP
     address: []const u8 = "127.0.0.1",
     port: u16 = 8080,
     max_header_bytes: usize = 16 * 1024,
     max_body_bytes: usize = 1024 * 1024,
-    /// Útil sobre todo para integrar el servidor y probarlo de forma determinista.
-    /// `null` hace que atienda solicitudes hasta que se detenga el proceso.
     max_requests: ?usize = null,
 };
 
@@ -77,8 +68,6 @@ pub fn serve(
     repository: anytype,
     config: Config,
 ) !void {
-    // `api` y `repository` tienen tipado estructural y se toman prestados durante
-    // la vida de este servidor bloqueante; este adaptador no es responsable de liberarlos.
     const address = try std.Io.net.IpAddress.parse(config.address, config.port);
     var listener = try address.listen(io, .{ .reuse_address = true });
     defer listener.deinit(io);

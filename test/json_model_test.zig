@@ -17,7 +17,7 @@ fn field(entity: std.json.Value, name: []const u8) !std.json.Value {
 }
 
 test "catalogue uses effective entity nullability without changing the record" {
-    const Model = zigma.System(tiny.type_defs, tiny.entity_defs);
+    const Model = zigma.Framework(tiny.type_defs, tiny.entity_defs);
     var buf: [2048]u8 = undefined;
     var parsed = try parse(try json.stringifyEntityCatalog(Model, &buf));
     defer parsed.deinit();
@@ -57,7 +57,7 @@ test "nested optional structures retain their shape and child nullability" {
     const Details = struct { title: ?[]const u8, inner: ?Inner };
     const types = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{ .details = .{ .Type = Details } } }));
     const rec = zigma.record(types, .{ .id = .{ .type = "text" }, .details = .{ .type = "details" } });
-    const Model = zigma.System(types, .{ .entries = zigma.defineEntity(.{ .fields = rec, .pk = .{"id"} }) });
+    const Model = zigma.Framework(types, .{ .entries = zigma.defineEntity(.{ .fields = rec, .pk = .{"id"} }) });
     var buf: [4096]u8 = undefined;
     var parsed = try parse(try json.stringifyEntitySchema(Model, "entries", &buf));
     defer parsed.deinit();
@@ -80,7 +80,7 @@ test "entity metadata escapes names labels and foreign key maps" {
     const rec = zigma.record(zigma.common_type_defs, .{
         .@"id\"\\\n" = .{ .type = "text", .label = label },
     });
-    const Model = zigma.System(zigma.common_type_defs, .{
+    const Model = zigma.Framework(zigma.common_type_defs, .{
         .@"items\"\\\nñ" = zigma.defineEntity(.{
             .fields = rec,
             .pk = .{field_name},
@@ -102,8 +102,8 @@ test "entity metadata escapes names labels and foreign key maps" {
 }
 
 test "application rules do not change the frontend catalogue" {
-    const base = zigma.System(tiny.type_defs, tiny.entity_defs);
-    const with_rules = zigma.System(tiny.type_defs, .{ .items = zigma.defineEntity(.{
+    const base = zigma.Framework(tiny.type_defs, tiny.entity_defs);
+    const with_rules = zigma.Framework(tiny.type_defs, .{ .items = zigma.defineEntity(.{
         .fields = tiny.item,
         .pk = .{"id"},
         .rules = .{ .named = .{ .fields = .{"nombre"} } },
@@ -117,7 +117,7 @@ test "application rules do not change the frontend catalogue" {
 }
 
 test "entity and catalogue report insufficient buffers without truncating success" {
-    const Model = zigma.System(tiny.type_defs, tiny.entity_defs);
+    const Model = zigma.Framework(tiny.type_defs, tiny.entity_defs);
     var small: [4]u8 = undefined;
     try std.testing.expectError(error.NoSpaceLeft, json.stringifyEntitySchema(Model, "items", &small));
     try std.testing.expectError(error.NoSpaceLeft, json.stringifyEntityCatalog(Model, &small));

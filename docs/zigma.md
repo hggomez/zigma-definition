@@ -11,7 +11,7 @@ combinan. Va desde los elementos más pequeños hasta un sistema completo.
 | `zigma.zig` | La lista de nombres públicos; reexporta las implementaciones. |
 | `records.zig` | Tipos de dominio, campos, validación y defaults de records, tipos de instancia y `merge`. |
 | `entities.zig` | PK, UK, FK y dependencias de reglas; validación local, referencias entre entidades y normalización. |
-| `model.zig` | `System`: reúne el contrato normalizado y genera `Row`, `Projection`, `Patch`, `Filters` y `RuleInput`. |
+| `model.zig` | `Framework`: reúne el contrato normalizado y genera `Row`, `Projection`, `Patch`, `Filters` y `RuleInput`. |
 | `names.zig` | Tres helpers internos para reconocer strings, comparar nombres y comprobar pertenencia a una lista. |
 
 Para leer la implementación, conviene seguir `records.zig` → `entities.zig` →
@@ -29,6 +29,52 @@ proyección de `id` tendrán `i64`. La conversión de un campo normalizado a `T`
 Esta separación conserva el comportamiento: las reglas todavía describen
 dependencias y permiten generar `RuleInput`; no ejecutan funciones de validación
 automáticamente.
+
+## Comparar un struct manual, una fila y una proyección
+
+El ejemplo [aida.zig](../examples/aida/src/aida.zig) implementa tres variantes de la
+misma regla: un docente con cargo `teorico` necesita al menos cinco años de experiencia.
+Se repite deliberadamente el cuerpo para que la comparación muestre la diferencia
+entre los tipos de entrada, sin ocultarla detrás de una función genérica.
+
+| Función | Entrada | Qué debe mantener o aportar el llamador |
+| --- | --- | --- |
+| `validarDocente` | `DocenteBusinessState`, un struct manual | `cargo` y `experiencia`; sus tipos y nulabilidad se repiten fuera del contrato. |
+| `validarDocenteRow` | `Model.Row("docentes")` | La fila completa, aunque la regla solo consulte dos campos; los tipos vienen del contrato. |
+| `validarDocenteProjection` | `Model.Projection("docentes", .{ "cargo", "experiencia" })` | Solo esos dos campos; sus tipos y nulabilidad vienen del contrato. |
+
+Estas son tres llamadas alternativas, no una secuencia de validaciones necesaria:
+
+```zig
+try aida.validarDocente(.{ .cargo = "teorico", .experiencia = 5 });
+
+try aida.validarDocenteRow(.{
+    .docente = "d1",
+    .apellido = null,
+    .nombres = "Ada",
+    .cargo = "teorico",
+    .email = null,
+    .email_alternativo = null,
+    .jefe = null,
+    .telefono = null,
+    .experiencia = 5,
+    .esImportador = null,
+});
+
+try aida.validarDocenteProjection(.{ .cargo = "teorico", .experiencia = 5 });
+```
+
+Si `experiencia` deja de admitir null, `Row` y `Projection` producirán `i64` para ese
+campo: los `orelse` de sus validadores deberán adaptarse y el compilador señalará el
+código incompatible. El struct manual seguirá declarando `?i64` hasta actualizarlo.
+Si se agrega un campo ajeno a la regla, los literales de la fila completa deberán
+incluirlo, mientras que la proyección seguirá pidiendo solo sus dos campos.
+
+`Projection` genera el tipo; el llamador construye el valor con los campos elegidos.
+REST continúa usando `validarDocente`. Las tres variantes se ejecutan en
+[test/aida_test.zig](../test/aida_test.zig) con los mismos nueve casos, incluidos nulos,
+mayúsculas, espacios y el límite de cinco años. Los tests de `Row` también verifican
+que cambiar datos ajenos a la regla no altere su resultado.
 
 ## El vocabulario
 

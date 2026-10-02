@@ -16,4 +16,4 @@ comptime {
     _ = invalid;
 }
 
-const Model = zigma.System(zigma.common_type_defs, entities);
+const Model = zigma.Framework(zigma.common_type_defs, entities);

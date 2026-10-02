@@ -1,4 +1,4 @@
-//! Lanzador local de AIDA: supervisa el backend y sirve el frontend compilado.
+//! Entrada de la aplicación AIDA: supervisa el backend y sirve el frontend compilado.
 //! El build prepara los artefactos; este proceso administra su vida en macOS/Linux.
 const std = @import("std");
 const Io = std.Io;

@@ -276,8 +276,8 @@ test "draft SQL doubles quotes in PostgreSQL identifiers" {
     try std.testing.expect(std.mem.indexOf(u8, draft.sql, "\"co\"\"l\" TEXT NOT NULL") != null);
 }
 
-const BaseModel = zigma.System(zigma.common_type_defs, base_defs);
+const BaseModel = zigma.Framework(zigma.common_type_defs, base_defs);
 
-const ExtendedModel = zigma.System(zigma.common_type_defs, extended_defs);
+const ExtendedModel = zigma.Framework(zigma.common_type_defs, extended_defs);
 
-const UnsafeModel = zigma.System(zigma.common_type_defs, unsafe_defs);
+const UnsafeModel = zigma.Framework(zigma.common_type_defs, unsafe_defs);

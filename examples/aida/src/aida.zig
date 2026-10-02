@@ -38,7 +38,7 @@ pub const docente = zigma.record(type_defs, .{
     .jefe = .{ .type = "text", .description = "jefe de cátedra (otro docente)" },
     .telefono = .{ .type = "text" },
     .experiencia = .{ .type = "integer" },
-    .esImportador = .{ .type = "boolean" }
+    .esImportador = .{ .type = "boolean" },
 });
 
 pub const asignacion = zigma.record(type_defs, .{
@@ -206,10 +206,13 @@ pub fn validarCargo(cargo_sin_validar: DefinedType(cargo)) error{AyudanteNoPuede
     }
 }
 
-/// Acá se representan solo los campos que intervienen en la regla de negocio de docente.
-/// Son opcionales porque los metadatos actuales de la base permiten null en ambas
-/// columnas. Un cargo null no activa la regla; un docente teórico debe tener un
-/// valor de experiencia conocido y de al menos cinco años.
+// Tres variantes didácticas de la misma regla: struct manual, Row y Projection.
+// Se conserva el cuerpo en cada una para comparar directamente sus firmas y usos.
+// REST utiliza validarDocente; los tests ejercitan las tres alternativas.
+
+/// Subconjunto manual: sus tipos y opcionales deben mantenerse alineados al contrato.
+/// Un cargo null no activa la regla; un docente teórico debe tener un valor de
+/// experiencia conocido y de al menos cinco años.
 pub const DocenteBusinessState = struct {
     cargo: ?[]const u8,
     experiencia: ?i64,
@@ -217,7 +220,33 @@ pub const DocenteBusinessState = struct {
 
 pub const DocenteValidationError = error{TeoricoRequiereCincoAniosExperiencia};
 
+/// Variante 1: recibe únicamente los campos escritos en el struct manual.
 pub fn validarDocente(value: DocenteBusinessState) DocenteValidationError!void {
+    const cargo_value = value.cargo orelse return;
+    const normalized_cargo = std.mem.trim(u8, cargo_value, " \t\r\n");
+    if (!std.ascii.eqlIgnoreCase(normalized_cargo, "teorico")) return;
+
+    const experiencia = value.experiencia orelse
+        return error.TeoricoRequiereCincoAniosExperiencia;
+    if (experiencia < 5)
+        return error.TeoricoRequiereCincoAniosExperiencia;
+}
+
+/// Variante 2: los tipos vienen del contrato, pero el llamador debe aportar toda la fila.
+/// La regla solo consulta cargo y experiencia; los demás campos no afectan el resultado.
+pub fn validarDocenteRow(value: Model.Row("docentes")) DocenteValidationError!void {
+    const cargo_value = value.cargo orelse return;
+    const normalized_cargo = std.mem.trim(u8, cargo_value, " \t\r\n");
+    if (!std.ascii.eqlIgnoreCase(normalized_cargo, "teorico")) return;
+
+    const experiencia = value.experiencia orelse
+        return error.TeoricoRequiereCincoAniosExperiencia;
+    if (experiencia < 5)
+        return error.TeoricoRequiereCincoAniosExperiencia;
+}
+
+/// Variante 3: solo declara los campos necesarios; sus tipos y nulabilidad son derivados.
+pub fn validarDocenteProjection(value: Model.Projection("docentes", .{ "cargo", "experiencia" })) DocenteValidationError!void {
     const cargo_value = value.cargo orelse return;
     const normalized_cargo = std.mem.trim(u8, cargo_value, " \t\r\n");
     if (!std.ascii.eqlIgnoreCase(normalized_cargo, "teorico")) return;
@@ -243,4 +272,4 @@ pub const entity_defs = zigma.defineEntities(.{
 });
 
 /// Modelo normalizado compartido por REST, PostgreSQL y los tipos de aplicación.
-pub const Model = zigma.System(type_defs, entity_defs);
+pub const Model = zigma.Framework(type_defs, entity_defs);

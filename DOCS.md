@@ -63,7 +63,7 @@ Cada sistema define su propia colección de tipos, asociando un nombre de tipo (
 puede agregar los suyos (en el ejemplo, `fecha` y `email`) combinándolos con `zigma.merge`.
 `defineTypes(.{...})` valida la colección en el punto de declaración. `TypeDef.Type` describe
 un valor no-null: se rechazan dominios opcionales como `?i64`; la propiedad `nullable` del
-campo es la única responsable de generar `?T`. `System` y `RecordInstanceType` también
+campo es la única responsable de generar `?T`. `Framework` y `RecordInstanceType` también
 comprueban esto si se les pasa una colección sin usar `defineTypes`.
 
 ### Campos: `FieldDef` / `FieldInfo`
@@ -132,7 +132,7 @@ quedan con `nullable = false` en la entidad normalizada, sin alterar el record o
 La composición se hace una sola vez; AIDA la publica como `aida.Model`:
 
 ```zig
-pub const Model = zigma.System(type_defs, entity_defs);
+pub const Model = zigma.Framework(type_defs, entity_defs);
 const Docente = Model.Row("docentes");
 const Contacto = Model.Projection("docentes", .{ "docente", "telefono" });
 const DocentePatch = Model.Patch("docentes");
@@ -196,7 +196,7 @@ const docentes = zigma.defineEntity(.{
         .docente_experience = .{ .fields = .{ "cargo", "experiencia" } },
     },
 });
-const Model = zigma.System(type_defs, .{ .docentes = docentes });
+const Model = zigma.Framework(type_defs, .{ .docentes = docentes });
 const Input = Model.RuleInput("docentes", "docente_experience");
 // Input tiene cargo: ?[]const u8 y experiencia: ?i64 según este contrato.
 ```
@@ -269,14 +269,20 @@ src/
         └── liquibase_runner.zig
 ```
 
-`zig build run-aida` compila el frontend del consumidor y el backend real. El lanzador
-`tools/run_aida.zig` espera la API después de las migraciones, sirve los archivos con
-`std.http` y configura `/api-config.js` a partir de `HTTP_ADDRESS` y `HTTP_PORT`. Ctrl+C
+`zig build run-aida` compila el frontend del consumidor, el backend real y la entrada de
+la aplicación, `examples/aida/src/main.zig`. Esta espera la API después de las migraciones,
+sirve los archivos con `std.http` y configura `/api-config.js` a partir de `HTTP_ADDRESS`
+y `HTTP_PORT`. Ctrl+C
 cierra el servidor estático y el grupo de procesos del backend (incluido Liquibase
 si aún está ejecutándose). El lanzador usa grupos de procesos POSIX en macOS/Linux;
 Python solo participa en el harness de pruebas. `check-aida` permite compilar backend,
 frontend y lanzador sin arrancarlos. `test-aida-launcher` verifica su ciclo de vida con
 procesos simulados y puertos propios, sin PostgreSQL.
+
+`main.zig` y `server.zig` son entradas de ejecutables distintos: el primero se compila
+como `aida-launcher` y administra la aplicación completa; el segundo, como
+`aida-rest-server`, aplica las migraciones y atiende la API. Su composición está en
+`build/aida.zig`, que se ejecuta desde el build raíz.
 
 `testing_backend` compone un entorno de pruebas en memoria con el mismo controlador REST
 y transporte `std_http` que el servidor PostgreSQL. Se ejecuta desde `examples/aida/` con
@@ -294,7 +300,7 @@ de ese motor. Los nombres públicos de módulos (`zigma`, `zigma_rest`,
   de tipos de campo. Centraliza los defaults y la interpretación de `nullable`.
 * `src/core/entities.zig`: claves, relaciones y dependencias de reglas; normaliza las
   entidades y aplica la restricción no-null de las PK sobre sus campos completados.
-* `src/core/model.zig`: `System`, `Model.info` y tipos `Row`, `Projection`, `Patch`,
+* `src/core/model.zig`: `Framework`, `Model.info` y tipos `Row`, `Projection`, `Patch`,
   `Filters` y `RuleInput`. Reutiliza la validación y normalización de records y entidades.
 * `src/core/names.zig`: helpers internos para reconocer y comparar nombres. Ningún
   archivo del núcleo importa generadores ni conoce AIDA. [Recorrido del núcleo](docs/zigma.md).
@@ -426,7 +432,7 @@ reflexivas y rechaza ciclos entre tablas diferentes, que requerirían una segund
 El generador no conecta ni compara contra una base existente. Si una tabla ya existe,
 `IF NOT EXISTS` no agrega columnas ni constraints nuevas: cambiar la definición solo cambia
 el script generado. Para bases versionadas se usa el workflow de la sección siguiente; este
-DDL crudo se conserva para validación, tests y adopción inicial.
+DDL crudo se conserva para validación y tests.
 
 ## PostgreSQL versionado con Liquibase
 
@@ -479,31 +485,17 @@ Liquibase aporta checksums y locking para startups concurrentes. Un error de eje
 conexión, checksum o changeset impide el arranque. `zigma_postgres_executor_ddl` y `libpq` siguen
 disponibles, pero no aplican el historial versionado.
 
-### Inicialización, adopción y tests
+### Inicialización y tests
 
 `zig build init-migrations` se usa una sola vez en un sistema sin historia: genera el baseline
 sin `IF NOT EXISTS` y el snapshot inicial. Este repositorio ya contiene esa revisión.
 
-`baseline-existing` se permite únicamente mientras `db/changes` contiene solo
-`000001_baseline.sql`. Sirve para incorporar a Liquibase una base que ya tenía sus tablas;
-un compañero que clona el historial completo y arranca sobre una base vacía usa el
+Un compañero que clona el historial completo y arranca sobre una base vacía usa el
 [arranque normal](README.md#arrancar-aida-con-postgresql).
 
-Para adoptar una base creada previamente por `postgres_bootstrap`, el comando exige tanto la
-URL libpq como la JDBC. Primero construye un schema esperado temporal, compara tablas,
-columnas y constraints, comprueba que no exista historia posterior y recién entonces ejecuta
-`changelog-sync`:
-
-```sh
-DATABASE_URL="postgresql://zigma:secret@localhost:5432/zigma_dev" \
-LIQUIBASE_COMMAND_URL="jdbc:postgresql://localhost:5432/zigma_dev" \
-LIQUIBASE_COMMAND_USERNAME=zigma \
-LIQUIBASE_COMMAND_PASSWORD=secret \
-ZIGMA_ACTUAL_SCHEMA=public \
-zig build baseline-existing \
-  -Dlibpq-prefix="$(brew --prefix libpq)" \
-  -Dliquibase-bin=/ruta/a/liquibase
-```
+El validador PostgreSQL compara la estructura resultante con el contrato durante
+la aceptación de migraciones y las integraciones. Liquibase conserva el registro
+de los changesets aplicados y ejecuta los pendientes al arrancar.
 
 La suite pura no necesita servicios externos. La suite completa fija PostgreSQL
 `18.4-alpine3.24` y requiere Docker, libpq y Liquibase 5.0.4:
@@ -598,8 +590,10 @@ archivos importa el controlador; comparten las declaraciones de `types.zig`.
 Esta distribución mantiene la representación textual y los bindings de validadores
 actuales; los codecs y repositorios tipados siguen siendo una etapa posterior.
 
-`zigma_rest.Api(Model, codecs)` produce en compilación la tabla de rutas y el dispatch
-para todas las entidades. Los codecs se mantienen separados tanto de `TypeDef` como de los
+`zigma_rest.Api(Model, codecs, validators)` es la única fábrica del controlador REST:
+produce en compilación la tabla de rutas y el dispatch para todas las entidades.
+El tercer argumento es el registro de validadores por entidad; se pasa `.{}` cuando
+no hay reglas de negocio. Los codecs se mantienen separados tanto de `TypeDef` como de los
 mappings SQL. El framework incluye `text`, `integer` y `boolean`; AIDA agrega `fecha` ISO
 `YYYY-MM-DD` y usa el codec de texto para `email`:
 
@@ -612,7 +606,7 @@ const codecs = rest.defineCodecs(aida.type_defs, zigma.merge(.{
     },
 }));
 
-const Api = rest.Api(aida.Model, codecs);
+const Api = rest.Api(aida.Model, codecs, .{});
 var api = Api.init(.{});
 var repository = postgres_crud.Repository(aida.Model).init(&connection);
 ```
@@ -628,7 +622,7 @@ const validators = rest.defineBusinessValidators(aida.Model, .{
     .docentes = rest.BusinessValidator{ .validate = validateDocenteBusinessRules },
 });
 
-const Api = rest.ApiWithBusinessValidators(aida.Model, codecs, validators);
+const Api = rest.Api(aida.Model, codecs, validators);
 ```
 
 Una regla rechazada responde `422` con el `code` y `message` definidos por la aplicación.

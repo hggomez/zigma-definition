@@ -10,7 +10,7 @@ const system = @import("system");
 const app_rest = @import("app_rest");
 const MemoryRepository = @import("memory_repository").MemoryRepository;
 
-const Model = zigma.System(system.type_defs, system.entity_defs);
+const Model = zigma.Framework(system.type_defs, system.entity_defs);
 const Repo = MemoryRepository(Model);
 const entity_names = @typeInfo(@TypeOf(Model.info)).@"struct".field_names;
 

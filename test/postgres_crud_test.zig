@@ -180,4 +180,4 @@ test "SQLSTATE class 23 maps to conflict and connection failure to unavailable" 
     );
 }
 
-const Model = zigma.System(zigma.common_type_defs, entity_defs);
+const Model = zigma.Framework(zigma.common_type_defs, entity_defs);

@@ -109,8 +109,10 @@ zig build test-aida-launcher # procesos simulados; sin PostgreSQL
 
 `run-aida` requiere las variables de conexión del [README](../README.md), sin Python.
 El build compila el backend real y ejecuta el paso `frontend` del consumidor AIDA con el
-mismo compilador. El lanzador Zig espera la API, sirve los archivos y cierra ambos con
-Ctrl+C en macOS/Linux. Solo `test-aida-launcher` requiere Python 3 para sus procesos
+mismo compilador. La entrada de la aplicación, `examples/aida/src/main.zig`, se compila
+como `aida-launcher`: espera la API, sirve los archivos y cierra ambos con Ctrl+C en
+macOS/Linux. `examples/aida/src/server.zig` sigue siendo la entrada del ejecutable
+`aida-rest-server`. Solo `test-aida-launcher` requiere Python 3 para sus procesos
 simulados; el ejecutable que se prueba es el mismo que utiliza `run-aida`.
 
 ## What the library build graph contains
@@ -126,7 +128,7 @@ simulados; el ejecutable que se prueba es el mismo que utiliza `run-aida`.
 
 `run-aida-rest` y `check-aida-rest` conservan las operaciones exclusivas del backend.
 `check-schema`, `migration` y `accept-migration` forman el flujo de cambios de schema;
-`init-migrations` y `baseline-existing` quedan para inicialización/adopción avanzadas.
+`init-migrations` inicializa una sola vez el historial de un sistema nuevo.
 El bootstrap DDL es un auxiliar de integración y no tiene un paso público de arranque.
 
 Módulos principales publicados por `build.zig`:

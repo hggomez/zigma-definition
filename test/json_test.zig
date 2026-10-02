@@ -175,7 +175,7 @@ test "stringifies a catalog from a system that is not aida" {
     var buf: [512]u8 = undefined;
     try expectEqualStrings(
         "[{\"name\":\"items\",\"pk\":[\"id\"],\"uks\":{},\"fks\":{},\"fields\":[{\"name\":\"id\",\"label\":\"id\",\"type\":\"text\",\"is_name\":false,\"nullable\":false,\"storage\":\"text\"},{\"name\":\"nombre\",\"label\":\"nombre\",\"type\":\"text\",\"is_name\":false,\"nullable\":true,\"storage\":\"text\"}]}]",
-        try zigma_json.stringifyEntityCatalog(zigma.System(tiny.type_defs, tiny.entity_defs), &buf),
+        try zigma_json.stringifyEntityCatalog(zigma.Framework(tiny.type_defs, tiny.entity_defs), &buf),
     );
 }
 

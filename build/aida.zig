@@ -104,7 +104,7 @@ pub fn addSteps(
     const aida_launcher = b.addExecutable(.{
         .name = "aida-launcher",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/run_aida.zig"),
+            .root_source_file = b.path("examples/aida/src/main.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -158,7 +158,7 @@ pub fn addSteps(
     );
     apply_migrations_step.dependOn(&run_apply_migrations.step);
 
-    // Operaciones avanzadas: solo se ejecutan al elegir su comando.
+    // Verifica el borrador antes de incorporarlo al historial aceptado.
     const accept_migration = b.addSystemCommand(&.{"sh"});
     accept_migration.addFileArg(b.path("tools/accept_migration.sh"));
     accept_migration.addArtifactArg(migration_tool);
@@ -167,14 +167,6 @@ pub fn addSteps(
     accept_migration.addDirectoryArg(b.path("."));
     const accept_migration_step = b.step("accept-migration", "Verify the draft in disposable PostgreSQL, then accept it");
     accept_migration_step.dependOn(&accept_migration.step);
-
-    const baseline_existing = b.addSystemCommand(&.{"sh"});
-    baseline_existing.addFileArg(b.path("tools/baseline_existing.sh"));
-    baseline_existing.addArtifactArg(schema_validator);
-    baseline_existing.addArg(liquibase_bin);
-    baseline_existing.addDirectoryArg(b.path("."));
-    const baseline_existing_step = b.step("baseline-existing", "Validate an existing bootstrap schema, then mark the initial baseline");
-    baseline_existing_step.dependOn(&baseline_existing.step);
 
     return .{
         .schema_guard = schema_guard,

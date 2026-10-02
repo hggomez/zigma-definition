@@ -59,19 +59,7 @@ if [ "$actual_public_tables" != "$expected_public_tables" ]; then
     exit 1
 fi
 
-DATABASE_URL="$database_url" ZIGMA_ACTUAL_SCHEMA=public "$schema_validator" --baseline-adoption
-
-# Baselining may ignore Liquibase's own tables, but it must reject any history
-# beyond the one initial baseline row.
-docker exec "$container_name" psql --username postgres --dbname zigma_test \
-    --command "CREATE TABLE public.databasechangelog (id TEXT, author TEXT); INSERT INTO public.databasechangelog VALUES ('000002_later', 'zigma');" \
-    >/dev/null
-if DATABASE_URL="$database_url" ZIGMA_ACTUAL_SCHEMA=public "$schema_validator" --baseline-adoption >/dev/null 2>&1; then
-    echo "schema validator unexpectedly accepted later Liquibase history" >&2
-    exit 1
-fi
-docker exec "$container_name" psql --username postgres --dbname zigma_test \
-    --command "DROP TABLE public.databasechangelog" >/dev/null
+DATABASE_URL="$database_url" ZIGMA_ACTUAL_SCHEMA=public "$schema_validator"
 
 ZIGMA_POSTGRES_URL="$database_url" \
 ZIGMA_POSTGRES_SCHEMA="$schema_name" \

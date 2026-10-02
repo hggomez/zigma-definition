@@ -279,8 +279,8 @@ test "creates the complete AIDA schema in dependency order" {
     try expectEqualStrings(expected, actual);
 }
 
-const QuotedModel = zigma.System(aida.type_defs, quoted_entity_defs);
+const QuotedModel = zigma.Framework(aida.type_defs, quoted_entity_defs);
 
-const ExtendedModel = zigma.System(aida.type_defs, extended_entity_defs);
+const ExtendedModel = zigma.Framework(aida.type_defs, extended_entity_defs);
 
-const ReverseDependencyModel = zigma.System(aida.type_defs, reverse_dependency_defs);
+const ReverseDependencyModel = zigma.Framework(aida.type_defs, reverse_dependency_defs);

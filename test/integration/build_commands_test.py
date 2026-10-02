@@ -42,7 +42,7 @@ class BuildCommandsTest(unittest.TestCase):
             "test", "test-model", "test-json", "test-aida-launcher",
             "test-postgres", "test-rest-postgres", "test-migrations",
             "check-schema", "migration", "accept-migration",
-            "init-migrations", "baseline-existing",
+            "init-migrations",
         }
         self.assertFalse(expected - self.steps, f"Comandos faltantes: {expected - self.steps}")
 

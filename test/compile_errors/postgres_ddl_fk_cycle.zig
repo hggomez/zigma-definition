@@ -23,6 +23,6 @@ comptime {
         .fields = right_fields,
     });
     const entities = zigma.defineEntities(.{ .lefts = lefts, .rights = rights });
-    const Model = zigma.System(zigma.common_type_defs, entities);
+    const Model = zigma.Framework(zigma.common_type_defs, entities);
     _ = ddl.createSchemaDdl(Model, ddl.common_type_mappings);
 }

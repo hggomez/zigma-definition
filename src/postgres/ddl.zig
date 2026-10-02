@@ -347,7 +347,7 @@ pub fn createTableDdl(
 ) []const u8 {
     // Valida los mappings específicos del destino antes de seleccionar una entidad.
     comptime checkTypeMappings(type_mappings);
-    // System ya comprobó que cada FK apunte a una PK o UK real del sistema.
+    // Framework ya comprobó que cada FK apunte a una PK o UK real del sistema.
     const model_info = Model.info;
     if (!@hasField(@TypeOf(model_info), table_name))
         @compileError("PostgreSQL DDL: unknown entity '" ++ table_name ++ "'");

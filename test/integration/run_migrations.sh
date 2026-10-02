@@ -3,9 +3,8 @@ set -eu
 
 validator=$1
 migration_applier=$2
-baseline_existing_script=$3
-liquibase_bin=$4
-project_root=$(CDPATH= cd "$5" && pwd)
+liquibase_bin=$3
+project_root=$(CDPATH= cd "$4" && pwd)
 
 case "$("$liquibase_bin" --version 2>&1)" in
     *5.0.4*) ;;
@@ -55,27 +54,6 @@ LIQUIBASE_CHANGELOG="$temp_dir/db/changelog-root.yaml" \
 "$migration_applier"
 
 DATABASE_URL="$database_url" ZIGMA_ACTUAL_SCHEMA=public "$validator"
-
-# Validate-then-mark adoption of a schema previously created from the raw
-# bootstrap DDL. This is deliberately a different schema from the normal
-# Liquibase startup above.
-docker exec "$container_name" psql -U postgres -d zigma_test -v ON_ERROR_STOP=1 \
-    -c 'CREATE SCHEMA legacy' >/dev/null
-docker exec -i "$container_name" psql -U postgres -d zigma_test -v ON_ERROR_STOP=1 \
-    -c 'SET search_path TO legacy, pg_catalog' -f - \
-    <"$project_root/db/changes/000001_baseline.sql" >/dev/null
-DATABASE_URL="$database_url" \
-LIQUIBASE_COMMAND_URL="$jdbc_url" \
-LIQUIBASE_COMMAND_USERNAME=postgres \
-LIQUIBASE_COMMAND_PASSWORD=postgres \
-ZIGMA_ACTUAL_SCHEMA=legacy \
-sh "$baseline_existing_script" "$validator" "$liquibase_bin" "$project_root"
-legacy_baseline_count=$(docker exec "$container_name" psql -U postgres -d zigma_test -At \
-    -c "SELECT count(*) FROM legacy.databasechangelog WHERE id = '000001_baseline' AND author = 'zigma'")
-if [ "$legacy_baseline_count" -ne 1 ]; then
-    echo "baseline-existing did not mark exactly the initial baseline" >&2
-    exit 1
-fi
 
 # A compact, independent history exercises the PostgreSQL operations that
 # require a manually resolved draft: rename, backfill, USING cast, PK change,

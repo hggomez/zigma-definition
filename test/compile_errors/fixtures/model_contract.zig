@@ -28,4 +28,4 @@ pub const entities = zigma.defineEntities(.{
     .things = things,
 });
 
-pub const Model = zigma.System(zigma.common_type_defs, entities);
+pub const Model = zigma.Framework(zigma.common_type_defs, entities);
