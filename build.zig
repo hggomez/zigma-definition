@@ -121,6 +121,16 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const ts_check_generator_mod = b.addModule("ts_check_generator", .{
+        .root_source_file = b.path("src/ts_check_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_mod },
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+        },
+    });
+
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/aida_test.zig"),
@@ -196,6 +206,19 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_ts_rules_generator_tests = b.addRunArtifact(ts_rules_generator_tests);
+
+    const ts_check_generator_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/ts_check_generator_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "ts_check_generator", .module = ts_check_generator_mod },
+            },
+        }),
+    });
+    const run_ts_check_generator_tests = b.addRunArtifact(ts_check_generator_tests);
 
     const print_schema_exe = b.addExecutable(.{
         .name = "print_schema",
@@ -281,8 +304,22 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    const print_ts_check_exe = b.addExecutable(.{
+        .name = "print_ts_check",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/print_ts_check.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "ts_check_generator", .module = ts_check_generator_mod },
+            },
+        }),
+    });
+
     const dml_ts = b.addRunArtifact(print_ts_backend_exe).captureStdOut(.{});
     const dml_test_ts = b.addRunArtifact(print_ts_backend_tests_exe).captureStdOut(.{});
+    const check_ts = b.addRunArtifact(print_ts_check_exe).captureStdOut(.{});
 
     // The generated files are written into the committed backend/ package
     // (gitignored there) so the hand-written integration test can import
@@ -290,13 +327,27 @@ pub fn build(b: *std.Build) void {
     const write_ts_backend = b.addUpdateSourceFiles();
     write_ts_backend.addCopyFileToSource(dml_ts, "backend/src/dml.ts");
     write_ts_backend.addCopyFileToSource(dml_test_ts, "backend/src/dml.test.ts");
+    write_ts_backend.addCopyFileToSource(check_ts, "backend/src/check.ts");
 
     const run_ts_backend_node_tests = b.addSystemCommand(&.{ "node", "--test", "src/dml.test.ts" });
     run_ts_backend_node_tests.setCwd(b.path("backend"));
     run_ts_backend_node_tests.step.dependOn(&write_ts_backend.step);
 
-    const ts_backend_step = b.step("ts-backend", "Generate the aida TypeScript DML module + tests into backend/, then run the pure tests with node");
+    // test/ts_check_test.zig: the generated check.ts, run from Node
+    const ts_check_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/ts_check_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_ts_check_tests = b.addRunArtifact(ts_check_tests);
+    run_ts_check_tests.has_side_effects = true;
+    run_ts_check_tests.step.dependOn(&write_ts_backend.step);
+
+    const ts_backend_step = b.step("ts-backend", "Generate the aida TypeScript modules (dml.ts, check.ts) + tests into backend/, then run the pure tests with node");
     ts_backend_step.dependOn(&run_ts_backend_node_tests.step);
+    ts_backend_step.dependOn(&run_ts_check_tests.step);
 
     // `zig build ts-backend-db`: bring up the container, reset the database and
     // apply the schema fresh, `npm install` in backend/, regenerate
@@ -386,6 +437,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_ts_backend_generator_tests.step);
     for (run_zig_type_map_tests) |run_map_tests| test_step.dependOn(&run_map_tests.step);
     test_step.dependOn(&run_ts_rules_generator_tests.step);
+    test_step.dependOn(&run_ts_check_generator_tests.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{

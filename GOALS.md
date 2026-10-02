@@ -452,7 +452,7 @@ generado desde esa misma descripción.
 |---|---|---|
 | TS → Zig (WASM) | `rules.ts` → `rules.wasm` | hecho: `std.json` parsea al tipo real (`"InvalidInput"`) |
 | TS → Postgres | DDL | **hecho: dominios** (abajo) |
-| HTTP → TS | `server.ts`: query string y cuerpo JSON | pendiente: descripción de restricciones por entidad + `check` genérico en TS |
+| HTTP → TS | `server.ts`: query string y cuerpo JSON | `check.ts` hecho (abajo); falta usarlo en `server.ts` |
 | Postgres → TS | filas que lee `pg` | cubierto si las otras dos valen |
 | HTTP → frontend | respuestas | pendiente (mismo `check`) |
 
@@ -466,6 +466,23 @@ usan los tipos del sistema antes que todo. Un dominio también sirve dentro de u
 compuesto (`fecha.mes zig_u8`), donde un `CHECK` común no puede ir. Los casts de los
 builders (`$2::zig_u8`) pasan por el chequeo. Probado contra Postgres: `mes: 300` →
 `23514` (check_violation), `mes: 255` entra.
+
+**Hecho: `check.ts`, el chequeo del lado TS.** `src/ts_check_generator.zig` genera
+`backend/src/check.ts` (gitignoreado, lo escribe `zig build ts-backend`), compartido por
+el server y, más adelante, el frontend:
+* una descripción por entidad, `<entidad>Restrictions`, derivada de los tipos de Zig: por
+  campo su tipo TS (`tsType`; un struct es `"object"` con sus campos), el rango de su
+  tipo entero de Zig (`min`/`max`, `n` si es `bigint`) y `nullable: true` solo si el campo
+  es nullable y no es pk;
+* un `check(restrictions, value)` genérico que devuelve todos los problemas como
+  `{ field, problem }` (camino con puntos en un struct), en el orden de los campos y
+  después las keys que no son campos; vacío si el valor cumple. Mensajes del framework, en
+  inglés: `missing`, `not a field`, `must not be null`, `expected a <tipo>`,
+  `must be an integer`, `out of range <min>..<max>`. Un campo faltante es un problema aunque
+  sea nullable (el `null` tiene que ser explícito).
+
+Chequea un valor TS ya decodificado; pasar de texto JSON a valores TS exactos (el `bigint`)
+es el decodificador pendiente.
 
 ## Próximos pasos
 

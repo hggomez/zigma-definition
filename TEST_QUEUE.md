@@ -141,9 +141,17 @@ revisión antes de implementar.
   `null`): en HTTP tendría que ser un 400/422 con el campo, no un 500.
 * `domainTypes` mira un solo nivel de struct: un struct anidado en un struct no está
   soportado todavía en SQL (ver arriba), cuando lo esté hay que recorrerlo también.
-* Descripción de restricciones por entidad + `check` genérico en TS (HTTP → TS).
+* Usar `check` en `server.ts` (query string y cuerpo JSON) y, para un `PUT`, con la
+  descripción de los campos no-pk solamente.
+* `check` sobre un valor con un array donde va un objeto da `expected an object`, no está
+  probado.
 
 ## Hechos restricciones de Zig (referencia rápida, no repetir)
+
+* `check.ts` (`ts_check_generator`): `<entidad>Restrictions` derivada de los tipos de Zig
+  (`test/ts_check_generator_test.zig`) y `check` genérico probado en Node sobre
+  `clasesRestrictions` (`test/ts_check_test.zig`): rango, entero, tipo, null en pk vs
+  nullable, faltante, campo de más, struct anidado, varios problemas juntos.
 
 * Dominios de Postgres para enteros angostos (`zig_u8`, `zig_i8`, `zig_u16`):
   `sqlDomain`, `sqlType` → nombre del dominio, `createDomainSql`, `schemaSql` los emite

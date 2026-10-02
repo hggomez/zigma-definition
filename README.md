@@ -134,6 +134,8 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
   `selectAll`, `update`, `delete`, cada uno devuelve `{ text, values }` para `pg`) y sus
   tests de Node.
 * `examples/print_*.zig`: ejecutables que imprimen lo generado para aida.
+* `src/ts_check_generator.zig`: genera `check.ts`, el chequeo del lado TS de que un valor
+  cumple la restricción real de sus tipos de Zig (tipo, rango de enteros, nullable).
 * `src/ts_rules_generator.zig`: genera `rules.ts`, la cara TS tipada de las reglas de
   dominio compiladas a WASM.
 * `examples/aida_rules_wasm.zig`: exporta a WASM cada regla de `aida.rule_defs`
@@ -146,6 +148,8 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
   `test/zig_type_map_{sql,ts,json}_test.zig`: tests de los generadores y de cada mapeo de tipos.
 * `test/db_backend_integration_test.zig`: tests de integración contra Postgres real.
 * `test/ts_rules_generator_test.zig`: tests del generador de `rules.ts`.
+* `test/ts_check_generator_test.zig` / `test/ts_check_test.zig`: tests del generador de
+  `check.ts` y de `check` corriendo en Node.
 * `test/rules_wasm_test.zig`: las reglas compiladas a WASM, llamadas desde Node (directo y
   a través de `rules.ts`).
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de

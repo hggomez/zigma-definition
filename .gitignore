@@ -6,3 +6,4 @@ backend/src/dml.ts
 backend/src/dml.test.ts
 backend/src/rules.wasm
 backend/src/rules.ts
+backend/src/check.ts
