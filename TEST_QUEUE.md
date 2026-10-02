@@ -135,6 +135,20 @@ revisión antes de implementar.
   solo los campos que lo necesitan, recursivo en structs (`{ ...value, f: … }`); un
   record sin nada que convertir pasa `value` tal cual (`test/ts_rules_generator_test.zig`).
 
+## Pendientes (restricciones de Zig)
+
+* Una violación de rango de un dominio (`23514`) hoy no es un `domainError` (devuelve
+  `null`): en HTTP tendría que ser un 400/422 con el campo, no un 500.
+* `domainTypes` mira un solo nivel de struct: un struct anidado en un struct no está
+  soportado todavía en SQL (ver arriba), cuando lo esté hay que recorrerlo también.
+* Descripción de restricciones por entidad + `check` genérico en TS (HTTP → TS).
+
+## Hechos restricciones de Zig (referencia rápida, no repetir)
+
+* Dominios de Postgres para enteros angostos (`zig_u8`, `zig_i8`, `zig_u16`):
+  `sqlDomain`, `sqlType` → nombre del dominio, `createDomainSql`, `schemaSql` los emite
+  primero; integración: `mes: 300` → `23514`, `mes: 255` entra.
+
 ## Hechos (referencia rápida, no repetir)
 
 * Columna simple con su tipo SQL (`createTableSql`, un campo).

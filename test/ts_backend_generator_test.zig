@@ -261,7 +261,7 @@ test "insertFn: a nullable struct column is encoded as CASE/ROW over one paramet
     try expectEqualStrings(
         \\export function insertLugar(row: { lugar: string, ubicacion: { x: number; y: number } }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'INSERT INTO "lugar" ("lugar", "ubicacion") VALUES ($1, CASE WHEN $2::SMALLINT IS NULL THEN NULL ELSE ROW($2::SMALLINT, $3::INTEGER)::punto END)',
+        \\    text: 'INSERT INTO "lugar" ("lugar", "ubicacion") VALUES ($1, CASE WHEN $2::SMALLINT IS NULL THEN NULL ELSE ROW($2::SMALLINT, $3::zig_u16)::punto END)',
         \\    values: [row.lugar, row.ubicacion?.x ?? null, row.ubicacion?.y ?? null],
         \\  };
         \\}
@@ -294,7 +294,7 @@ test "updateFn: a struct column in SET takes one placeholder per field, the WHER
     try expectEqualStrings(
         \\export function updateLugar(pk: { lugar: string }, row: { ubicacion: { x: number; y: number } }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'UPDATE "lugar" SET "ubicacion" = CASE WHEN $1::SMALLINT IS NULL THEN NULL ELSE ROW($1::SMALLINT, $2::INTEGER)::punto END WHERE "lugar" = $3',
+        \\    text: 'UPDATE "lugar" SET "ubicacion" = CASE WHEN $1::SMALLINT IS NULL THEN NULL ELSE ROW($1::SMALLINT, $2::zig_u16)::punto END WHERE "lugar" = $3',
         \\    values: [row.ubicacion?.x ?? null, row.ubicacion?.y ?? null, pk.lugar],
         \\  };
         \\}
@@ -320,7 +320,7 @@ test "insertFn: a pk struct column is encoded as a plain ROW" {
     try expectEqualStrings(
         \\export function insertMarca(row: { punto: { x: number; y: number }, nombre: string }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'INSERT INTO "marca" ("punto", "nombre") VALUES (ROW($1::SMALLINT, $2::INTEGER)::punto, $3)',
+        \\    text: 'INSERT INTO "marca" ("punto", "nombre") VALUES (ROW($1::SMALLINT, $2::zig_u16)::punto, $3)',
         \\    values: [row.punto.x, row.punto.y, row.nombre],
         \\  };
         \\}
@@ -331,7 +331,7 @@ test "selectByPkFn: a struct pk is compared against a ROW, independent of the ke
     try expectEqualStrings(
         \\export function selectMarcaByPk(pk: { punto: { x: number; y: number } }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'SELECT to_jsonb("punto") AS "punto", "nombre" FROM "marca" WHERE "punto" = ROW($1::SMALLINT, $2::INTEGER)::punto',
+        \\    text: 'SELECT to_jsonb("punto") AS "punto", "nombre" FROM "marca" WHERE "punto" = ROW($1::SMALLINT, $2::zig_u16)::punto',
         \\    values: [pk.punto.x, pk.punto.y],
         \\  };
         \\}
@@ -342,7 +342,7 @@ test "updateFn: a struct pk in WHERE continues the numbering after the SET" {
     try expectEqualStrings(
         \\export function updateMarca(pk: { punto: { x: number; y: number } }, row: { nombre: string }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'UPDATE "marca" SET "nombre" = $1 WHERE "punto" = ROW($2::SMALLINT, $3::INTEGER)::punto',
+        \\    text: 'UPDATE "marca" SET "nombre" = $1 WHERE "punto" = ROW($2::SMALLINT, $3::zig_u16)::punto',
         \\    values: [row.nombre, pk.punto.x, pk.punto.y],
         \\  };
         \\}
@@ -353,7 +353,7 @@ test "deleteFn: a struct pk is compared against a ROW" {
     try expectEqualStrings(
         \\export function deleteMarca(pk: { punto: { x: number; y: number } }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'DELETE FROM "marca" WHERE "punto" = ROW($1::SMALLINT, $2::INTEGER)::punto',
+        \\    text: 'DELETE FROM "marca" WHERE "punto" = ROW($1::SMALLINT, $2::zig_u16)::punto',
         \\    values: [pk.punto.x, pk.punto.y],
         \\  };
         \\}

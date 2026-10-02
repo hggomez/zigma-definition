@@ -429,8 +429,8 @@ descargas (ya pasó una vez).
     `BigInt` exacto, `number` → entero (`Number.isInteger`), `boolean` →
     `true`/`false`; los campos de un struct van con puntos
     (`fecha.año=2026&fecha.mes=3&fecha.día=14`) y se rearman en el objeto. Cualquier otra
-    cosa: 400. Consecuencia aceptada: el TS `number` no dice el rango (`u8` vs `i32`),
-    así que `?mes=300` no se rechaza acá.
+    cosa: 400. El TS `number` no dice el rango (`u8` vs `i32`): eso lo cubren los
+    chequeos de "Restricciones de Zig en cada lenguaje" (abajo).
   * JSON (cuerpo y respuesta): **mapa propio, `src/zig_type_map_json.zig`** (hecho, tests
     en `test/zig_type_map_json_test.zig`), mismo patrón que el de SQL y el de TS: por
     `@typeName`, resuelto a través de los dominios. Cada tipo tiene su tipo JSON
@@ -439,6 +439,33 @@ descargas (ya pasó una vez).
     original del valor, `context.source` del reviver en Node 22). Hoy solo `i64`:
     `JSON.rawJSON(v.toString())` / `BigInt(source)`. Igual que con `pg`, la conversión en
     runtime la hace la librería (`JSON`), y el mapa dice qué hooks generar.
+
+## Restricciones de Zig en cada lenguaje
+
+**Principio.** Cada vez que un dato entra a un lenguaje, se chequea contra el tipo de Zig
+(su restricción real: entero entre `std.math.minInt`/`maxInt`, struct con exactamente
+esos campos, `null` solo donde el campo es nullable y no es pk). La restricción no se
+escribe a mano: el generador la deriva del tipo de Zig, y cada lenguaje recibe un chequeo
+generado desde esa misma descripción.
+
+| entrada | dónde | estado |
+|---|---|---|
+| TS → Zig (WASM) | `rules.ts` → `rules.wasm` | hecho: `std.json` parsea al tipo real (`"InvalidInput"`) |
+| TS → Postgres | DDL | **hecho: dominios** (abajo) |
+| HTTP → TS | `server.ts`: query string y cuerpo JSON | pendiente: descripción de restricciones por entidad + `check` genérico en TS |
+| Postgres → TS | filas que lee `pg` | cubierto si las otras dos valen |
+| HTTP → frontend | respuestas | pendiente (mismo `check`) |
+
+**Hecho: dominios de Postgres.** Un entero de Zig más angosto que el entero de Postgres
+que lo guarda tiene un `DOMAIN` chequeado al rango de Zig: `u8` → `zig_u8` (`SMALLINT`,
+0..255), `i8` → `zig_i8`, `u16` → `zig_u16` (`INTEGER`, 0..65535); `i16`/`i32`/`i64`
+coinciden exacto con `SMALLINT`/`INTEGER`/`BIGINT` y no lo necesitan.
+`zig_type_map_sql.sqlDomain` lo deriva del tipo de Zig y `sqlType` devuelve el nombre del
+dominio; `sql_generator.createDomainSql` lo emite y `schemaSql` pone los dominios que
+usan los tipos del sistema antes que todo. Un dominio también sirve dentro de un tipo
+compuesto (`fecha.mes zig_u8`), donde un `CHECK` común no puede ir. Los casts de los
+builders (`$2::zig_u8`) pasan por el chequeo. Probado contra Postgres: `mes: 300` →
+`23514` (check_violation), `mes: 255` entra.
 
 ## Próximos pasos
 

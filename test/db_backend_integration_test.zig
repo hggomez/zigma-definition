@@ -326,6 +326,44 @@ const domain_errors_script =
     \\}
 ;
 
+// The database holds only what the Zig types can: `fecha.mes` is a u8, so
+// Postgres rejects 300 (check_violation, 23514, from the zig_u8 domain) even
+// though its storage (SMALLINT) could hold it; 255, the largest u8, goes in.
+// Prints ZIG_RANGE_OK.
+const zig_range_script =
+    \\import {
+    \\  insertPeriodos, deletePeriodos, insertMaterias, deleteMaterias,
+    \\  insertCursos, deleteCursos, insertClases, deleteClases, pgTypes,
+    \\} from './src/dml.ts';
+    \\import { strictEqual } from 'node:assert';
+    \\import pg from 'pg';
+    \\const connectionString = process.env.DATABASE_URL ?? 'postgres://aida:aida@localhost:5432/aida';
+    \\const pool = new pg.Pool({ connectionString, types: pgTypes(pg.types) });
+    \\const run = (q) => pool.query(q.text, q.values);
+    \\const periodo = 'it-range-' + Date.now();
+    \\const materia = periodo;
+    \\const curso = { periodo, materia };
+    \\const clase = { ...curso, orden: 1n };
+    \\try {
+    \\  await run(insertPeriodos({ periodo }));
+    \\  await run(insertMaterias({ materia, denominacion: materia }));
+    \\  await run(insertCursos({ ...curso, docente: null }));
+    \\  let code = null;
+    \\  try {
+    \\    await run(insertClases({ ...clase, fecha: { año: 2026, mes: 300, día: 1 }, tema: 't' }));
+    \\  } catch (err) { code = err.code; }
+    \\  strictEqual(code, '23514', 'mes 300 no es un u8: la base lo rechaza');
+    \\  await run(insertClases({ ...clase, fecha: { año: 2026, mes: 255, día: 1 }, tema: 't' }));
+    \\  console.log('ZIG_RANGE_OK');
+    \\} finally {
+    \\  await run(deleteClases(clase));
+    \\  await run(deleteCursos(curso));
+    \\  await run(deleteMaterias({ materia }));
+    \\  await run(deletePeriodos({ periodo }));
+    \\  await pool.end();
+    \\}
+;
+
 /// Runs `script` with node from `backend/` and expects exit 0 and `marker` on
 /// stdout; on failure dumps node's stdout/stderr.
 fn expectNodeScriptOk(script: []const u8, marker: []const u8) !void {
@@ -386,4 +424,8 @@ test "a composite-pk entity (inscripciones) is found and deleted by its full pk"
 
 test "pk, uk and fk violations map to domain errors" {
     try expectNodeScriptOk(domain_errors_script, "DOMAIN_ERRORS_OK");
+}
+
+test "the database rejects a value outside the range of its Zig type" {
+    try expectNodeScriptOk(zig_range_script, "ZIG_RANGE_OK");
 }

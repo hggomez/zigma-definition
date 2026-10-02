@@ -5,6 +5,7 @@
 const std = @import("std");
 const zigma = @import("zigma");
 const sqlType = @import("zig_type_map_sql").sqlType;
+const sqlDomain = @import("zig_type_map_sql").sqlDomain;
 
 fn isPkField(comptime pk: anytype, comptime name: []const u8) bool {
     inline for (pk) |pk_name| {
@@ -112,22 +113,58 @@ pub fn createTypeSql(comptime type_defs: anytype, comptime name: []const u8) []c
     return "CREATE TYPE " ++ name ++ " AS (\n    " ++ clauses ++ "\n);";
 }
 
+/// Generates the `CREATE DOMAIN` of a Zig integer type narrower than its
+/// Postgres integer (`zig_type_map_sql.sqlDomain`): the column type checked
+/// to the Zig range.
+pub fn createDomainSql(comptime T: type) []const u8 {
+    const domain = sqlDomain(T) orelse
+        @compileError("type '" ++ @typeName(T) ++ "' needs no SQL domain");
+    return std.fmt.comptimePrint("CREATE DOMAIN {s} AS {s} CHECK (VALUE BETWEEN {d} AND {d});", .{
+        domain.name, domain.base, domain.min, domain.max,
+    });
+}
+
+/// The Zig types of `type_defs` that need a SQL domain, each once, in order
+/// of first appearance (a struct-backed domain contributes its fields).
+fn domainTypes(comptime type_defs: anytype) []const type {
+    comptime var found: []const type = &.{};
+    inline for (@typeInfo(@TypeOf(type_defs)).@"struct".field_names) |type_name| {
+        const T = @field(type_defs, type_name).Type;
+        const candidates: []const type = switch (@typeInfo(T)) {
+            .@"struct" => |info| info.field_types,
+            else => &.{T},
+        };
+        inline for (candidates) |C| {
+            if (sqlDomain(C) == null) continue;
+            const seen = inline for (found) |F| {
+                if (F == C) break true;
+            } else false;
+            if (!seen) found = found ++ [_]type{C};
+        }
+    }
+    return found;
+}
+
 fn isStructDomain(comptime type_defs: anytype, comptime name: []const u8) bool {
     if (!@hasField(@TypeOf(type_defs), name)) return false;
     return @typeInfo(@field(type_defs, name).Type) == .@"struct";
 }
 
-/// Generates one `CREATE TYPE` per struct-backed domain of `type_defs`, then
+/// Generates one `CREATE DOMAIN` per narrow integer type the system's types
+/// use, then one `CREATE TYPE` per struct-backed domain of `type_defs`, then
 /// one `CREATE TABLE` per entity of `entity_defs` (as produced by
 /// `zigma.defineEntity`/`zigma.defineEntities`, not yet completed), each in
-/// declaration order, separated by a blank line. The types go first because
-/// the tables' columns reference them.
+/// declaration order, separated by a blank line. Each group goes before the
+/// one that references it.
 pub fn schemaSql(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     // completeEntity's fk-completion loop costs comptime branches per fk;
     // across a whole system's worth of entities that adds up past the
     // default 1000-branch quota (hit at aida's 11 entities).
     @setEvalBranchQuota(10000);
     comptime var statements: []const u8 = "";
+    inline for (domainTypes(type_defs)) |T| {
+        statements = statements ++ createDomainSql(T) ++ "\n\n";
+    }
     inline for (@typeInfo(@TypeOf(type_defs)).@"struct".field_names) |type_name| {
         if (comptime !isStructDomain(type_defs, type_name)) continue;
         statements = statements ++ createTypeSql(type_defs, type_name) ++ "\n\n";

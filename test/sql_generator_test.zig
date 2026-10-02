@@ -83,7 +83,7 @@ test "schemaSql generates one CREATE TABLE per entity, in declaration order, for
 // ---- struct-backed domains: Postgres composite types ----
 
 // punto: a struct-backed domain; each field's SQL type comes from its Zig
-// type through the framework's map (i16 -> SMALLINT, u16 -> INTEGER).
+// type through the framework's map (i16 -> SMALLINT, u16 -> zig_u16).
 const Punto = struct { x: i16, y: u16 };
 const con_punto_type_defs = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{
     .punto = zigma.TypeDef{ .Type = Punto },
@@ -94,9 +94,52 @@ test "createTypeSql generates the composite type of a struct-backed domain, one 
     try expectEqualStrings(
         \\CREATE TYPE punto AS (
         \\    x SMALLINT,
-        \\    y INTEGER
+        \\    y zig_u16
         \\);
     , punto_type_ddl);
+}
+
+// ---- Zig ranges in Postgres: one DOMAIN per narrow integer type ----
+//
+// A Zig integer narrower than the Postgres integer that holds it (u8, i8 in
+// SMALLINT; u16 in INTEGER) gets a domain checked to the Zig range, so the
+// database cannot hold a value the Zig type cannot. The range comes from the
+// Zig type (std.math.minInt / maxInt). A domain also works inside a
+// composite type, where a plain CHECK cannot go.
+
+const zig_u8_ddl = sql.createDomainSql(u8);
+const zig_i8_ddl = sql.createDomainSql(i8);
+const zig_u16_ddl = sql.createDomainSql(u16);
+
+test "createDomainSql generates the domain of a narrow integer, with the Zig range" {
+    try expectEqualStrings("CREATE DOMAIN zig_u8 AS SMALLINT CHECK (VALUE BETWEEN 0 AND 255);", zig_u8_ddl);
+    try expectEqualStrings("CREATE DOMAIN zig_i8 AS SMALLINT CHECK (VALUE BETWEEN -128 AND 127);", zig_i8_ddl);
+    try expectEqualStrings("CREATE DOMAIN zig_u16 AS INTEGER CHECK (VALUE BETWEEN 0 AND 65535);", zig_u16_ddl);
+}
+
+// edad: a domain over a narrow integer used directly as a column
+const con_edad_type_defs = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{
+    .edad = zigma.TypeDef{ .Type = u8 },
+} }));
+const persona_edad = zigma.defineEntity(.{
+    .pk = .{"nombre"},
+    .fields = zigma.record(con_edad_type_defs, .{
+        .nombre = .{ .type = "text" },
+        .edad = .{ .type = "edad" },
+    }),
+});
+const con_edad_ddl = sql.schemaSql(con_edad_type_defs, zigma.defineEntities(.{ .persona_edad = persona_edad }));
+
+test "schemaSql generates the domains the system's types use, before everything, for a column too" {
+    try expectEqualStrings(
+        \\CREATE DOMAIN zig_u8 AS SMALLINT CHECK (VALUE BETWEEN 0 AND 255);
+        \\
+        \\CREATE TABLE persona_edad (
+        \\    nombre TEXT NOT NULL,
+        \\    edad zig_u8,
+        \\    CONSTRAINT persona_edad_pk PRIMARY KEY (nombre)
+        \\);
+    , con_edad_ddl);
 }
 
 const lugar = zigma.defineEntity(.{
@@ -108,11 +151,13 @@ const lugar = zigma.defineEntity(.{
 });
 const con_punto_ddl = sql.schemaSql(con_punto_type_defs, zigma.defineEntities(.{ .lugar = lugar }));
 
-test "schemaSql generates the CREATE TYPE of every struct-backed domain before the tables" {
+test "schemaSql generates the domains, then the CREATE TYPE of every struct-backed domain, before the tables" {
     try expectEqualStrings(
+        \\CREATE DOMAIN zig_u16 AS INTEGER CHECK (VALUE BETWEEN 0 AND 65535);
+        \\
         \\CREATE TYPE punto AS (
         \\    x SMALLINT,
-        \\    y INTEGER
+        \\    y zig_u16
         \\);
         \\
         \\CREATE TABLE lugar (
@@ -351,12 +396,16 @@ test "cyclic fks between two distinct entities generate both CREATE TABLEs" {
 
 const aida_schema_ddl = sql.schemaSql(aida.type_defs, aida.entity_defs);
 
-test "generates the full aida schema: the fecha composite type, then one CREATE TABLE per entity, in declaration order" {
+test "generates the full aida schema: the domains of Fecha's fields, the fecha composite type, then one CREATE TABLE per entity, in declaration order" {
     try expectEqualStrings(
+        \\CREATE DOMAIN zig_u16 AS INTEGER CHECK (VALUE BETWEEN 0 AND 65535);
+        \\
+        \\CREATE DOMAIN zig_u8 AS SMALLINT CHECK (VALUE BETWEEN 0 AND 255);
+        \\
         \\CREATE TYPE fecha AS (
-        \\    año INTEGER,
-        \\    mes SMALLINT,
-        \\    día SMALLINT
+        \\    año zig_u16,
+        \\    mes zig_u8,
+        \\    día zig_u8
         \\);
         \\
         \\CREATE TABLE docentes (

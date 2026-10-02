@@ -28,16 +28,31 @@ test "bool maps to BOOLEAN" {
     try expectEqualStrings("BOOLEAN", sqlTypeOf(bool));
 }
 
-test "integers that fit in 16 signed bits map to SMALLINT" {
-    try expectEqualStrings("SMALLINT", sqlTypeOf(u8));
-    try expectEqualStrings("SMALLINT", sqlTypeOf(i8));
+test "an integer whose range is exactly that of a Postgres integer maps to it" {
     try expectEqualStrings("SMALLINT", sqlTypeOf(i16));
+    try expectEqualStrings("INTEGER", sqlTypeOf(i32));
 }
 
-test "integers that fit in 32 signed bits but not 16 map to INTEGER" {
-    // u16 does not fit in SMALLINT (max 32767)
-    try expectEqualStrings("INTEGER", sqlTypeOf(u16));
-    try expectEqualStrings("INTEGER", sqlTypeOf(i32));
+test "an integer narrower than its Postgres integer maps to a domain with the Zig range" {
+    // the column must not hold what the Zig type cannot: zig_u8 is a SMALLINT
+    // checked to 0..255 (see createDomainSql in sql_generator)
+    try expectEqualStrings("zig_u8", sqlTypeOf(u8));
+    try expectEqualStrings("zig_i8", sqlTypeOf(i8));
+    // u16 does not fit in SMALLINT (max 32767): an INTEGER checked to 0..65535
+    try expectEqualStrings("zig_u16", sqlTypeOf(u16));
+}
+
+test "sqlDomain gives the Postgres integer and the Zig range of a narrow integer, null otherwise" {
+    const d = map_sql.sqlDomain(u8).?;
+    try expectEqualStrings("zig_u8", d.name);
+    try expectEqualStrings("SMALLINT", d.base);
+    try std.testing.expect(d.min == 0 and d.max == 255);
+    const d16 = map_sql.sqlDomain(u16).?;
+    try expectEqualStrings("INTEGER", d16.base);
+    try std.testing.expect(d16.min == 0 and d16.max == 65535);
+    try std.testing.expect(map_sql.sqlDomain(i16) == null);
+    try std.testing.expect(map_sql.sqlDomain(i64) == null);
+    try std.testing.expect(map_sql.sqlDomain(bool) == null);
 }
 
 test "i64 maps to BIGINT" {
