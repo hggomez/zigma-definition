@@ -122,8 +122,6 @@ revisión antes de implementar.
 
 ## Pendientes (mapa de tipos a JSON)
 
-* `rules.ts` todavía convierte con un replacer ciego al tipo (`typeof v === "bigint"`):
-  pasarlo a los hooks por campo generados desde `jsonEncode`.
 * `jsonDecode` todavía no lo usa nadie: aparece con el cuerpo JSON de `server.ts`.
 * Rango de los enteros chicos (`u8` en `number`): ni el query string ni el JSON lo
   chequean; solo Zig, si el valor llega a una regla.
@@ -133,6 +131,9 @@ revisión antes de implementar.
 * `zig_type_map_json` (`test/zig_type_map_json_test.zig`): `jsonType` / `jsonEncode` /
   `jsonDecode` por `@typeName` y a través de dominios; struct → `"object"` sin
   encode/decode propio; `f32` y un dominio sobre `f32` no compilan.
+* `rules.ts` convierte por campo desde `jsonEncode` (ya no con un replacer ciego al tipo):
+  solo los campos que lo necesitan, recursivo en structs (`{ ...value, f: … }`); un
+  record sin nada que convertir pasa `value` tal cual (`test/ts_rules_generator_test.zig`).
 
 ## Hechos (referencia rápida, no repetir)
 

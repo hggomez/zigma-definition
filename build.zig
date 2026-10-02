@@ -117,6 +117,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "zigma", .module = zigma_mod },
             .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+            .{ .name = "zig_type_map_json", .module = zig_type_map_json_mod },
         },
     });
 
