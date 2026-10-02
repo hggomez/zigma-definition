@@ -125,8 +125,9 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
 * `src/zigma.zig`: el framework descriptor (módulo `zigma`); no conoce ningún sistema
   concreto.
 * `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
-* `src/zig_type_map_sql.zig` / `src/zig_type_map_ts.zig`: el mapeo de tipos de Zig a
-  Postgres y a TypeScript (`sqlType` / `tsType`), indexado por `@typeName`.
+* `src/zig_type_map_sql.zig` / `src/zig_type_map_ts.zig` / `src/zig_type_map_json.zig`:
+  el mapeo de tipos de Zig a Postgres, a TypeScript y a JSON (`sqlType` / `tsType` /
+  `jsonType`, `jsonEncode`, `jsonDecode`), indexado por `@typeName`.
 * `src/sql_generator.zig`: genera el DDL (`CREATE TYPE` de los dominios respaldados por un
   struct, `CREATE TABLE` por entidad) desde las definiciones.
 * `src/ts_backend_generator.zig`: genera los builders TS de DML (`insert`, `select…ByPk`,
@@ -142,7 +143,7 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
 * `docker-compose.yml`: el Postgres de desarrollo.
 * `test/aida_test.zig`: los tests positivos del framework.
 * `test/sql_generator_test.zig`, `test/ts_backend_generator_test.zig`,
-  `test/zig_type_map_test.zig`: tests de los generadores y los mapeos.
+  `test/zig_type_map_{sql,ts,json}_test.zig`: tests de los generadores y de cada mapeo de tipos.
 * `test/db_backend_integration_test.zig`: tests de integración contra Postgres real.
 * `test/ts_rules_generator_test.zig`: tests del generador de `rules.ts`.
 * `test/rules_wasm_test.zig`: las reglas compiladas a WASM, llamadas desde Node (directo y

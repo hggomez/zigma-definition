@@ -120,6 +120,20 @@ revisión antes de implementar.
 * `domainErrorFn`: tabla constraint → `{ kind, entity, key }` y `domainError(err)`, en
   `dml.ts` después de `pgTypes`. Constraints nombradas en el DDL (`sql_generator_test`).
 
+## Pendientes (mapa de tipos a JSON)
+
+* `rules.ts` todavía convierte con un replacer ciego al tipo (`typeof v === "bigint"`):
+  pasarlo a los hooks por campo generados desde `jsonEncode`.
+* `jsonDecode` todavía no lo usa nadie: aparece con el cuerpo JSON de `server.ts`.
+* Rango de los enteros chicos (`u8` en `number`): ni el query string ni el JSON lo
+  chequean; solo Zig, si el valor llega a una regla.
+
+## Hechos mapa JSON (referencia rápida, no repetir)
+
+* `zig_type_map_json` (`test/zig_type_map_json_test.zig`): `jsonType` / `jsonEncode` /
+  `jsonDecode` por `@typeName` y a través de dominios; struct → `"object"` sin
+  encode/decode propio; `f32` y un dominio sobre `f32` no compilan.
+
 ## Hechos (referencia rápida, no repetir)
 
 * Columna simple con su tipo SQL (`createTableSql`, un campo).
@@ -148,7 +162,7 @@ revisión antes de implementar.
   (`ts_struct_field_needs_parser.zig`, chequeo en `StructOf` de `ts_backend_generator`).
 * Tipo sin mapeo SQL no compila (`test/compile_errors/
   sql_unknown_type_mapping.zig`, mensaje `"type 'x' has no SQL mapping"`).
-* Resolución de tipos (`test/zig_type_map_test.zig`): primitivos por `@typeName` (incl.
+* Resolución de tipos (`test/zig_type_map_sql_test.zig`, `test/zig_type_map_ts_test.zig`): primitivos por `@typeName` (incl.
   `i64` → `BIGINT`/`bigint`), dominios a través de su tipo de Zig (`email`), struct →
   compuesto en SQL / objeto en TS; no compilan: `f32`, dominio sobre `f32`, nombre
   inexistente.

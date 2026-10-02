@@ -400,9 +400,49 @@ backend es solo `FROM node` copiando lo generado, sin Zig adentro. Alternativa: 
 multi-stage con Zig, con el riesgo de que la versión dev pineada desaparezca de las
 descargas (ya pasó una vez).
 
+## HTTP: decisiones
+
+* **Generado**: `server.ts` sale del SSOT como `dml.ts` y `rules.ts`.
+* **URLs con query string, usables a mano.** Requisito: el usuario del navegador puede
+  "usar" el sistema modificando la URL. Las URLs del frontend van a espejar las de la API,
+  que vive bajo `/api/` para que el frontend sea dueño de los paths pelados. El path es
+  solo el nombre de la entidad; todo lo que identifica o filtra va en el query string:
+
+  | operación | pedido |
+  |---|---|
+  | listar | `GET /api/docentes` |
+  | filtrar | `GET /api/cursos?periodo=2026-1c` (cualquier subconjunto de campos, igualdad) |
+  | una fila | `GET /api/inscripciones?periodo=…&materia=…&alumno=…` (pk completa = filtro de ≤ 1 fila) |
+  | alta | `POST /api/docentes`, cuerpo JSON |
+  | modificación | `PUT /api/docentes?docente=D1`, cuerpo JSON con los campos no-pk; pk completa obligatoria |
+  | baja | `DELETE /api/docentes?docente=D1`; pk completa obligatoria |
+
+  Un parámetro que no es campo de la entidad, uno repetido, o un `PUT`/`DELETE` sin la pk
+  completa: 400. Filtrar por cualquier subconjunto necesita un builder nuevo
+  (`select<E>Where`): el SQL se arma solo con nombres de campo de la definición, los
+  valores siempre como parámetros.
+* **Las escrituras no se hacen por URL**: solo `POST`/`PUT`/`DELETE` (un `GET` que escribe
+  lo disparan prefetch, previews de links y crawlers).
+* **Valores**, derivados del tipo de Zig de cada campo:
+  * Query string (texto, no JSON, sin mapa propio): se parsea en el TS generado según el
+    `tsType` del campo: `string` tal cual, `bigint` → solo dígitos (con `-` opcional) →
+    `BigInt` exacto, `number` → entero (`Number.isInteger`), `boolean` →
+    `true`/`false`; los campos de un struct van con puntos
+    (`fecha.año=2026&fecha.mes=3&fecha.día=14`) y se rearman en el objeto. Cualquier otra
+    cosa: 400. Consecuencia aceptada: el TS `number` no dice el rango (`u8` vs `i32`),
+    así que `?mes=300` no se rechaza acá.
+  * JSON (cuerpo y respuesta): **mapa propio, `src/zig_type_map_json.zig`** (hecho, tests
+    en `test/zig_type_map_json_test.zig`), mismo patrón que el de SQL y el de TS: por
+    `@typeName`, resuelto a través de los dominios. Cada tipo tiene su tipo JSON
+    (`jsonType`), y solo los que `JSON.parse`/`JSON.stringify` no manejan solos llevan
+    expresiones TS: `jsonEncode` (sobre `v`) y `jsonDecode` (sobre `source`, el texto
+    original del valor, `context.source` del reviver en Node 22). Hoy solo `i64`:
+    `JSON.rawJSON(v.toString())` / `BigInt(source)`. Igual que con `pg`, la conversión en
+    runtime la hace la librería (`JSON`), y el mapa dice qué hooks generar.
+
 ## Próximos pasos
 
-1. HTTP: endpoints CRUD derivados de `entity_defs` sobre los builders de `dml.ts`, con
+1. HTTP (ver "HTTP: decisiones"): endpoints CRUD derivados de `entity_defs` sobre los builders de `dml.ts`, con
    `domainError` → 409/422 y las reglas de Zig antes de escribir. Probablemente
    `node:http` sin framework.
 2. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`).

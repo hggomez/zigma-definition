@@ -47,6 +47,8 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "zig_type_map_ts_unsupported.zig", .expected = "type 'f32' has no TS mapping" },
     .{ .file = "zig_type_map_sql_domain_unsupported.zig", .expected = "type 'f32' has no SQL mapping" },
     .{ .file = "zig_type_map_sql_unknown_name.zig", .expected = "type 'inexistente' has no SQL mapping" },
+    .{ .file = "zig_type_map_json_unsupported.zig", .expected = "type 'f32' has no JSON mapping" },
+    .{ .file = "zig_type_map_json_domain_unsupported.zig", .expected = "type 'f32' has no JSON mapping" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -76,6 +78,12 @@ pub fn build(b: *std.Build) void {
 
     const zig_type_map_ts_mod = b.addModule("zig_type_map_ts", .{
         .root_source_file = b.path("src/zig_type_map_ts.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const zig_type_map_json_mod = b.addModule("zig_type_map_json", .{
+        .root_source_file = b.path("src/zig_type_map_json.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -153,19 +161,27 @@ pub fn build(b: *std.Build) void {
     });
     const run_ts_backend_generator_tests = b.addRunArtifact(ts_backend_generator_tests);
 
-    const zig_type_map_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/zig_type_map_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zigma", .module = zigma_mod },
-                .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
-                .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
-            },
-        }),
-    });
-    const run_zig_type_map_tests = b.addRunArtifact(zig_type_map_tests);
+    // one test file per type map: test/zig_type_map_<target>_test.zig
+    const zig_type_maps = [_]struct { name: []const u8, module: *std.Build.Module }{
+        .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
+        .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+        .{ .name = "zig_type_map_json", .module = zig_type_map_json_mod },
+    };
+    var run_zig_type_map_tests: [zig_type_maps.len]*std.Build.Step.Run = undefined;
+    for (zig_type_maps, 0..) |map, i| {
+        const map_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(b.fmt("test/{s}_test.zig", .{map.name})),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "zigma", .module = zigma_mod },
+                    .{ .name = map.name, .module = map.module },
+                },
+            }),
+        });
+        run_zig_type_map_tests[i] = b.addRunArtifact(map_tests);
+    }
 
     const ts_rules_generator_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -367,7 +383,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_sql_generator_tests.step);
     test_step.dependOn(&run_ts_backend_generator_tests.step);
-    test_step.dependOn(&run_zig_type_map_tests.step);
+    for (run_zig_type_map_tests) |run_map_tests| test_step.dependOn(&run_map_tests.step);
     test_step.dependOn(&run_ts_rules_generator_tests.step);
 
     for (compile_error_cases) |case| {
@@ -384,6 +400,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
                     .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
                     .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+                    .{ .name = "zig_type_map_json", .module = zig_type_map_json_mod },
                 },
             }),
         });
