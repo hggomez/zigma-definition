@@ -133,6 +133,8 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
   `selectAll`, `update`, `delete`, cada uno devuelve `{ text, values }` para `pg`) y sus
   tests de Node.
 * `examples/print_*.zig`: ejecutables que imprimen lo generado para aida.
+* `examples/aida_rules_wasm.zig`: las reglas de dominio de aida (`validarCargo`) exportadas
+  a WASM para que el backend corra las mismas reglas de Zig.
 * `backend/`: paquete Node del backend de aida; `src/dml.ts` y `src/dml.test.ts` se generan
   ahí (gitignoreados).
 * `docker-compose.yml`: el Postgres de desarrollo.
@@ -140,13 +142,15 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
 * `test/sql_generator_test.zig`, `test/ts_backend_generator_test.zig`,
   `test/zig_type_map_test.zig`: tests de los generadores y los mapeos.
 * `test/db_backend_integration_test.zig`: tests de integración contra Postgres real.
+* `test/rules_wasm_test.zig`: las reglas compiladas a WASM, llamadas desde Node.
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
   error esperado listado en `build.zig`.
 
 Steps de `zig build`: `test` (todo lo que no necesita Docker ni Node), `print-schema`,
 `create-database` (levanta Postgres y aplica el esquema; falla si ya existe), `ts-backend`
 (genera el DML y corre sus tests con Node), `ts-backend-db` (resetea la base, aplica el
-esquema y corre los tests de integración contra Postgres).
+esquema y corre los tests de integración contra Postgres), `rules-wasm` (compila las
+reglas de dominio de aida a WASM y las prueba desde Node).
 
 ## Forma de trabajo
 

@@ -71,6 +71,21 @@ revisión antes de implementar.
 * `type` del `row`/`pk`: usa `,` como separador; TS idiomático es `;` dentro de un type
   literal (ambos válidos).
 
+## Pendientes (reglas de dominio en WASM)
+
+* El resultado de una regla apunta a un string estático (`""`, `@errorName`, 
+  `"InvalidInput"`): no hay nada que liberar. Si alguna vez devuelve algo armado en
+  runtime (por ejemplo el detalle de un error de parseo), hace falta un `free` exportado.
+* Una regla que se llama con una entrada que no es UTF-8 válido / JSON vacío: hoy es
+  `"InvalidInput"` por el parseo, no está probado.
+* `alloc` sin memoria devuelve 0: el wrapper TS tiene que chequearlo.
+
+## Hechos reglas WASM (referencia rápida, no repetir)
+
+* `validarCargo` compilado a WASM y llamado desde Node (`test/rules_wasm_test.zig`, `zig
+  build rules-wasm`): los dos resultados de la regla y `"InvalidInput"` para campo
+  faltante y mal tipado.
+
 ## Hechos ts_backend_generator (referencia rápida, no repetir)
 
 * `insertFn` / `generateTsBackend`: un builder `INSERT` por entidad, y el módulo entero.

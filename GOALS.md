@@ -275,15 +275,16 @@ lo que ya existe maduro en el ecosistema Node para HTTP/Postgres.
 El backend en TypeScript necesita poder invocar funciones de dominio escritas en Zig (por
 ejemplo `validarCargo`) sin reescribirlas: esas reglas viven en la única fuente de verdad
 (las definiciones `zigma`/`aida` en Zig), así que hace falta un mecanismo de interop
-TS → Zig. **Sin decidir todavía cuál**, para la próxima sesión:
+TS → Zig. **Decidido: WASM** (ver "Interop TS → Zig" más abajo). Las opciones que se
+evaluaron:
 
 * **C ABI**: Zig exporta funciones (`export fn ... callconv(.c)`) a una lib compartida
   (`.so`/`.dll`), invocada desde Node con una librería tipo `koffi` (FFI sin escribir un
   addon nativo). Más directo, pero la lib queda atada a la plataforma/arquitectura donde
   se compiló — no es problema si el contenedor del backend siempre la compila en su
   propio build Linux.
-* **WASM**: Zig compila a `wasm32`, corrido con un runtime WASM embebido en Node
-  (bindings de `wasmtime`/`wasmer`). Más portable (no atado a la plataforma del
+* **WASM**: Zig compila a `wasm32`, corrido por el `WebAssembly` que Node ya trae (no
+  hacen falta bindings de `wasmtime`/`wasmer`). Más portable (no atado a la plataforma del
   contenedor), pero pasar datos complejos (structs, strings) es más manual — hay que
   serializar contra la memoria lineal del módulo.
 * En cualquiera de los dos casos: las funciones de `zigma` son comptime/genéricas, y no
@@ -353,17 +354,44 @@ enteramente en Zig:
     el original, más `error.Timeout` en `acquire()`.
   * Ninguno de los dos fija `minimum_zig_version` en su `build.zig.zon`.
 
+## Interop TS → Zig: WASM
+
+**Decisión.** Las reglas de dominio de Zig se compilan a un módulo WASM que corre el
+`WebAssembly` de Node. Con el sistema generado corriendo en tres contenedores Linux
+(frontend, backend, postgres), la desventaja de plataforma del C ABI casi desaparece; lo
+que decide es el frontend: el navegador puede cargar el **mismo** `rules.wasm` y validar
+antes de mandar, con el backend como chequeo final. Una regla, escrita una vez en Zig,
+en los dos lados. Un `.so` nunca corre en un navegador.
+
+**Hecho: `validarCargo` desde Node.**
+* `examples/aida_rules_wasm.zig` (escrito a mano por ahora): exporta `alloc` y
+  `validarCargo`. Contrato con JS: la entrada es la instancia como JSON UTF-8 en memoria
+  pedida con `alloc`; la regla la parsea con `std.json` a `aida.DefinedType(aida.cargo)`
+  (el tipo sale de la definición, no se reescribe), corre la regla real, libera la
+  entrada y devuelve un string empaquetado `ptr << 32 | len`: `""` si pasa, el nombre del
+  error de Zig si la regla la rechaza (`"AyudanteNoPuedeDirigir"`, sale de `@errorName`,
+  así que no hace falta tabla de mapeo), `"InvalidInput"` si el JSON no es una instancia
+  del record (error del framework, por eso en inglés).
+* `zig build rules-wasm`: compila para `wasm32-freestanding` (`ReleaseSmall`, sin entry,
+  `rdynamic`), escribe `backend/src/rules.wasm` (gitignoreado) y corre
+  `test/rules_wasm_test.zig` (Node, sin Docker): titular pasa, ayudante que dirige se
+  rechaza, ayudante que no dirige pasa, campo faltante y campo mal tipado son
+  `"InvalidInput"`.
+
+**Cómo encaja en los contenedores (pensado, no hecho).** `rules.wasm` no depende de la
+plataforma: se compila en el host con `zig build` (como `dml.ts`) y el Dockerfile del
+backend es solo `FROM node` copiando lo generado, sin Zig adentro. Alternativa: Dockerfile
+multi-stage con Zig, con el riesgo de que la versión dev pineada desaparezca de las
+descargas (ya pasó una vez).
+
 ## Próximos pasos
 
-1. Elegir mecanismo de interop TypeScript → Zig (C ABI vía `koffi` vs WASM) —
-   investigación, no implementación todavía.
-2. Definir cómo se generan los exports concretos: el paso de build que monomorfice, para
-   el sistema aida, las funciones de validación/reglas de negocio escritas en Zig hacia
-   el ABI/WASM elegido.
-3. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`):
-   Dockerfile de Node, sin acoplar el desarrollo al host Windows.
-4. Elegir cliente de Postgres para TypeScript y, si hace falta, framework HTTP (o arrancar
-   con Node puro).
-5. Primer paso chico, TDD, a acordar con el programador: probablemente el primer llamado
-   real desde TypeScript a una función de Zig ya compilada (el `validarCargo` de ejemplo),
-   antes de sumarle HTTP o DB.
+1. Wrapper TS de las reglas (`rules.ts`): carga el módulo una vez y expone
+   `validarCargo(cargo)` tipado, devolviendo `null` o el error de dominio. Decidir cómo
+   viaja un `bigint` (`orden` es `i64`) en el JSON: `JSON.stringify` no lo serializa.
+2. Generar los exports de WASM y el wrapper TS desde una lista de reglas del sistema, en
+   vez de escribirlos a mano, cuando haya una segunda regla.
+3. HTTP: endpoints CRUD derivados de `entity_defs` sobre los builders de `dml.ts`, con
+   `domainError` → 409/422 y las reglas de Zig antes de escribir. Probablemente
+   `node:http` sin framework.
+4. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`).

@@ -283,6 +283,47 @@ pub fn build(b: *std.Build) void {
     const ts_backend_db_step = b.step("ts-backend-db", "Generate, then run the DML integration test against the docker-compose Postgres");
     ts_backend_db_step.dependOn(&run_db_backend_integration_tests.step);
 
+    // `zig build rules-wasm`: compile the aida domain rules to WASM, write the
+    // module to backend/src/rules.wasm (gitignored, like dml.ts) and test it
+    // from Node (test/rules_wasm_test.zig). Needs Node, not Docker. zigma and
+    // aida are fresh modules without a target here: they inherit wasm32 from
+    // the root module (the shared ones are pinned to the host target).
+    const zigma_wasm_mod = b.createModule(.{ .root_source_file = b.path("src/zigma.zig") });
+    const aida_wasm_mod = b.createModule(.{
+        .root_source_file = b.path("examples/aida.zig"),
+        .imports = &.{.{ .name = "zigma", .module = zigma_wasm_mod }},
+    });
+    const rules_wasm = b.addExecutable(.{
+        .name = "rules",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/aida_rules_wasm.zig"),
+            .target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding }),
+            .optimize = .ReleaseSmall,
+            .imports = &.{.{ .name = "aida", .module = aida_wasm_mod }},
+        }),
+    });
+    // a library of exports, not a program: no entry point, and every
+    // `export fn` stays visible to the host
+    rules_wasm.entry = .disabled;
+    rules_wasm.rdynamic = true;
+
+    const write_rules_wasm = b.addUpdateSourceFiles();
+    write_rules_wasm.addCopyFileToSource(rules_wasm.getEmittedBin(), "backend/src/rules.wasm");
+
+    const rules_wasm_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/rules_wasm_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_rules_wasm_tests = b.addRunArtifact(rules_wasm_tests);
+    run_rules_wasm_tests.has_side_effects = true;
+    run_rules_wasm_tests.step.dependOn(&write_rules_wasm.step);
+
+    const rules_wasm_step = b.step("rules-wasm", "Build the aida domain rules to WASM and test them from Node");
+    rules_wasm_step.dependOn(&run_rules_wasm_tests.step);
+
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_sql_generator_tests.step);
