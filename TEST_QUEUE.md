@@ -25,12 +25,29 @@ revisión antes de implementar.
   `delete` y después selectByPk → vacío, violación de uk (`materias.denominacion`) y de fk
   mapeadas a error de dominio, entidad de pk compuesta (`inscripciones`, necesita
   `cursos`+`alumnos` antes por las fks). Hecho también: ida y vuelta de `fecha`
-  (`clases`, tipo compuesto + codec en SQL). Pendientes de esa misma decisión: `fecha` en
-  una pk contra la base (`mesas`, objeto con las keys en otro orden encuentra la fila) y
-  `fecha` nullable en `NULL` (ida y vuelta de `null`).
-* `bigint` en el backend: `integer` es `i64` → `BIGINT` / `bigint`. Falta registrar
-  `pg.types.setTypeParser(20, BigInt)` en el backend (hoy `pg` devuelve `BIGINT` como
-  `string`) y un test de integración que lo muestre (ida y vuelta de un `orden`).
+  (`clases`, tipo compuesto + codec en SQL), `fecha` en la pk de `mesas` (select y delete
+  con las keys del objeto en otro orden), `fecha` nullable en `NULL` (insert y update), y
+  un `integer` (`i64`) más allá de 2^53 vuelve como el `bigint` exacto (pool con
+  `pgTypes`).
+* `bigint` y JSON: `JSON.stringify` no serializa un `bigint` (tira `TypeError`). Va a
+  importar en la capa HTTP: decidir cómo viaja (string, número si entra, etc.).
+* Soporte real de un campo con parser (`i64`) dentro de un struct de dominio. Hoy no
+  compila a propósito (`test/compile_errors/ts_struct_field_needs_parser.zig`): el struct
+  se decodifica con `to_jsonb` y `pg` lo parsea con `JSON.parse`, sin pasar por los
+  parsers de `pgTypes`, así que un `i64` volvería como `number` con pérdida de precisión.
+  Opción pensada: en el `SELECT`, mandar esos campos como texto dentro del JSON
+  (`jsonb_build_object('f', ("col")."f"::text, …)`, con `CASE WHEN "col" IS NULL`) y
+  generar un decoder TS por entidad que aplique `BigInt(...)` (cambia la forma de los
+  builders: `{ text, values, decode }` o `decode<E>Row`). Descartado: un reviver en el
+  parser de `jsonb`, porque el tipo dependería del tamaño del valor. Pendiente hasta un
+  caso real.
+* `pgTypes` vale para todo `BIGINT` del pool, no solo las columnas de aida: un
+  `count(*)` escrito a mano vuelve como `BigInt` (`5n`). Consistente, pero hay que
+  saberlo.
+* Arrays de `BIGINT` (OID 1016) no tienen parser en `ts_parser_defs`; ninguna columna los
+  usa hoy.
+* Los scripts de integración que no son el de `bigint` crean el pool sin
+  `types: pgTypes(pg.types)`; el backend real siempre tiene que usarlo.
 * Caso "no compila": sample TS para un tipo de Zig sin sample (`f32` detrás de un
   dominio) → `"type 'f32' has no TS sample"`.
 * Caso "no compila": un sistema que nombra un tipo de dominio igual que un primitivo de
@@ -58,6 +75,9 @@ revisión antes de implementar.
   placeholder por campo hoja; decode `to_jsonb(col) AS col`. Los `SELECT` listan las
   columnas (ya no `SELECT *`). Fixtures `lugar` (struct nullable fuera de la pk) y `marca`
   (struct como pk).
+* `pgTypesFn`: `pgTypes(defaults)` al principio de `dml.ts`, el `types` por pool de
+  `pg.Pool` con los parsers de `zig_type_map_ts.ts_parser_defs` (`i64` → OID 20 →
+  `BigInt`), cayendo a los defaults de `pg`.
 * `insertFnTest` .. `deleteFnTest` / `generateTsBackendTests`: el test #1 por builder y el
   módulo de tests entero (imports `node:test`/`node:assert` + import de `./dml.ts`).
 * Tipos TS resueltos desde `type_defs` con `zig_type_map_ts.tsType`; samples de los tests
@@ -88,6 +108,8 @@ revisión antes de implementar.
   la tabla referenciada ya exista (fixture ad-hoc `nodo_a` ↔ `nodo_b`);
   de paso confirma que `zigma.defineEntities` acepta el ciclo a nivel
   framework.
+* Un campo con parser (`i64`) dentro de un struct de dominio no compila
+  (`ts_struct_field_needs_parser.zig`, chequeo en `StructOf` de `ts_backend_generator`).
 * Tipo sin mapeo SQL no compila (`test/compile_errors/
   sql_unknown_type_mapping.zig`, mensaje `"type 'x' has no SQL mapping"`).
 * Resolución de tipos (`test/zig_type_map_test.zig`): primitivos por `@typeName` (incl.

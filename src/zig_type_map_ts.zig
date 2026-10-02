@@ -45,6 +45,15 @@ fn ObjectType(comptime type_defs: anytype, comptime T: type) type {
 /// TS type for each supported Zig primitive type, keyed by `@typeName`.
 /// `i64` is `bigint`: pg returns BIGINT as a string by default, so the backend
 /// registers `pg.types.setTypeParser(20, BigInt)`.
+/// The Zig types whose TS type needs a parser when pg reads the column, keyed
+/// by `@typeName` like `ts_type_defs`: the Postgres type OID and the JS
+/// function that turns pg's text value into the TS type. The generated
+/// `pgTypes` registers them per pool.
+pub const ts_parser_defs = .{
+    // BIGINT: pg returns it as a string by default
+    .i64 = .{ .oid = 20, .parse = "BigInt" },
+};
+
 pub const ts_type_defs = .{
     .bool = "boolean",
     .u8 = "number",

@@ -360,6 +360,29 @@ test "deleteFn: a struct pk is compared against a ROW" {
     , marca_delete_ts);
 }
 
+// ---- pg type parsers ----
+
+// Columns whose TS type needs a parser on read (i64 -> BIGINT -> bigint: pg
+// returns BIGINT as a string by default). Generated from the framework's
+// `zig_type_map_ts.ts_parser_defs`; per pool, not global:
+// `new pg.Pool({ types: pgTypes(pg.types) })`.
+const pg_types_ts = ts.pgTypesFn();
+
+test "pgTypesFn: a per-pool getTypeParser with the framework's parsers, falling back to pg's defaults" {
+    try expectEqualStrings(
+        \\export function pgTypes(defaults: { getTypeParser(oid: number, format?: string): unknown }) {
+        \\  const parsers: Record<number, (value: string) => unknown> = {
+        \\    20: BigInt,
+        \\  };
+        \\  return {
+        \\    getTypeParser(oid: number, format?: string) {
+        \\      return parsers[oid] ?? defaults.getTypeParser(oid, format);
+        \\    },
+        \\  };
+        \\}
+    , pg_types_ts);
+}
+
 // ---- whole-system aggregation ----
 
 // cosa (all-pk: 4 builders, no update) then articulo (5 builders): covers the
@@ -368,8 +391,19 @@ test "deleteFn: a struct pk is compared against a ROW" {
 const dos_entidades = zigma.defineEntities(.{ .cosa = cosa, .articulo = articulo });
 const dos_entidades_ts = ts.generateTsBackend(zigma.common_type_defs, dos_entidades);
 
-test "generateTsBackend: every builder of every entity, in declaration order" {
+test "generateTsBackend: pgTypes, then every builder of every entity, in declaration order" {
     try expectEqualStrings(
+        \\export function pgTypes(defaults: { getTypeParser(oid: number, format?: string): unknown }) {
+        \\  const parsers: Record<number, (value: string) => unknown> = {
+        \\    20: BigInt,
+        \\  };
+        \\  return {
+        \\    getTypeParser(oid: number, format?: string) {
+        \\      return parsers[oid] ?? defaults.getTypeParser(oid, format);
+        \\    },
+        \\  };
+        \\}
+        \\
         \\export function insertCosa(row: { cosa: string }): { text: string; values: unknown[] } {
         \\  return {
         \\    text: 'INSERT INTO "cosa" ("cosa") VALUES ($1)',

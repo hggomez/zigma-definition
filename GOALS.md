@@ -150,9 +150,15 @@ igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` 
   llevan el codec en el texto SQL (`ROW(...)::fecha` / `to_jsonb`). El test de integración
   de ida y vuelta de `fecha` (`clases`) pasa contra Postgres.
 
-**Falta** para completar la interfaz de DML: más casos de integración (update toca solo
-lo nombrado, delete→selectByPk vacío, violación de uk/fk como error de dominio, entidad de
-pk compuesta, `fecha` en la pk de `mesas`, `fecha` en `NULL`, `bigint` con su parser). Después: el resto del backend (endpoints HTTP) y el interop TS → Zig para las
+* **`bigint`, hecho**: `dml.ts` exporta `pgTypes(defaults)`, generado de
+  `zig_type_map_ts.ts_parser_defs` (`i64` → OID 20 → `BigInt`); el pool se crea con
+  `new pg.Pool({ connectionString, types: pgTypes(pg.types) })` (por pool, no global).
+  Tests de integración en verde: `fecha` en la pk de `mesas` (keys en otro orden), `fecha`
+  en `NULL` (insert y update), `orden` = 2^53 + 1 vuelve exacto.
+
+**Falta** para completar la interfaz de DML (próxima sesión): más casos de integración
+(update toca solo lo nombrado, delete→selectByPk vacío, violación de uk/fk como error de
+dominio, entidad de pk compuesta). Después: el resto del backend (endpoints HTTP) y el interop TS → Zig para las
 reglas de dominio.
 
 ### Decisión: tipos de dominio compuestos (structs) en Postgres y en TS

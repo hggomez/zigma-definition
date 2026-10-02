@@ -72,6 +72,123 @@ const fecha_roundtrip_script =
     \\}
 ;
 
+// `fecha` as part of a pk (`mesas`: periodo, materia, fecha): the lookup by pk
+// must find the row even when the pk object has its keys in another order
+// (`{ día, mes, año }`), and delete by that same pk must remove it. Prints
+// MESAS_PK_OK.
+const fecha_pk_script =
+    \\import {
+    \\  insertPeriodos, deletePeriodos, insertMaterias, deleteMaterias,
+    \\  insertCursos, deleteCursos, insertMesas, selectMesasByPk, deleteMesas,
+    \\} from './src/dml.ts';
+    \\import { deepStrictEqual, equal } from 'node:assert';
+    \\import pg from 'pg';
+    \\const connectionString = process.env.DATABASE_URL ?? 'postgres://aida:aida@localhost:5432/aida';
+    \\const pool = new pg.Pool({ connectionString });
+    \\const run = (q) => pool.query(q.text, q.values);
+    \\const periodo = 'it-pk-' + Date.now();
+    \\const materia = periodo;
+    \\const curso = { periodo, materia };
+    \\const fecha = { año: 2026, mes: 7, día: 3 };
+    \\const reordered = { día: 3, mes: 7, año: 2026 };
+    \\try {
+    \\  await run(insertPeriodos({ periodo }));
+    \\  await run(insertMaterias({ materia, denominacion: materia }));
+    \\  await run(insertCursos({ ...curso, docente: null }));
+    \\  await run(insertMesas({ ...curso, fecha, presidente: null, vocal: null }));
+    \\  const found = await run(selectMesasByPk({ ...curso, fecha: reordered }));
+    \\  equal(found.rows.length, 1, 'selectByPk with reordered keys must find the row');
+    \\  deepStrictEqual(found.rows[0].fecha, fecha);
+    \\  await run(deleteMesas({ ...curso, fecha: reordered }));
+    \\  const gone = await run(selectMesasByPk({ ...curso, fecha }));
+    \\  equal(gone.rows.length, 0, 'delete with reordered keys must remove the row');
+    \\  console.log('MESAS_PK_OK');
+    \\} finally {
+    \\  await run(deleteMesas({ ...curso, fecha }));
+    \\  await run(deleteCursos(curso));
+    \\  await run(deleteMaterias({ materia }));
+    \\  await run(deletePeriodos({ periodo }));
+    \\  await pool.end();
+    \\}
+;
+
+// A nullable `fecha` (`clases.fecha`): inserting `null` reads back `null`
+// (not a composite of NULLs), and updating it to a value and back to `null`
+// round-trips too (the CASE WHEN ... IS NULL path of insert and update).
+// Prints FECHA_NULL_OK.
+const fecha_null_script =
+    \\import {
+    \\  insertPeriodos, deletePeriodos, insertMaterias, deleteMaterias,
+    \\  insertCursos, deleteCursos, insertClases, selectClasesByPk, updateClases, deleteClases,
+    \\} from './src/dml.ts';
+    \\import { deepStrictEqual, strictEqual } from 'node:assert';
+    \\import pg from 'pg';
+    \\const connectionString = process.env.DATABASE_URL ?? 'postgres://aida:aida@localhost:5432/aida';
+    \\const pool = new pg.Pool({ connectionString });
+    \\const run = (q) => pool.query(q.text, q.values);
+    \\const periodo = 'it-null-' + Date.now();
+    \\const materia = periodo;
+    \\const curso = { periodo, materia };
+    \\const clase = { ...curso, orden: 1 };
+    \\const fecha = { año: 2026, mes: 3, día: 14 };
+    \\const read = async () => (await run(selectClasesByPk(clase))).rows[0].fecha;
+    \\try {
+    \\  await run(insertPeriodos({ periodo }));
+    \\  await run(insertMaterias({ materia, denominacion: materia }));
+    \\  await run(insertCursos({ ...curso, docente: null }));
+    \\  await run(insertClases({ ...clase, fecha: null, tema: 't' }));
+    \\  strictEqual(await read(), null, 'insert with fecha null');
+    \\  await run(updateClases(clase, { fecha, tema: 't' }));
+    \\  deepStrictEqual(await read(), fecha, 'update to a fecha');
+    \\  await run(updateClases(clase, { fecha: null, tema: 't' }));
+    \\  strictEqual(await read(), null, 'update back to null');
+    \\  console.log('FECHA_NULL_OK');
+    \\} finally {
+    \\  await run(deleteClases(clase));
+    \\  await run(deleteCursos(curso));
+    \\  await run(deleteMaterias({ materia }));
+    \\  await run(deletePeriodos({ periodo }));
+    \\  await pool.end();
+    \\}
+;
+
+// An `integer` column is i64 -> BIGINT / TS bigint: a value beyond
+// Number.MAX_SAFE_INTEGER must come back as that exact bigint (pg's default
+// returns BIGINT as a string). Uses `clases.orden` (part of its pk). Prints
+// BIGINT_OK.
+const bigint_script =
+    \\import {
+    \\  insertPeriodos, deletePeriodos, insertMaterias, deleteMaterias,
+    \\  insertCursos, deleteCursos, insertClases, selectClasesByPk, deleteClases, pgTypes,
+    \\} from './src/dml.ts';
+    \\import { strictEqual } from 'node:assert';
+    \\import pg from 'pg';
+    \\const connectionString = process.env.DATABASE_URL ?? 'postgres://aida:aida@localhost:5432/aida';
+    \\const pool = new pg.Pool({ connectionString, types: pgTypes(pg.types) });
+    \\const run = (q) => pool.query(q.text, q.values);
+    \\const periodo = 'it-bigint-' + Date.now();
+    \\const materia = periodo;
+    \\const curso = { periodo, materia };
+    \\const orden = 9007199254740993n; // 2^53 + 1, not representable as a number
+    \\const clase = { ...curso, orden };
+    \\try {
+    \\  await run(insertPeriodos({ periodo }));
+    \\  await run(insertMaterias({ materia, denominacion: materia }));
+    \\  await run(insertCursos({ ...curso, docente: null }));
+    \\  await run(insertClases({ ...clase, fecha: null, tema: 't' }));
+    \\  const { rows } = await run(selectClasesByPk(clase));
+    \\  console.log('read orden: ' + typeof rows[0].orden + ' ' + String(rows[0].orden));
+    \\  strictEqual(rows[0].orden, orden);
+    \\  console.log('BIGINT_OK');
+    \\} finally {
+    \\  await run(deleteClases(clase));
+    \\  await run(deleteCursos(curso));
+    \\  await run(deleteMaterias({ materia }));
+    \\  await run(deletePeriodos({ periodo }));
+    \\  await pool.end();
+    \\}
+;
+
 /// Runs `script` with node from `backend/` and expects exit 0 and `marker` on
 /// stdout; on failure dumps node's stdout/stderr.
 fn expectNodeScriptOk(script: []const u8, marker: []const u8) !void {
@@ -104,4 +221,16 @@ test "generated DML builders round-trip against the docker-compose Postgres" {
 
 test "a fecha column round-trips as { año, mes, día }" {
     try expectNodeScriptOk(fecha_roundtrip_script, "FECHA_OK");
+}
+
+test "a fecha in a pk finds and deletes the row whatever the key order of the object" {
+    try expectNodeScriptOk(fecha_pk_script, "MESAS_PK_OK");
+}
+
+test "a nullable fecha round-trips null through insert and update" {
+    try expectNodeScriptOk(fecha_null_script, "FECHA_NULL_OK");
+}
+
+test "an integer (i64) column round-trips an exact bigint beyond 2^53" {
+    try expectNodeScriptOk(bigint_script, "BIGINT_OK");
 }

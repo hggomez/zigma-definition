@@ -20,10 +20,23 @@ const sqlType = @import("zig_type_map_sql").sqlType;
 
 /// The struct behind a column's domain type, or null when it is not
 /// struct-backed (then the column is one plain parameter).
+///
+/// A struct column is decoded through `to_jsonb`, which pg parses with
+/// `JSON.parse`, bypassing the per-type parsers of `pgTypes`: a field whose
+/// Zig type needs one (`ts_parser_defs`, e.g. `i64` -> `BigInt`) would come
+/// back as a lossy `number`. Rejected until the decode supports it.
 fn StructOf(comptime type_defs: anytype, comptime type_name: []const u8) ?type {
     if (!@hasField(@TypeOf(type_defs), type_name)) return null;
     const T = @field(type_defs, type_name).Type;
-    return if (@typeInfo(T) == .@"struct") T else null;
+    if (@typeInfo(T) != .@"struct") return null;
+    const parser_defs = @import("zig_type_map_ts").ts_parser_defs;
+    const info = @typeInfo(T).@"struct";
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        if (@hasField(@TypeOf(parser_defs), @typeName(field_type)))
+            @compileError("field '" ++ field_name ++ "' of struct domain '" ++ type_name ++ "': " ++
+                @typeName(field_type) ++ " inside a struct is not supported yet (to_jsonb would lose precision)");
+    }
+    return T;
 }
 
 /// A sample literal for a domain type, for the generated tests to feed the
@@ -436,17 +449,38 @@ fn entityBuilderTests(comptime type_defs: anytype, comptime name: []const u8, co
     return out;
 }
 
-/// The whole `.ts` module for a system: every builder of every entity of
-/// `entity_defs` (as produced by `zigma.defineEntity`/`defineEntities`, not
-/// yet completed), in declaration order, blank-line separated. The `schemaSql`
-/// of the TypeScript side. No header, for parity with `sql_generator`.
+/// `pgTypes(defaults)`: the per-pool `types` option of a `pg.Pool`, with the
+/// read parsers of `zig_type_map_ts.ts_parser_defs`.
+pub fn pgTypesFn() []const u8 {
+    const parser_defs = @import("zig_type_map_ts").ts_parser_defs;
+    comptime var parsers: []const u8 = "";
+    inline for (@typeInfo(@TypeOf(parser_defs)).@"struct".field_names) |zig_type| {
+        const parser = @field(parser_defs, zig_type);
+        parsers = parsers ++ std.fmt.comptimePrint("    {d}: {s},\n", .{ parser.oid, parser.parse });
+    }
+    return "export function pgTypes(defaults: { getTypeParser(oid: number, format?: string): unknown }) {\n" ++
+        "  const parsers: Record<number, (value: string) => unknown> = {\n" ++
+        parsers ++
+        "  };\n" ++
+        "  return {\n" ++
+        "    getTypeParser(oid: number, format?: string) {\n" ++
+        "      return parsers[oid] ?? defaults.getTypeParser(oid, format);\n" ++
+        "    },\n" ++
+        "  };\n" ++
+        "}";
+}
+
+/// The whole `.ts` module for a system: `pgTypes`, then every builder of every
+/// entity of `entity_defs` (as produced by `zigma.defineEntity`/
+/// `defineEntities`, not yet completed), in declaration order, blank-line
+/// separated. The `schemaSql` of the TypeScript side. No header, for parity
+/// with `sql_generator`.
 pub fn generateTsBackend(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     @setEvalBranchQuota(100000);
     const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
-    comptime var module: []const u8 = "";
-    inline for (entity_names, 0..) |entity_name, i| {
-        if (i > 0) module = module ++ "\n\n";
-        module = module ++ entityBuilders(type_defs, entity_name, zigma.completeEntity(@field(entity_defs, entity_name)));
+    comptime var module: []const u8 = pgTypesFn();
+    inline for (entity_names) |entity_name| {
+        module = module ++ "\n\n" ++ entityBuilders(type_defs, entity_name, zigma.completeEntity(@field(entity_defs, entity_name)));
     }
     return module;
 }
