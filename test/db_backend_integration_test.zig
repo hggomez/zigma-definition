@@ -189,6 +189,143 @@ const bigint_script =
     \\}
 ;
 
+// A full-row update only touches the row of its pk: two materias, update one,
+// the other keeps its values. Prints UPDATE_OK.
+const update_script =
+    \\import { insertMaterias, selectMateriasByPk, updateMaterias, deleteMaterias, pgTypes } from './src/dml.ts';
+    \\import { deepStrictEqual } from 'node:assert';
+    \\import pg from 'pg';
+    \\const connectionString = process.env.DATABASE_URL ?? 'postgres://aida:aida@localhost:5432/aida';
+    \\const pool = new pg.Pool({ connectionString, types: pgTypes(pg.types) });
+    \\const run = (q) => pool.query(q.text, q.values);
+    \\const a = 'it-upd-a-' + Date.now();
+    \\const b = 'it-upd-b-' + Date.now();
+    \\try {
+    \\  await run(insertMaterias({ materia: a, denominacion: a }));
+    \\  await run(insertMaterias({ materia: b, denominacion: b }));
+    \\  const updated = await run(updateMaterias({ materia: a }, { denominacion: a + '-nueva' }));
+    \\  deepStrictEqual(updated.rowCount, 1, 'update touches exactly one row');
+    \\  deepStrictEqual((await run(selectMateriasByPk({ materia: a }))).rows, [{ materia: a, denominacion: a + '-nueva' }]);
+    \\  deepStrictEqual((await run(selectMateriasByPk({ materia: b }))).rows, [{ materia: b, denominacion: b }]);
+    \\  console.log('UPDATE_OK');
+    \\} finally {
+    \\  await run(deleteMaterias({ materia: a }));
+    \\  await run(deleteMaterias({ materia: b }));
+    \\  await pool.end();
+    \\}
+;
+
+// delete removes the row: selectByPk afterwards finds nothing. Prints
+// DELETE_OK.
+const delete_script =
+    \\import { insertPeriodos, selectPeriodosByPk, deletePeriodos, pgTypes } from './src/dml.ts';
+    \\import { strictEqual } from 'node:assert';
+    \\import pg from 'pg';
+    \\const connectionString = process.env.DATABASE_URL ?? 'postgres://aida:aida@localhost:5432/aida';
+    \\const pool = new pg.Pool({ connectionString, types: pgTypes(pg.types) });
+    \\const run = (q) => pool.query(q.text, q.values);
+    \\const periodo = 'it-del-' + Date.now();
+    \\try {
+    \\  await run(insertPeriodos({ periodo }));
+    \\  const deleted = await run(deletePeriodos({ periodo }));
+    \\  strictEqual(deleted.rowCount, 1, 'delete removes exactly one row');
+    \\  strictEqual((await run(selectPeriodosByPk({ periodo }))).rows.length, 0, 'selectByPk after delete is empty');
+    \\  console.log('DELETE_OK');
+    \\} finally {
+    \\  await run(deletePeriodos({ periodo }));
+    \\  await pool.end();
+    \\}
+;
+
+// A composite-pk entity (`inscripciones`: periodo, materia, alumno), after
+// the cursos and alumnos rows its fks need: two inscripciones that differ
+// only in the last pk column are distinct rows, selectByPk finds each one,
+// and deleting one leaves the other. Prints COMPOSITE_PK_OK.
+const composite_pk_script =
+    \\import {
+    \\  insertPeriodos, deletePeriodos, insertMaterias, deleteMaterias, insertCursos, deleteCursos,
+    \\  insertAlumnos, deleteAlumnos, insertInscripciones, selectInscripcionesByPk, deleteInscripciones, pgTypes,
+    \\} from './src/dml.ts';
+    \\import { deepStrictEqual, strictEqual } from 'node:assert';
+    \\import pg from 'pg';
+    \\const connectionString = process.env.DATABASE_URL ?? 'postgres://aida:aida@localhost:5432/aida';
+    \\const pool = new pg.Pool({ connectionString, types: pgTypes(pg.types) });
+    \\const run = (q) => pool.query(q.text, q.values);
+    \\const periodo = 'it-cpk-' + Date.now();
+    \\const materia = periodo;
+    \\const curso = { periodo, materia };
+    \\const uno = { ...curso, alumno: periodo + '-1' };
+    \\const dos = { ...curso, alumno: periodo + '-2' };
+    \\try {
+    \\  await run(insertPeriodos({ periodo }));
+    \\  await run(insertMaterias({ materia, denominacion: materia }));
+    \\  await run(insertCursos({ ...curso, docente: null }));
+    \\  for (const i of [uno, dos]) {
+    \\    await run(insertAlumnos({ alumno: i.alumno, apellido: 'a', nombres: 'n', email: null }));
+    \\    await run(insertInscripciones(i));
+    \\  }
+    \\  deepStrictEqual((await run(selectInscripcionesByPk(uno))).rows, [uno]);
+    \\  deepStrictEqual((await run(selectInscripcionesByPk(dos))).rows, [dos]);
+    \\  await run(deleteInscripciones(uno));
+    \\  strictEqual((await run(selectInscripcionesByPk(uno))).rows.length, 0, 'deleted one is gone');
+    \\  deepStrictEqual((await run(selectInscripcionesByPk(dos))).rows, [dos], 'the other one stays');
+    \\  console.log('COMPOSITE_PK_OK');
+    \\} finally {
+    \\  for (const i of [uno, dos]) {
+    \\    await run(deleteInscripciones(i));
+    \\    await run(deleteAlumnos({ alumno: i.alumno }));
+    \\  }
+    \\  await run(deleteCursos(curso));
+    \\  await run(deleteMaterias({ materia }));
+    \\  await run(deletePeriodos({ periodo }));
+    \\  await pool.end();
+    \\}
+;
+
+// Key violations come back as domain errors: `domainError` maps the pg error
+// of a duplicate pk, a duplicate uk (`materias.denominacion`), a missing fk
+// target (a curso of an unknown periodo) and a delete of a still referenced
+// row (the periodo of a curso) to the entity and key of the definition; any
+// other error is not a domain error (null). Prints DOMAIN_ERRORS_OK.
+const domain_errors_script =
+    \\import {
+    \\  insertPeriodos, deletePeriodos, insertMaterias, deleteMaterias,
+    \\  insertCursos, deleteCursos, domainError, pgTypes,
+    \\} from './src/dml.ts';
+    \\import { deepStrictEqual, strictEqual } from 'node:assert';
+    \\import pg from 'pg';
+    \\const connectionString = process.env.DATABASE_URL ?? 'postgres://aida:aida@localhost:5432/aida';
+    \\const pool = new pg.Pool({ connectionString, types: pgTypes(pg.types) });
+    \\const run = (q) => pool.query(q.text, q.values);
+    \\const failure = async (q) => {
+    \\  try { await run(q); } catch (err) { return domainError(err); }
+    \\  throw new Error('expected the query to fail: ' + q.text);
+    \\};
+    \\const periodo = 'it-dom-' + Date.now();
+    \\const materia = periodo;
+    \\const curso = { periodo, materia };
+    \\try {
+    \\  await run(insertPeriodos({ periodo }));
+    \\  await run(insertMaterias({ materia, denominacion: materia }));
+    \\  deepStrictEqual(await failure(insertPeriodos({ periodo })),
+    \\    { kind: 'pk_violation', entity: 'periodos' }, 'duplicate pk');
+    \\  deepStrictEqual(await failure(insertMaterias({ materia: materia + '-2', denominacion: materia })),
+    \\    { kind: 'uk_violation', entity: 'materias', key: 'denominacion' }, 'duplicate uk');
+    \\  deepStrictEqual(await failure(insertCursos({ periodo: periodo + '-x', materia, docente: null })),
+    \\    { kind: 'fk_violation', entity: 'cursos', key: 'periodos' }, 'missing fk target');
+    \\  await run(insertCursos({ ...curso, docente: null }));
+    \\  deepStrictEqual(await failure(deletePeriodos({ periodo })),
+    \\    { kind: 'fk_violation', entity: 'cursos', key: 'periodos' }, 'delete of a referenced row');
+    \\  strictEqual(await failure({ text: 'SELECT * FROM inexistente', values: [] }), null, 'not a key violation');
+    \\  console.log('DOMAIN_ERRORS_OK');
+    \\} finally {
+    \\  await run(deleteCursos(curso));
+    \\  await run(deleteMaterias({ materia }));
+    \\  await run(deletePeriodos({ periodo }));
+    \\  await pool.end();
+    \\}
+;
+
 /// Runs `script` with node from `backend/` and expects exit 0 and `marker` on
 /// stdout; on failure dumps node's stdout/stderr.
 fn expectNodeScriptOk(script: []const u8, marker: []const u8) !void {
@@ -233,4 +370,20 @@ test "a nullable fecha round-trips null through insert and update" {
 
 test "an integer (i64) column round-trips an exact bigint beyond 2^53" {
     try expectNodeScriptOk(bigint_script, "BIGINT_OK");
+}
+
+test "update only touches the row of its pk" {
+    try expectNodeScriptOk(update_script, "UPDATE_OK");
+}
+
+test "after delete, selectByPk finds nothing" {
+    try expectNodeScriptOk(delete_script, "DELETE_OK");
+}
+
+test "a composite-pk entity (inscripciones) is found and deleted by its full pk" {
+    try expectNodeScriptOk(composite_pk_script, "COMPOSITE_PK_OK");
+}
+
+test "pk, uk and fk violations map to domain errors" {
+    try expectNodeScriptOk(domain_errors_script, "DOMAIN_ERRORS_OK");
 }

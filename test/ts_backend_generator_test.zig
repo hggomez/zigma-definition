@@ -383,6 +383,55 @@ test "pgTypesFn: a per-pool getTypeParser with the framework's parsers, falling 
     , pg_types_ts);
 }
 
+// ---- domain errors ----
+
+// A pk/uk/fk violation comes from pg as `{ code, constraint }`: 23505
+// (unique_violation, pk or uk) or 23503 (foreign_key_violation). The DDL names
+// every constraint from the SSOT (`<entity>_pk`, `<entity>_uk_<uk>`,
+// `<entity>_fk_<fk>`), so `domainError` maps the name back to the entity and
+// key of the definition through a lookup table generated from `entity_defs`;
+// any other error is not a domain error (null).
+const categoria = zigma.defineEntity(.{
+    .pk = .{"categoria"},
+    .uks = .{ .nombre = .{"nombre"} },
+    .fields = zigma.record(zigma.common_type_defs, .{
+        .categoria = .{ .type = "text" },
+        .nombre = .{ .type = "text" },
+    }),
+});
+const producto = zigma.defineEntity(.{
+    .pk = .{"sku"},
+    .fks = .{ .categoria = .{ .entity = "categoria", .fields = categoria.pk } },
+    .fields = zigma.record(zigma.common_type_defs, .{
+        .sku = .{ .type = "text" },
+        .categoria = .{ .type = "text" },
+    }),
+});
+const tienda = zigma.defineEntities(.{ .categoria = categoria, .producto = producto });
+const tienda_domain_error_ts = ts.domainErrorFn(tienda);
+
+test "domainErrorFn: maps each named pk/uk/fk constraint of the system to its entity and key" {
+    try expectEqualStrings(
+        \\export type DomainError =
+        \\  | { kind: "pk_violation"; entity: string }
+        \\  | { kind: "uk_violation" | "fk_violation"; entity: string; key: string };
+        \\
+        \\const domainConstraints: Record<string, DomainError> = {
+        \\  "categoria_pk": { kind: "pk_violation", entity: "categoria" },
+        \\  "categoria_uk_nombre": { kind: "uk_violation", entity: "categoria", key: "nombre" },
+        \\  "producto_pk": { kind: "pk_violation", entity: "producto" },
+        \\  "producto_fk_categoria": { kind: "fk_violation", entity: "producto", key: "categoria" },
+        \\};
+        \\
+        \\export function domainError(err: unknown): DomainError | null {
+        \\  const { code, constraint } = (err ?? {}) as { code?: unknown; constraint?: unknown };
+        \\  if (code !== "23505" && code !== "23503") return null;
+        \\  if (typeof constraint !== "string" || !Object.hasOwn(domainConstraints, constraint)) return null;
+        \\  return domainConstraints[constraint];
+        \\}
+    , tienda_domain_error_ts);
+}
+
 // ---- whole-system aggregation ----
 
 // cosa (all-pk: 4 builders, no update) then articulo (5 builders): covers the
@@ -391,7 +440,7 @@ test "pgTypesFn: a per-pool getTypeParser with the framework's parsers, falling 
 const dos_entidades = zigma.defineEntities(.{ .cosa = cosa, .articulo = articulo });
 const dos_entidades_ts = ts.generateTsBackend(zigma.common_type_defs, dos_entidades);
 
-test "generateTsBackend: pgTypes, then every builder of every entity, in declaration order" {
+test "generateTsBackend: pgTypes, domainError, then every builder of every entity, in declaration order" {
     try expectEqualStrings(
         \\export function pgTypes(defaults: { getTypeParser(oid: number, format?: string): unknown }) {
         \\  const parsers: Record<number, (value: string) => unknown> = {
@@ -402,6 +451,22 @@ test "generateTsBackend: pgTypes, then every builder of every entity, in declara
         \\      return parsers[oid] ?? defaults.getTypeParser(oid, format);
         \\    },
         \\  };
+        \\}
+        \\
+        \\export type DomainError =
+        \\  | { kind: "pk_violation"; entity: string }
+        \\  | { kind: "uk_violation" | "fk_violation"; entity: string; key: string };
+        \\
+        \\const domainConstraints: Record<string, DomainError> = {
+        \\  "cosa_pk": { kind: "pk_violation", entity: "cosa" },
+        \\  "articulo_pk": { kind: "pk_violation", entity: "articulo" },
+        \\};
+        \\
+        \\export function domainError(err: unknown): DomainError | null {
+        \\  const { code, constraint } = (err ?? {}) as { code?: unknown; constraint?: unknown };
+        \\  if (code !== "23505" && code !== "23503") return null;
+        \\  if (typeof constraint !== "string" || !Object.hasOwn(domainConstraints, constraint)) return null;
+        \\  return domainConstraints[constraint];
         \\}
         \\
         \\export function insertCosa(row: { cosa: string }): { text: string; values: unknown[] } {

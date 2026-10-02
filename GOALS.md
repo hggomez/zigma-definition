@@ -35,12 +35,12 @@ completa, etc.), se consulta puntualmente, no se hereda el código.
 
 ## Progreso
 
-Hito 1 (base de datos) en curso. Se eligió generar el esquema como DDL en comptime
-(strings), apuntando a SQLite, porque encaja con TDD (los tests son asserts sobre el
-string generado, sin conexión viva) y no acopla el framework a ningún driver todavía.
-El "ver corriendo" de este hito, por ahora, es imprimir el DDL generado para `aida` (no
-ejecutarlo todavía contra un SQLite real — eso queda para cuando haya que elegir un
-driver, ver `TEST_QUEUE.md`).
+Hito 1 (base de datos) completo. Se eligió generar el esquema como DDL en comptime
+(strings), porque encaja con TDD (los tests son asserts sobre el string generado, sin
+conexión viva) y no acopla el framework a ningún driver. Al principio se apuntó a
+SQLite y el "ver corriendo" era solo imprimir el DDL; después se eligió **Postgres vía
+Docker** y el DDL se aplica de verdad (ver el último punto de esta lista). Lo que sigue
+es el registro cronológico.
 
 * `build.zig.zon`: `minimum_zig_version` actualizado a `0.17.0-dev.1778+767d25269` (la
   build que estaba cacheada localmente; el pin anterior, `0.17.0-dev.1282+c0f9b51d8`, ya
@@ -156,9 +156,26 @@ igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` 
   Tests de integración en verde: `fecha` en la pk de `mesas` (keys en otro orden), `fecha`
   en `NULL` (insert y update), `orden` = 2^53 + 1 vuelve exacto.
 
-**Falta** para completar la interfaz de DML (próxima sesión): más casos de integración
-(update toca solo lo nombrado, delete→selectByPk vacío, violación de uk/fk como error de
-dominio, entidad de pk compuesta). Después: el resto del backend (endpoints HTTP) y el interop TS → Zig para las
+* Más casos de integración en verde: `update` toca solo la fila de su pk, `delete` →
+  `selectByPk` vacío, entidad de pk compuesta (`inscripciones`). Los scripts nuevos crean
+  el pool con `pgTypes`.
+
+* **Violaciones de pk/uk/fk como errores de dominio, hecho.** El DDL nombra cada
+  constraint desde el SSOT (`<entidad>_pk`, `<entidad>_uk_<uk>`, `<entidad>_fk_<fk>`;
+  funciones `pkConstraintName` / `ukConstraintName` / `fkConstraintName` de
+  `sql_generator.zig`). `dml.ts` exporta `domainError(err)` (`domainErrorFn` de
+  `ts_backend_generator.zig`, que usa esas mismas funciones): mapea el error de `pg`
+  (`code` 23505/23503 + `constraint`) a `{ kind: 'pk_violation' | 'uk_violation' |
+  'fk_violation', entity, key }` con los nombres de la definición, o `null` si no es una
+  violación de clave. El borrado de una fila todavía referenciada se reporta del lado que
+  referencia (`{ fk_violation, entity: 'cursos', key: 'periodos' }`).
+* **La base de los tests siempre tiene el esquema actual.** `ts-backend-db` hace
+  `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` y aplica el DDL de cero (borra los
+  datos: es una base de test). `psql` corre con `ON_ERROR_STOP=1`, así que
+  `create-database` (no destructivo) falla si el esquema ya existe, en vez de pasar en
+  silencio sobre un esquema viejo como antes.
+
+La interfaz de DML queda completa. Sigue: HTTP y el llamado a reglas de dominio en Zig. Después: el resto del backend (endpoints HTTP) y el interop TS → Zig para las
 reglas de dominio.
 
 ### Decisión: tipos de dominio compuestos (structs) en Postgres y en TS

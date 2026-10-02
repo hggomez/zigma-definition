@@ -125,9 +125,28 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
 * `src/zigma.zig`: el framework descriptor (módulo `zigma`); no conoce ningún sistema
   concreto.
 * `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
-* `test/aida_test.zig`: los tests positivos.
+* `src/zig_type_map_sql.zig` / `src/zig_type_map_ts.zig`: el mapeo de tipos de Zig a
+  Postgres y a TypeScript (`sqlType` / `tsType`), indexado por `@typeName`.
+* `src/sql_generator.zig`: genera el DDL (`CREATE TYPE` de los dominios respaldados por un
+  struct, `CREATE TABLE` por entidad) desde las definiciones.
+* `src/ts_backend_generator.zig`: genera los builders TS de DML (`insert`, `select…ByPk`,
+  `selectAll`, `update`, `delete`, cada uno devuelve `{ text, values }` para `pg`) y sus
+  tests de Node.
+* `examples/print_*.zig`: ejecutables que imprimen lo generado para aida.
+* `backend/`: paquete Node del backend de aida; `src/dml.ts` y `src/dml.test.ts` se generan
+  ahí (gitignoreados).
+* `docker-compose.yml`: el Postgres de desarrollo.
+* `test/aida_test.zig`: los tests positivos del framework.
+* `test/sql_generator_test.zig`, `test/ts_backend_generator_test.zig`,
+  `test/zig_type_map_test.zig`: tests de los generadores y los mapeos.
+* `test/db_backend_integration_test.zig`: tests de integración contra Postgres real.
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
   error esperado listado en `build.zig`.
+
+Steps de `zig build`: `test` (todo lo que no necesita Docker ni Node), `print-schema`,
+`create-database` (levanta Postgres y aplica el esquema; falla si ya existe), `ts-backend`
+(genera el DML y corre sus tests con Node), `ts-backend-db` (resetea la base, aplica el
+esquema y corre los tests de integración contra Postgres).
 
 ## Forma de trabajo
 

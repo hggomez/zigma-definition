@@ -31,7 +31,7 @@ test "generates a CREATE TABLE with the entity's single column and its SQL type"
     try expectEqualStrings(
         \\CREATE TABLE cosa (
         \\    cosa TEXT NOT NULL,
-        \\    PRIMARY KEY (cosa)
+        \\    CONSTRAINT cosa_pk PRIMARY KEY (cosa)
         \\);
     , cosa_ddl);
 }
@@ -54,7 +54,7 @@ test "maps each field to the SQL type that corresponds to it, not just the first
         \\    id TEXT NOT NULL,
         \\    cantidad BIGINT,
         \\    activo BOOLEAN,
-        \\    PRIMARY KEY (id)
+        \\    CONSTRAINT varias_pk PRIMARY KEY (id)
         \\);
     , varias_ddl);
 }
@@ -68,14 +68,14 @@ test "schemaSql generates one CREATE TABLE per entity, in declaration order, for
     try expectEqualStrings(
         \\CREATE TABLE cosa (
         \\    cosa TEXT NOT NULL,
-        \\    PRIMARY KEY (cosa)
+        \\    CONSTRAINT cosa_pk PRIMARY KEY (cosa)
         \\);
         \\
         \\CREATE TABLE varias (
         \\    id TEXT NOT NULL,
         \\    cantidad BIGINT,
         \\    activo BOOLEAN,
-        \\    PRIMARY KEY (id)
+        \\    CONSTRAINT varias_pk PRIMARY KEY (id)
         \\);
     , dos_entidades_ddl);
 }
@@ -118,15 +118,15 @@ test "schemaSql generates the CREATE TYPE of every struct-backed domain before t
         \\CREATE TABLE lugar (
         \\    lugar TEXT NOT NULL,
         \\    ubicacion punto,
-        \\    PRIMARY KEY (lugar)
+        \\    CONSTRAINT lugar_pk PRIMARY KEY (lugar)
         \\);
     , con_punto_ddl);
 }
 
 // aida.fecha is backed by a nested struct (Fecha{ año, mes, día }), not a
 // primitive: its column is the Postgres composite type named after the
-// domain (`fecha`). The `CREATE TYPE` itself is not emitted yet (plan B,
-// see GOALS.md). `integer` is i64, hence BIGINT.
+// domain (`fecha`). `createTableSql` only references it; its `CREATE TYPE`
+// comes from `schemaSql` (see the tests above). `integer` is i64, hence BIGINT.
 const con_todos_los_tipos = zigma.defineEntity(.{
     .pk = .{"id"},
     .fields = zigma.record(aida.type_defs, .{
@@ -148,7 +148,7 @@ test "maps every domain type of the system to SQL, including one backed by a nes
         \\    activo BOOLEAN,
         \\    fecha_de_alta fecha,
         \\    contacto TEXT,
-        \\    PRIMARY KEY (id)
+        \\    CONSTRAINT con_todos_los_tipos_pk PRIMARY KEY (id)
         \\);
     , con_todos_los_tipos_ddl);
 }
@@ -165,7 +165,7 @@ test "NOT NULL for nullable: false fields, omitted for the nullable: true defaul
         \\    apellido TEXT NOT NULL,
         \\    nombres TEXT NOT NULL,
         \\    email TEXT,
-        \\    PRIMARY KEY (alumno)
+        \\    CONSTRAINT alumnos_pk PRIMARY KEY (alumno)
         \\);
     , alumnos_ddl);
 }
@@ -188,13 +188,18 @@ test "PRIMARY KEY lists every pk field, in order, for a composite pk" {
         \\    a TEXT NOT NULL,
         \\    b TEXT NOT NULL,
         \\    detalle TEXT,
-        \\    PRIMARY KEY (a, b)
+        \\    CONSTRAINT combinacion_pk PRIMARY KEY (a, b)
         \\);
     , combinacion_ddl);
 }
 
 // aida.materias has a uk and no fks: isolates UNIQUE (and exercises NOT
 // NULL again, on denominacion) from FK work.
+//
+// Every key is a named constraint, named from the SSOT: `<entity>_pk`,
+// `<entity>_uk_<uk name>`, `<entity>_fk_<fk name>`. Postgres reports the
+// violated constraint by that name, which is what lets the backend map a
+// violation back to the entity and key of the definition (`domainError`).
 const materias_info = zigma.completeEntity(aida.materias);
 const materias_ddl = sql.createTableSql(aida.type_defs, "materias", materias_info);
 
@@ -203,8 +208,8 @@ test "UNIQUE from uks" {
         \\CREATE TABLE materias (
         \\    materia TEXT NOT NULL,
         \\    denominacion TEXT NOT NULL,
-        \\    PRIMARY KEY (materia),
-        \\    UNIQUE (denominacion)
+        \\    CONSTRAINT materias_pk PRIMARY KEY (materia),
+        \\    CONSTRAINT materias_uk_denominacion UNIQUE (denominacion)
         \\);
     , materias_ddl);
 }
@@ -233,8 +238,8 @@ test "FOREIGN KEY when the source and target field are named the same" {
         \\CREATE TABLE hijo (
         \\    hijo TEXT NOT NULL,
         \\    padre TEXT,
-        \\    PRIMARY KEY (hijo),
-        \\    FOREIGN KEY (padre) REFERENCES padre(padre)
+        \\    CONSTRAINT hijo_pk PRIMARY KEY (hijo),
+        \\    CONSTRAINT hijo_fk_padre FOREIGN KEY (padre) REFERENCES padre(padre)
         \\);
     , hijo_ddl);
 }
@@ -258,8 +263,8 @@ test "FOREIGN KEY with a renamed source field (reflexive fk)" {
         \\CREATE TABLE persona (
         \\    persona TEXT NOT NULL,
         \\    jefe TEXT,
-        \\    PRIMARY KEY (persona),
-        \\    FOREIGN KEY (jefe) REFERENCES persona(persona)
+        \\    CONSTRAINT persona_pk PRIMARY KEY (persona),
+        \\    CONSTRAINT persona_fk_jefe FOREIGN KEY (jefe) REFERENCES persona(persona)
         \\);
     , persona_ddl);
 }
@@ -293,9 +298,9 @@ test "two distinct fks to the same target entity do not overwrite each other" {
         \\    disputa TEXT NOT NULL,
         \\    demandante TEXT,
         \\    demandado TEXT,
-        \\    PRIMARY KEY (disputa),
-        \\    FOREIGN KEY (demandante) REFERENCES objetivo(objetivo),
-        \\    FOREIGN KEY (demandado) REFERENCES objetivo(objetivo)
+        \\    CONSTRAINT disputa_pk PRIMARY KEY (disputa),
+        \\    CONSTRAINT disputa_fk_demandante FOREIGN KEY (demandante) REFERENCES objetivo(objetivo),
+        \\    CONSTRAINT disputa_fk_demandado FOREIGN KEY (demandado) REFERENCES objetivo(objetivo)
         \\);
     , disputa_ddl);
 }
@@ -303,10 +308,10 @@ test "two distinct fks to the same target entity do not overwrite each other" {
 // A genuine cycle between two distinct entities (not reflexive): nodo_a has
 // a fk to nodo_b and nodo_b has a fk to nodo_a. Wrapped in defineEntities to
 // also confirm zigma's own global fk check accepts the cycle. schemaSql
-// emits nodo_a (which references nodo_b) before nodo_b is defined: SQLite
-// does not require the referenced table to exist yet at CREATE TABLE time,
-// only at DML time, so inline FOREIGN KEY clauses in declaration order are
-// fine as-is - no reordering or ALTER TABLE ADD CONSTRAINT needed.
+// emits nodo_a (which references nodo_b) before nodo_b is defined. This only
+// pins the generated text: SQLite accepts it (the referenced table is only
+// needed at DML time), but Postgres requires it to exist at CREATE TABLE
+// time, so applying this DDL there fails (pending in TEST_QUEUE.md).
 const nodo_a = zigma.defineEntity(.{
     .pk = .{"a"},
     .fks = .{ .b = .{ .entity = "nodo_b", .fields = .{ .b = "b" } } },
@@ -331,15 +336,15 @@ test "cyclic fks between two distinct entities generate both CREATE TABLEs" {
         \\CREATE TABLE nodo_a (
         \\    a TEXT NOT NULL,
         \\    b TEXT,
-        \\    PRIMARY KEY (a),
-        \\    FOREIGN KEY (b) REFERENCES nodo_b(b)
+        \\    CONSTRAINT nodo_a_pk PRIMARY KEY (a),
+        \\    CONSTRAINT nodo_a_fk_b FOREIGN KEY (b) REFERENCES nodo_b(b)
         \\);
         \\
         \\CREATE TABLE nodo_b (
         \\    b TEXT NOT NULL,
         \\    a TEXT,
-        \\    PRIMARY KEY (b),
-        \\    FOREIGN KEY (a) REFERENCES nodo_a(a)
+        \\    CONSTRAINT nodo_b_pk PRIMARY KEY (b),
+        \\    CONSTRAINT nodo_b_fk_a FOREIGN KEY (a) REFERENCES nodo_a(a)
         \\);
     , ciclo_ddl);
 }
@@ -362,30 +367,30 @@ test "generates the full aida schema: the fecha composite type, then one CREATE 
         \\    email TEXT,
         \\    email_alternativo TEXT,
         \\    jefe TEXT,
-        \\    PRIMARY KEY (docente),
-        \\    FOREIGN KEY (jefe) REFERENCES docentes(docente)
+        \\    CONSTRAINT docentes_pk PRIMARY KEY (docente),
+        \\    CONSTRAINT docentes_fk_jefe FOREIGN KEY (jefe) REFERENCES docentes(docente)
         \\);
         \\
         \\CREATE TABLE materias (
         \\    materia TEXT NOT NULL,
         \\    denominacion TEXT NOT NULL,
-        \\    PRIMARY KEY (materia),
-        \\    UNIQUE (denominacion)
+        \\    CONSTRAINT materias_pk PRIMARY KEY (materia),
+        \\    CONSTRAINT materias_uk_denominacion UNIQUE (denominacion)
         \\);
         \\
         \\CREATE TABLE periodos (
         \\    periodo TEXT NOT NULL,
-        \\    PRIMARY KEY (periodo)
+        \\    CONSTRAINT periodos_pk PRIMARY KEY (periodo)
         \\);
         \\
         \\CREATE TABLE cursos (
         \\    periodo TEXT NOT NULL,
         \\    materia TEXT NOT NULL,
         \\    docente TEXT,
-        \\    PRIMARY KEY (periodo, materia),
-        \\    FOREIGN KEY (periodo) REFERENCES periodos(periodo),
-        \\    FOREIGN KEY (materia) REFERENCES materias(materia),
-        \\    FOREIGN KEY (docente) REFERENCES docentes(docente)
+        \\    CONSTRAINT cursos_pk PRIMARY KEY (periodo, materia),
+        \\    CONSTRAINT cursos_fk_periodos FOREIGN KEY (periodo) REFERENCES periodos(periodo),
+        \\    CONSTRAINT cursos_fk_materias FOREIGN KEY (materia) REFERENCES materias(materia),
+        \\    CONSTRAINT cursos_fk_responsable FOREIGN KEY (docente) REFERENCES docentes(docente)
         \\);
         \\
         \\CREATE TABLE clases (
@@ -394,8 +399,8 @@ test "generates the full aida schema: the fecha composite type, then one CREATE 
         \\    orden BIGINT NOT NULL,
         \\    fecha fecha,
         \\    tema TEXT,
-        \\    PRIMARY KEY (periodo, materia, orden),
-        \\    FOREIGN KEY (periodo, materia) REFERENCES cursos(periodo, materia)
+        \\    CONSTRAINT clases_pk PRIMARY KEY (periodo, materia, orden),
+        \\    CONSTRAINT clases_fk_cursos FOREIGN KEY (periodo, materia) REFERENCES cursos(periodo, materia)
         \\);
         \\
         \\CREATE TABLE alumnos (
@@ -403,7 +408,7 @@ test "generates the full aida schema: the fecha composite type, then one CREATE 
         \\    apellido TEXT NOT NULL,
         \\    nombres TEXT NOT NULL,
         \\    email TEXT,
-        \\    PRIMARY KEY (alumno)
+        \\    CONSTRAINT alumnos_pk PRIMARY KEY (alumno)
         \\);
         \\
         \\CREATE TABLE preguntas (
@@ -414,8 +419,8 @@ test "generates the full aida schema: the fecha composite type, then one CREATE 
         \\    formulacion TEXT NOT NULL,
         \\    aclaraciones TEXT,
         \\    tipo_respuesta TEXT NOT NULL,
-        \\    PRIMARY KEY (periodo, materia, orden, pregunta),
-        \\    FOREIGN KEY (periodo, materia, orden) REFERENCES clases(periodo, materia, orden)
+        \\    CONSTRAINT preguntas_pk PRIMARY KEY (periodo, materia, orden, pregunta),
+        \\    CONSTRAINT preguntas_fk_clases FOREIGN KEY (periodo, materia, orden) REFERENCES clases(periodo, materia, orden)
         \\);
         \\
         \\CREATE TABLE opciones (
@@ -425,17 +430,17 @@ test "generates the full aida schema: the fecha composite type, then one CREATE 
         \\    pregunta BIGINT NOT NULL,
         \\    opcion TEXT NOT NULL,
         \\    detalle TEXT,
-        \\    PRIMARY KEY (periodo, materia, orden, pregunta, opcion),
-        \\    FOREIGN KEY (periodo, materia, orden, pregunta) REFERENCES preguntas(periodo, materia, orden, pregunta)
+        \\    CONSTRAINT opciones_pk PRIMARY KEY (periodo, materia, orden, pregunta, opcion),
+        \\    CONSTRAINT opciones_fk_preguntas FOREIGN KEY (periodo, materia, orden, pregunta) REFERENCES preguntas(periodo, materia, orden, pregunta)
         \\);
         \\
         \\CREATE TABLE inscripciones (
         \\    periodo TEXT NOT NULL,
         \\    materia TEXT NOT NULL,
         \\    alumno TEXT NOT NULL,
-        \\    PRIMARY KEY (periodo, materia, alumno),
-        \\    FOREIGN KEY (periodo, materia) REFERENCES cursos(periodo, materia),
-        \\    FOREIGN KEY (alumno) REFERENCES alumnos(alumno)
+        \\    CONSTRAINT inscripciones_pk PRIMARY KEY (periodo, materia, alumno),
+        \\    CONSTRAINT inscripciones_fk_cursos FOREIGN KEY (periodo, materia) REFERENCES cursos(periodo, materia),
+        \\    CONSTRAINT inscripciones_fk_alumnos FOREIGN KEY (alumno) REFERENCES alumnos(alumno)
         \\);
         \\
         \\CREATE TABLE presencias (
@@ -443,9 +448,9 @@ test "generates the full aida schema: the fecha composite type, then one CREATE 
         \\    materia TEXT NOT NULL,
         \\    alumno TEXT NOT NULL,
         \\    orden BIGINT NOT NULL,
-        \\    PRIMARY KEY (periodo, materia, alumno, orden),
-        \\    FOREIGN KEY (periodo, materia, alumno) REFERENCES inscripciones(periodo, materia, alumno),
-        \\    FOREIGN KEY (periodo, materia, orden) REFERENCES clases(periodo, materia, orden)
+        \\    CONSTRAINT presencias_pk PRIMARY KEY (periodo, materia, alumno, orden),
+        \\    CONSTRAINT presencias_fk_inscripciones FOREIGN KEY (periodo, materia, alumno) REFERENCES inscripciones(periodo, materia, alumno),
+        \\    CONSTRAINT presencias_fk_clases FOREIGN KEY (periodo, materia, orden) REFERENCES clases(periodo, materia, orden)
         \\);
         \\
         \\CREATE TABLE mesas (
@@ -454,10 +459,10 @@ test "generates the full aida schema: the fecha composite type, then one CREATE 
         \\    fecha fecha NOT NULL,
         \\    presidente TEXT,
         \\    vocal TEXT,
-        \\    PRIMARY KEY (periodo, materia, fecha),
-        \\    FOREIGN KEY (periodo, materia) REFERENCES cursos(periodo, materia),
-        \\    FOREIGN KEY (presidente) REFERENCES docentes(docente),
-        \\    FOREIGN KEY (vocal) REFERENCES docentes(docente)
+        \\    CONSTRAINT mesas_pk PRIMARY KEY (periodo, materia, fecha),
+        \\    CONSTRAINT mesas_fk_cursos FOREIGN KEY (periodo, materia) REFERENCES cursos(periodo, materia),
+        \\    CONSTRAINT mesas_fk_presidente FOREIGN KEY (presidente) REFERENCES docentes(docente),
+        \\    CONSTRAINT mesas_fk_vocal FOREIGN KEY (vocal) REFERENCES docentes(docente)
         \\);
     , aida_schema_ddl);
 }

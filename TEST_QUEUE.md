@@ -15,16 +15,22 @@ revisión antes de implementar.
   y usarlo como tipo del campo; del lado TS, `tsType` y los samples ya lo resuelven
   recursivamente. Pendiente hasta que aparezca un caso real.
 
+* Fks cíclicas entre entidades distintas en Postgres: `schemaSql` emite las `FOREIGN KEY`
+  inline en orden de declaración, y Postgres exige que la tabla referenciada ya exista en
+  el `CREATE TABLE` (SQLite no). El fixture `nodo_a` ↔ `nodo_b` genera DDL que Postgres
+  rechaza. aida no lo sufre (cada fk apunta a una tabla anterior o a sí misma). Opción:
+  tablas sin fks primero, después `ALTER TABLE ... ADD FOREIGN KEY`.
+
 ## Pendientes (módulo `ts_backend_generator` — interfaz de DML en TS)
 
 * Test #2/#3 sobre los builders generados (invariantes que no repiten al generador): un
   `$n` y un valor por campo hoja (una columna respaldada por un struct toma uno por campo); orden de `values` = orden de columnas, independiente del
   orden de claves del objeto de entrada.
 * Contra Postgres real (la base es el oráculo, ya no string-assert). Hecho: insert→
-  selectByPk ida y vuelta (`periodos`). Falta: `update` toca solo las columnas nombradas,
-  `delete` y después selectByPk → vacío, violación de uk (`materias.denominacion`) y de fk
-  mapeadas a error de dominio, entidad de pk compuesta (`inscripciones`, necesita
-  `cursos`+`alumnos` antes por las fks). Hecho también: ida y vuelta de `fecha`
+  selectByPk ida y vuelta (`periodos`), violaciones de pk/uk/fk mapeadas a error de
+  dominio (`domainError`). Hecho también: `update` toca solo la fila de su pk
+  (`materias`), `delete` y después selectByPk → vacío (`periodos`), entidad de pk
+  compuesta (`inscripciones`, dos filas que difieren solo en `alumno`). Hecho también: ida y vuelta de `fecha`
   (`clases`, tipo compuesto + codec en SQL), `fecha` en la pk de `mesas` (select y delete
   con las keys del objeto en otro orden), `fecha` nullable en `NULL` (insert y update), y
   un `integer` (`i64`) más allá de 2^53 vuelve como el `bigint` exacto (pool con
@@ -56,10 +62,12 @@ revisión antes de implementar.
   está separado del mapa de dominio del sistema), pero es confuso y queremos prohibirlo.
 * Los tipos TS generados ignoran `nullable` (`insertCursos` declara `docente: string`
   aunque es nullable): deberían ser `T | null`.
-* `apply_aida_schema` (usado por `create-database` y `ts-backend-db`) no es idempotente:
-  el DDL es `CREATE TABLE`, no `CREATE TABLE IF NOT EXISTS`, así que re-correrlo sobre una
-  base ya creada tira `relation "x" already exists` (psql sigue igual, exit 0, pero
-  ensucia la salida). Ver si conviene `IF NOT EXISTS` o un `DROP ... CASCADE` previo.
+* Caso "no compila": un nombre de constraint (`<entidad>_fk_<fk>`, etc.) de más de 63
+  bytes. Postgres trunca los identificadores a 63 bytes, y el nombre truncado ya no
+  coincidiría con la tabla de `domainError`. aida está lejos del límite.
+* `domainError` con una violación de uk compuesta y de fk compuesta: hoy la integración
+  prueba uk y fk de una sola columna (el mapeo es por nombre de constraint, no debería
+  cambiar, pero no está probado).
 * `type` del `row`/`pk`: usa `,` como separador; TS idiomático es `;` dentro de un type
   literal (ambos válidos).
 
@@ -83,6 +91,8 @@ revisión antes de implementar.
 * Tipos TS resueltos desde `type_defs` con `zig_type_map_ts.tsType`; samples de los tests
   derivados del tipo de Zig (`muestra`: slice, `i64` → `1n`, bool, struct → objeto).
 * `zig build ts-backend`: genera `dml.ts` + `dml.test.ts` y corre `node --test`.
+* `domainErrorFn`: tabla constraint → `{ kind, entity, key }` y `domainError(err)`, en
+  `dml.ts` después de `pgTypes`. Constraints nombradas en el DDL (`sql_generator_test`).
 
 ## Hechos (referencia rápida, no repetir)
 

@@ -98,6 +98,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zigma", .module = zigma_mod },
             .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
             .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
+            .{ .name = "sql_generator", .module = sql_generator_mod },
         },
     });
 
@@ -177,21 +178,38 @@ pub fn build(b: *std.Build) void {
     // container's healthcheck, so this is race-free even on first-time init), and
     // pipes the generated aida schema into psql running inside that container. No
     // Postgres driver needed: psql runs inside the container, so the only host
-    // dependency is Docker.
+    // dependency is Docker. Non-destructive: on a database that already has the
+    // schema the first CREATE fails, and ON_ERROR_STOP makes the step fail
+    // instead of passing silently over a stale schema (the data lives in a
+    // named volume; `docker compose down -v` deletes it).
     const docker_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait" });
 
     const run_print_schema_for_db = b.addRunArtifact(print_schema_exe);
     const aida_schema_sql = run_print_schema_for_db.captureStdOut(.{});
 
-    const apply_aida_schema = b.addSystemCommand(&.{
-        "docker", "exec", "-i", "zigma_aida_postgres",
-        "psql",   "-U",   "aida", "-d", "aida",
-    });
+    const psql_argv: []const []const u8 = &.{
+        "docker", "exec",            "-i",   "zigma_aida_postgres",
+        "psql",   "-v",              "ON_ERROR_STOP=1",
+        "-U",     "aida",            "-d",   "aida",
+    };
+
+    const apply_aida_schema = b.addSystemCommand(psql_argv);
     apply_aida_schema.setStdIn(.{ .lazy_path = aida_schema_sql });
     apply_aida_schema.step.dependOn(&docker_up.step);
 
-    const create_database_step = b.step("create-database", "Start Postgres via Docker, then generate and apply the aida schema");
+    const create_database_step = b.step("create-database", "Start Postgres via Docker, then generate and apply the aida schema (fails if the schema already exists)");
     create_database_step.dependOn(&apply_aida_schema.step);
+
+    // The integration tests need the database to have exactly the schema the
+    // current code generates: drop everything, then apply it fresh. Destroys
+    // any data, which is fine for this test database.
+    const reset_database = b.addSystemCommand(psql_argv);
+    reset_database.addArgs(&.{ "-c", "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" });
+    reset_database.step.dependOn(&docker_up.step);
+
+    const apply_fresh_aida_schema = b.addSystemCommand(psql_argv);
+    apply_fresh_aida_schema.setStdIn(.{ .lazy_path = aida_schema_sql });
+    apply_fresh_aida_schema.step.dependOn(&reset_database.step);
 
     // `zig build ts-backend`: generate the TypeScript DML module and its test
     // module from the aida SSOT, write both to zig-out/ts-backend/, then run
@@ -240,8 +258,8 @@ pub fn build(b: *std.Build) void {
     const ts_backend_step = b.step("ts-backend", "Generate the aida TypeScript DML module + tests into backend/, then run the pure tests with node");
     ts_backend_step.dependOn(&run_ts_backend_node_tests.step);
 
-    // `zig build ts-backend-db`: bring up the container and apply the schema
-    // (same steps as `create-database`), `npm install` in backend/, regenerate
+    // `zig build ts-backend-db`: bring up the container, reset the database and
+    // apply the schema fresh, `npm install` in backend/, regenerate
     // dml.ts, then run test/db_backend_integration_test.zig - a Zig test that
     // drives the generated builders through Node against the real database.
     // Not on `test_step` (needs Docker + Node).
@@ -260,7 +278,7 @@ pub fn build(b: *std.Build) void {
     run_db_backend_integration_tests.has_side_effects = true;
     run_db_backend_integration_tests.step.dependOn(&write_ts_backend.step);
     run_db_backend_integration_tests.step.dependOn(&npm_install.step);
-    run_db_backend_integration_tests.step.dependOn(&apply_aida_schema.step);
+    run_db_backend_integration_tests.step.dependOn(&apply_fresh_aida_schema.step);
 
     const ts_backend_db_step = b.step("ts-backend-db", "Generate, then run the DML integration test against the docker-compose Postgres");
     ts_backend_db_step.dependOn(&run_db_backend_integration_tests.step);

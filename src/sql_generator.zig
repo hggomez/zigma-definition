@@ -30,21 +30,40 @@ fn joinNames(comptime names: anytype) []const u8 {
     return result;
 }
 
-fn columnListClause(comptime label: []const u8, comptime names: anytype) []const u8 {
-    return label ++ " (" ++ joinNames(names) ++ ")";
+// ---- constraint names ----
+//
+// Every key is a named constraint, named from the SSOT. Postgres reports a
+// violated constraint by that name, so the backend can map the violation back
+// to the entity and key of the definition (`domainErrorFn` of
+// ts_backend_generator uses these same functions).
+
+pub fn pkConstraintName(comptime entity_name: []const u8) []const u8 {
+    return entity_name ++ "_pk";
+}
+
+pub fn ukConstraintName(comptime entity_name: []const u8, comptime uk_name: []const u8) []const u8 {
+    return entity_name ++ "_uk_" ++ uk_name;
+}
+
+pub fn fkConstraintName(comptime entity_name: []const u8, comptime fk_name: []const u8) []const u8 {
+    return entity_name ++ "_fk_" ++ fk_name;
+}
+
+fn columnListClause(comptime constraint_name: []const u8, comptime label: []const u8, comptime names: anytype) []const u8 {
+    return "CONSTRAINT " ++ constraint_name ++ " " ++ label ++ " (" ++ joinNames(names) ++ ")";
 }
 
 /// `fk.fields` is always the source->target map here (the entity was
 /// completed with `zigma.completeEntity` before reaching this function,
 /// which normalizes away the array shorthand).
-fn fkClause(comptime fk: anytype) []const u8 {
+fn fkClause(comptime constraint_name: []const u8, comptime fk: anytype) []const u8 {
     const source_names = @typeInfo(@TypeOf(fk.fields)).@"struct".field_names;
     comptime var targets: []const u8 = "";
     inline for (source_names, 0..) |source, i| {
         if (i > 0) targets = targets ++ ", ";
         targets = targets ++ @field(fk.fields, source);
     }
-    return "FOREIGN KEY (" ++ joinNames(source_names) ++ ") REFERENCES " ++ fk.entity ++ "(" ++ targets ++ ")";
+    return "CONSTRAINT " ++ constraint_name ++ " FOREIGN KEY (" ++ joinNames(source_names) ++ ") REFERENCES " ++ fk.entity ++ "(" ++ targets ++ ")";
 }
 
 fn appendClause(comptime acc: []const u8, comptime clause: []const u8) []const u8 {
@@ -54,7 +73,8 @@ fn appendClause(comptime acc: []const u8, comptime clause: []const u8) []const u
 /// Generates the `CREATE TABLE` statement for one entity: one line per
 /// field (with `NOT NULL` when `nullable: false`), then `PRIMARY KEY`, then
 /// one `UNIQUE` per uk, then one `FOREIGN KEY` per fk - in that order, each
-/// in declaration order. `type_defs` is the system's collection of domain
+/// in declaration order, each key a named constraint (see the constraint
+/// names above). `type_defs` is the system's collection of domain
 /// types; each field's SQL type is resolved from it with `sqlType`.
 pub fn createTableSql(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     const field_names = @typeInfo(@TypeOf(entity.fields)).@"struct".field_names;
@@ -62,16 +82,16 @@ pub fn createTableSql(comptime type_defs: anytype, comptime name: []const u8, co
     inline for (field_names) |field_name| {
         clauses = appendClause(clauses, columnClause(type_defs, entity.pk, field_name, @field(entity.fields, field_name)));
     }
-    clauses = appendClause(clauses, columnListClause("PRIMARY KEY", entity.pk));
+    clauses = appendClause(clauses, columnListClause(pkConstraintName(name), "PRIMARY KEY", entity.pk));
 
     const uk_names = @typeInfo(@TypeOf(entity.uks)).@"struct".field_names;
     inline for (uk_names) |uk_name| {
-        clauses = appendClause(clauses, columnListClause("UNIQUE", @field(entity.uks, uk_name)));
+        clauses = appendClause(clauses, columnListClause(ukConstraintName(name, uk_name), "UNIQUE", @field(entity.uks, uk_name)));
     }
 
     const fk_names = @typeInfo(@TypeOf(entity.fks)).@"struct".field_names;
     inline for (fk_names) |fk_name| {
-        clauses = appendClause(clauses, fkClause(@field(entity.fks, fk_name)));
+        clauses = appendClause(clauses, fkClause(fkConstraintName(name, fk_name), @field(entity.fks, fk_name)));
     }
 
     return "CREATE TABLE " ++ name ++ " (\n    " ++ clauses ++ "\n);";

@@ -3,7 +3,7 @@
 //! string is TypeScript code instead of a `CREATE TABLE` statement. Each
 //! field's TS type is resolved from the system's `type_defs` with
 //! `zig_type_map_ts.tsType`; the sample literals for the generated tests are
-//! still supplied by the caller, keyed by domain type name.
+//! derived from the domain's Zig type (`tsSample`).
 //!
 //! Per entity the generator emits up to five parameterized builders, each
 //! returning the `{ text, values }` shape a `pg` query call takes:
@@ -17,6 +17,7 @@ const zigma = @import("zigma");
 
 const tsType = @import("zig_type_map_ts").tsType;
 const sqlType = @import("zig_type_map_sql").sqlType;
+const sql_generator = @import("sql_generator");
 
 /// The struct behind a column's domain type, or null when it is not
 /// struct-backed (then the column is one plain parameter).
@@ -470,7 +471,43 @@ pub fn pgTypesFn() []const u8 {
         "}";
 }
 
-/// The whole `.ts` module for a system: `pgTypes`, then every builder of every
+/// `domainError(err)`: maps a pg key violation (`code` 23505 unique_violation,
+/// pk or uk, or 23503 foreign_key_violation) to the entity and key of the
+/// definition, through a table from each named constraint of `entity_defs`
+/// (names from `sql_generator`, the same ones the DDL declares). Any other
+/// error is not a domain error: null.
+pub fn domainErrorFn(comptime entity_defs: anytype) []const u8 {
+    comptime var entries: []const u8 = "";
+    inline for (@typeInfo(@TypeOf(entity_defs)).@"struct".field_names) |entity_name| {
+        const entity = @field(entity_defs, entity_name);
+        entries = entries ++ "  \"" ++ sql_generator.pkConstraintName(entity_name) ++
+            "\": { kind: \"pk_violation\", entity: \"" ++ entity_name ++ "\" },\n";
+        inline for (@typeInfo(@TypeOf(entity.uks)).@"struct".field_names) |uk_name| {
+            entries = entries ++ "  \"" ++ sql_generator.ukConstraintName(entity_name, uk_name) ++
+                "\": { kind: \"uk_violation\", entity: \"" ++ entity_name ++ "\", key: \"" ++ uk_name ++ "\" },\n";
+        }
+        inline for (@typeInfo(@TypeOf(entity.fks)).@"struct".field_names) |fk_name| {
+            entries = entries ++ "  \"" ++ sql_generator.fkConstraintName(entity_name, fk_name) ++
+                "\": { kind: \"fk_violation\", entity: \"" ++ entity_name ++ "\", key: \"" ++ fk_name ++ "\" },\n";
+        }
+    }
+    return "export type DomainError =\n" ++
+        "  | { kind: \"pk_violation\"; entity: string }\n" ++
+        "  | { kind: \"uk_violation\" | \"fk_violation\"; entity: string; key: string };\n" ++
+        "\n" ++
+        "const domainConstraints: Record<string, DomainError> = {\n" ++
+        entries ++
+        "};\n" ++
+        "\n" ++
+        "export function domainError(err: unknown): DomainError | null {\n" ++
+        "  const { code, constraint } = (err ?? {}) as { code?: unknown; constraint?: unknown };\n" ++
+        "  if (code !== \"23505\" && code !== \"23503\") return null;\n" ++
+        "  if (typeof constraint !== \"string\" || !Object.hasOwn(domainConstraints, constraint)) return null;\n" ++
+        "  return domainConstraints[constraint];\n" ++
+        "}";
+}
+
+/// The whole `.ts` module for a system: `pgTypes`, `domainError`, then every builder of every
 /// entity of `entity_defs` (as produced by `zigma.defineEntity`/
 /// `defineEntities`, not yet completed), in declaration order, blank-line
 /// separated. The `schemaSql` of the TypeScript side. No header, for parity
@@ -478,7 +515,7 @@ pub fn pgTypesFn() []const u8 {
 pub fn generateTsBackend(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     @setEvalBranchQuota(100000);
     const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
-    comptime var module: []const u8 = pgTypesFn();
+    comptime var module: []const u8 = pgTypesFn() ++ "\n\n" ++ domainErrorFn(entity_defs);
     inline for (entity_names) |entity_name| {
         module = module ++ "\n\n" ++ entityBuilders(type_defs, entity_name, zigma.completeEntity(@field(entity_defs, entity_name)));
     }
