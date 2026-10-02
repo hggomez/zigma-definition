@@ -105,11 +105,11 @@ test "insertFnTest: the sample literal of each field is derived from its Zig typ
 
 const cosa_select_by_pk_ts = ts.selectByPkFn(zigma.common_type_defs, "cosa", cosa_info);
 
-test "selectByPkFn: SELECT * ... WHERE the single pk column" {
+test "selectByPkFn: SELECT <columns> ... WHERE the single pk column" {
     try expectEqualStrings(
         \\export function selectCosaByPk(pk: { cosa: string }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'SELECT * FROM "cosa" WHERE "cosa" = $1',
+        \\    text: 'SELECT "cosa" FROM "cosa" WHERE "cosa" = $1',
         \\    values: [pk.cosa],
         \\  };
         \\}
@@ -122,7 +122,7 @@ test "selectByPkFn: composite pk -> WHERE a = $1 AND b = $2, in pk order" {
     try expectEqualStrings(
         \\export function selectComboByPk(pk: { a: string, b: string }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'SELECT * FROM "combo" WHERE "a" = $1 AND "b" = $2',
+        \\    text: 'SELECT "a", "b", "detalle" FROM "combo" WHERE "a" = $1 AND "b" = $2',
         \\    values: [pk.a, pk.b],
         \\  };
         \\}
@@ -143,13 +143,13 @@ test "selectByPkFnTest: a TS test that the selectByPk builder runs and returns a
 
 // ---- selectAll ----
 
-const cosa_select_all_ts = ts.selectAllFn("cosa");
+const cosa_select_all_ts = ts.selectAllFn(zigma.common_type_defs, "cosa", cosa_info);
 
-test "selectAllFn: SELECT * FROM the entity, no parameters" {
+test "selectAllFn: SELECT <columns> FROM the entity, no parameters" {
     try expectEqualStrings(
         \\export function selectAllCosa(): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'SELECT * FROM "cosa"',
+        \\    text: 'SELECT "cosa" FROM "cosa"',
         \\    values: [],
         \\  };
         \\}
@@ -235,6 +235,131 @@ test "deleteFnTest: a TS test that the delete builder runs and returns a query o
     , cosa_delete_test_ts);
 }
 
+// ---- struct-backed columns: the codec lives in the SQL text ----
+//
+// Encode: one parameter per leaf field, the composite assembled with
+// ROW(...)::<type> (explicit casts so Postgres infers the parameter types);
+// a nullable column wraps it in CASE WHEN ... IS NULL (ROW(NULL, NULL) is not
+// NULL). Decode: to_jsonb(<column>) in the SELECT list, which pg already turns
+// into a JS object.
+
+// lugar: a nullable struct column outside the pk (`ubicacion`).
+const lugar = zigma.defineEntity(.{
+    .pk = .{"lugar"},
+    .fields = zigma.record(muestra_type_defs, .{
+        .lugar = .{ .type = "text" },
+        .ubicacion = .{ .type = "punto" },
+    }),
+});
+const lugar_info = zigma.completeEntity(lugar);
+const lugar_insert_ts = ts.insertFn(muestra_type_defs, "lugar", lugar_info);
+const lugar_select_by_pk_ts = ts.selectByPkFn(muestra_type_defs, "lugar", lugar_info);
+const lugar_select_all_ts = ts.selectAllFn(muestra_type_defs, "lugar", lugar_info);
+const lugar_update_ts = ts.updateFn(muestra_type_defs, "lugar", lugar_info);
+
+test "insertFn: a nullable struct column is encoded as CASE/ROW over one parameter per field" {
+    try expectEqualStrings(
+        \\export function insertLugar(row: { lugar: string, ubicacion: { x: number; y: number } }): { text: string; values: unknown[] } {
+        \\  return {
+        \\    text: 'INSERT INTO "lugar" ("lugar", "ubicacion") VALUES ($1, CASE WHEN $2::SMALLINT IS NULL THEN NULL ELSE ROW($2::SMALLINT, $3::INTEGER)::punto END)',
+        \\    values: [row.lugar, row.ubicacion?.x ?? null, row.ubicacion?.y ?? null],
+        \\  };
+        \\}
+    , lugar_insert_ts);
+}
+
+test "selectByPkFn: a struct column is decoded with to_jsonb" {
+    try expectEqualStrings(
+        \\export function selectLugarByPk(pk: { lugar: string }): { text: string; values: unknown[] } {
+        \\  return {
+        \\    text: 'SELECT "lugar", to_jsonb("ubicacion") AS "ubicacion" FROM "lugar" WHERE "lugar" = $1',
+        \\    values: [pk.lugar],
+        \\  };
+        \\}
+    , lugar_select_by_pk_ts);
+}
+
+test "selectAllFn: a struct column is decoded with to_jsonb" {
+    try expectEqualStrings(
+        \\export function selectAllLugar(): { text: string; values: unknown[] } {
+        \\  return {
+        \\    text: 'SELECT "lugar", to_jsonb("ubicacion") AS "ubicacion" FROM "lugar"',
+        \\    values: [],
+        \\  };
+        \\}
+    , lugar_select_all_ts);
+}
+
+test "updateFn: a struct column in SET takes one placeholder per field, the WHERE ones follow" {
+    try expectEqualStrings(
+        \\export function updateLugar(pk: { lugar: string }, row: { ubicacion: { x: number; y: number } }): { text: string; values: unknown[] } {
+        \\  return {
+        \\    text: 'UPDATE "lugar" SET "ubicacion" = CASE WHEN $1::SMALLINT IS NULL THEN NULL ELSE ROW($1::SMALLINT, $2::INTEGER)::punto END WHERE "lugar" = $3',
+        \\    values: [row.ubicacion?.x ?? null, row.ubicacion?.y ?? null, pk.lugar],
+        \\  };
+        \\}
+    , lugar_update_ts);
+}
+
+// marca: a struct column that is the pk (`punto`, never NULL: plain ROW, no
+// CASE), plus one non-pk column.
+const marca = zigma.defineEntity(.{
+    .pk = .{"punto"},
+    .fields = zigma.record(muestra_type_defs, .{
+        .punto = .{ .type = "punto" },
+        .nombre = .{ .type = "text" },
+    }),
+});
+const marca_info = zigma.completeEntity(marca);
+const marca_insert_ts = ts.insertFn(muestra_type_defs, "marca", marca_info);
+const marca_select_by_pk_ts = ts.selectByPkFn(muestra_type_defs, "marca", marca_info);
+const marca_update_ts = ts.updateFn(muestra_type_defs, "marca", marca_info);
+const marca_delete_ts = ts.deleteFn(muestra_type_defs, "marca", marca_info);
+
+test "insertFn: a pk struct column is encoded as a plain ROW" {
+    try expectEqualStrings(
+        \\export function insertMarca(row: { punto: { x: number; y: number }, nombre: string }): { text: string; values: unknown[] } {
+        \\  return {
+        \\    text: 'INSERT INTO "marca" ("punto", "nombre") VALUES (ROW($1::SMALLINT, $2::INTEGER)::punto, $3)',
+        \\    values: [row.punto.x, row.punto.y, row.nombre],
+        \\  };
+        \\}
+    , marca_insert_ts);
+}
+
+test "selectByPkFn: a struct pk is compared against a ROW, independent of the key order of the object" {
+    try expectEqualStrings(
+        \\export function selectMarcaByPk(pk: { punto: { x: number; y: number } }): { text: string; values: unknown[] } {
+        \\  return {
+        \\    text: 'SELECT to_jsonb("punto") AS "punto", "nombre" FROM "marca" WHERE "punto" = ROW($1::SMALLINT, $2::INTEGER)::punto',
+        \\    values: [pk.punto.x, pk.punto.y],
+        \\  };
+        \\}
+    , marca_select_by_pk_ts);
+}
+
+test "updateFn: a struct pk in WHERE continues the numbering after the SET" {
+    try expectEqualStrings(
+        \\export function updateMarca(pk: { punto: { x: number; y: number } }, row: { nombre: string }): { text: string; values: unknown[] } {
+        \\  return {
+        \\    text: 'UPDATE "marca" SET "nombre" = $1 WHERE "punto" = ROW($2::SMALLINT, $3::INTEGER)::punto',
+        \\    values: [row.nombre, pk.punto.x, pk.punto.y],
+        \\  };
+        \\}
+    , marca_update_ts);
+}
+
+test "deleteFn: a struct pk is compared against a ROW" {
+    try expectEqualStrings(
+        \\export function deleteMarca(pk: { punto: { x: number; y: number } }): { text: string; values: unknown[] } {
+        \\  return {
+        \\    text: 'DELETE FROM "marca" WHERE "punto" = ROW($1::SMALLINT, $2::INTEGER)::punto',
+        \\    values: [pk.punto.x, pk.punto.y],
+        \\  };
+        \\}
+    , marca_delete_ts);
+}
+
 // ---- whole-system aggregation ----
 
 // cosa (all-pk: 4 builders, no update) then articulo (5 builders): covers the
@@ -254,14 +379,14 @@ test "generateTsBackend: every builder of every entity, in declaration order" {
         \\
         \\export function selectCosaByPk(pk: { cosa: string }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'SELECT * FROM "cosa" WHERE "cosa" = $1',
+        \\    text: 'SELECT "cosa" FROM "cosa" WHERE "cosa" = $1',
         \\    values: [pk.cosa],
         \\  };
         \\}
         \\
         \\export function selectAllCosa(): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'SELECT * FROM "cosa"',
+        \\    text: 'SELECT "cosa" FROM "cosa"',
         \\    values: [],
         \\  };
         \\}
@@ -282,14 +407,14 @@ test "generateTsBackend: every builder of every entity, in declaration order" {
         \\
         \\export function selectArticuloByPk(pk: { sku: string }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'SELECT * FROM "articulo" WHERE "sku" = $1',
+        \\    text: 'SELECT "sku", "nombre" FROM "articulo" WHERE "sku" = $1',
         \\    values: [pk.sku],
         \\  };
         \\}
         \\
         \\export function selectAllArticulo(): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'SELECT * FROM "articulo"',
+        \\    text: 'SELECT "sku", "nombre" FROM "articulo"',
         \\    values: [],
         \\  };
         \\}

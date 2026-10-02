@@ -16,6 +16,15 @@ const zigma = @import("zigma");
 // ---- type resolution ----
 
 const tsType = @import("zig_type_map_ts").tsType;
+const sqlType = @import("zig_type_map_sql").sqlType;
+
+/// The struct behind a column's domain type, or null when it is not
+/// struct-backed (then the column is one plain parameter).
+fn StructOf(comptime type_defs: anytype, comptime type_name: []const u8) ?type {
+    if (!@hasField(@TypeOf(type_defs), type_name)) return null;
+    const T = @field(type_defs, type_name).Type;
+    return if (@typeInfo(T) == .@"struct") T else null;
+}
 
 /// A sample literal for a domain type, for the generated tests to feed the
 /// builders (the value only has to type-check, not be meaningful). Derived
@@ -119,47 +128,123 @@ fn nonPkTypedParams(comptime type_defs: anytype, comptime entity: anytype) []con
     return out;
 }
 
-/// `"a" = $1 AND "b" = $2`, the placeholders starting after `offset` params.
-fn pkWhere(comptime entity: anytype, comptime offset: usize) []const u8 {
+fn placeholder(comptime n: usize) []const u8 {
+    return std.fmt.comptimePrint("${d}", .{n});
+}
+
+/// A pk column is never NULL, whatever its `nullable` says.
+fn isNullableColumn(comptime entity: anytype, comptime col: []const u8) bool {
+    return @field(entity.fields, col).nullable and !isPkColumn(entity, col);
+}
+
+/// How many query parameters a column takes: one per leaf field for a
+/// struct-backed column, one otherwise.
+fn paramCount(comptime type_defs: anytype, comptime entity: anytype, comptime col: []const u8) usize {
+    const T = StructOf(type_defs, @field(entity.fields, col).type) orelse return 1;
+    return @typeInfo(T).@"struct".field_names.len;
+}
+
+fn nonPkParamCount(comptime type_defs: anytype, comptime entity: anytype) usize {
+    comptime var n: usize = 0;
+    inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |col| {
+        if (comptime !isPkColumn(entity, col)) n += paramCount(type_defs, entity, col);
+    }
+    return n;
+}
+
+/// The SQL value of a column whose parameters start at `$first` (the encode
+/// half of the codec): `$n` for a plain column; for a struct-backed one,
+/// `ROW($n::T1, $n+1::T2, ...)::<composite>`, wrapped in `CASE WHEN ... IS
+/// NULL` when the column is nullable (`ROW(NULL, ...)` is not `NULL`).
+fn valueExpr(comptime type_defs: anytype, comptime entity: anytype, comptime col: []const u8, comptime first: usize) []const u8 {
+    const field = @field(entity.fields, col);
+    const T = StructOf(type_defs, field.type) orelse return placeholder(first);
+    const info = @typeInfo(T).@"struct";
+    comptime var casts: []const u8 = "";
+    inline for (info.field_types, 0..) |field_type, i| {
+        if (i > 0) casts = casts ++ ", ";
+        casts = casts ++ placeholder(first + i) ++ "::" ++ sqlType(type_defs, @typeName(field_type));
+    }
+    const row = "ROW(" ++ casts ++ ")::" ++ sqlType(type_defs, field.type);
+    if (!isNullableColumn(entity, col)) return row;
+    const first_cast = placeholder(first) ++ "::" ++ sqlType(type_defs, @typeName(info.field_types[0]));
+    return "CASE WHEN " ++ first_cast ++ " IS NULL THEN NULL ELSE " ++ row ++ " END";
+}
+
+/// The JS values feeding `valueExpr`'s parameters: `obj.col`, or one per leaf
+/// field of a struct-backed column (`obj.col?.f ?? null` when nullable).
+fn valueAccessors(comptime type_defs: anytype, comptime entity: anytype, comptime col: []const u8, comptime obj: []const u8) []const u8 {
+    const T = StructOf(type_defs, @field(entity.fields, col).type) orelse return obj ++ "." ++ col;
+    const nullable = isNullableColumn(entity, col);
     comptime var out: []const u8 = "";
+    inline for (@typeInfo(T).@"struct".field_names, 0..) |field_name, i| {
+        if (i > 0) out = out ++ ", ";
+        out = out ++ if (nullable)
+            obj ++ "." ++ col ++ "?." ++ field_name ++ " ?? null"
+        else
+            obj ++ "." ++ col ++ "." ++ field_name;
+    }
+    return out;
+}
+
+/// The SELECT list (the decode half of the codec): every column by name, a
+/// struct-backed one as `to_jsonb("col") AS "col"`, which pg returns as an
+/// object.
+fn selectList(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
+    comptime var out: []const u8 = "";
+    inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names, 0..) |col, i| {
+        if (i > 0) out = out ++ ", ";
+        out = out ++ if (StructOf(type_defs, @field(entity.fields, col).type) != null)
+            "to_jsonb(\"" ++ col ++ "\") AS \"" ++ col ++ "\""
+        else
+            "\"" ++ col ++ "\"";
+    }
+    return out;
+}
+
+/// `"a" = $1 AND "b" = $2`, the placeholders starting after `offset` params.
+fn pkWhere(comptime type_defs: anytype, comptime entity: anytype, comptime offset: usize) []const u8 {
+    comptime var out: []const u8 = "";
+    comptime var n: usize = offset + 1;
     inline for (entity.pk, 0..) |col, i| {
         const sep = if (i > 0) " AND " else "";
-        out = out ++ sep ++ "\"" ++ col ++ "\" = " ++ std.fmt.comptimePrint("${d}", .{offset + i + 1});
+        out = out ++ sep ++ "\"" ++ col ++ "\" = " ++ valueExpr(type_defs, entity, col, n);
+        n += paramCount(type_defs, entity, col);
     }
     return out;
 }
 
 /// `"nombre" = $1, "precio" = $2` for the non-pk columns (the UPDATE SET list).
-fn nonPkAssignments(comptime entity: anytype) []const u8 {
+fn nonPkAssignments(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = "";
-    comptime var i: usize = 0;
+    comptime var n: usize = 1;
     inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |col| {
         if (comptime isPkColumn(entity, col)) continue;
-        const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ "\"" ++ col ++ "\" = " ++ std.fmt.comptimePrint("${d}", .{i + 1});
-        i += 1;
+        const sep = if (n > 1) ", " else "";
+        out = out ++ sep ++ "\"" ++ col ++ "\" = " ++ valueExpr(type_defs, entity, col, n);
+        n += paramCount(type_defs, entity, col);
     }
     return out;
 }
 
 /// `pk.a, pk.b` (or any object name) for the pk columns.
-fn pkAccessors(comptime entity: anytype, comptime obj: []const u8) []const u8 {
+fn pkAccessors(comptime type_defs: anytype, comptime entity: anytype, comptime obj: []const u8) []const u8 {
     comptime var out: []const u8 = "";
     inline for (entity.pk, 0..) |col, i| {
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ obj ++ "." ++ col;
+        out = out ++ sep ++ valueAccessors(type_defs, entity, col, obj);
     }
     return out;
 }
 
 /// `row.nombre, row.precio` for the non-pk columns.
-fn nonPkAccessors(comptime entity: anytype, comptime obj: []const u8) []const u8 {
+fn nonPkAccessors(comptime type_defs: anytype, comptime entity: anytype, comptime obj: []const u8) []const u8 {
     comptime var out: []const u8 = "";
     comptime var i: usize = 0;
     inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |col| {
         if (comptime isPkColumn(entity, col)) continue;
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ obj ++ "." ++ col;
+        out = out ++ sep ++ valueAccessors(type_defs, entity, col, obj);
         i += 1;
     }
     return out;
@@ -219,12 +304,14 @@ pub fn insertFn(comptime type_defs: anytype, comptime name: []const u8, comptime
     comptime var columns: []const u8 = "";
     comptime var placeholders: []const u8 = "";
     comptime var values: []const u8 = "";
+    comptime var n: usize = 1;
     inline for (field_names, 0..) |field_name, i| {
         const sep = if (i > 0) ", " else "";
         params = params ++ sep ++ field_name ++ ": " ++ tsType(type_defs, @field(entity.fields, field_name).type);
         columns = columns ++ sep ++ "\"" ++ field_name ++ "\"";
-        placeholders = placeholders ++ sep ++ std.fmt.comptimePrint("${d}", .{i + 1});
-        values = values ++ sep ++ "row." ++ field_name;
+        placeholders = placeholders ++ sep ++ valueExpr(type_defs, entity, field_name, n);
+        values = values ++ sep ++ valueAccessors(type_defs, entity, field_name, "row");
+        n += paramCount(type_defs, entity, field_name);
     }
 
     return queryFn(
@@ -235,22 +322,22 @@ pub fn insertFn(comptime type_defs: anytype, comptime name: []const u8, comptime
     );
 }
 
-/// Parameterized `SELECT * ... WHERE <pk>` builder for one entity.
+/// Parameterized `SELECT <columns> ... WHERE <pk>` builder for one entity.
 pub fn selectByPkFn(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     return queryFn(
         opFnName("select", name, "ByPk"),
         "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }",
-        "SELECT * FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(entity, 0),
-        pkAccessors(entity, "pk"),
+        "SELECT " ++ selectList(type_defs, entity) ++ " FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(type_defs, entity, 0),
+        pkAccessors(type_defs, entity, "pk"),
     );
 }
 
-/// `SELECT * FROM <entity>` builder - no parameters.
-pub fn selectAllFn(comptime name: []const u8) []const u8 {
+/// `SELECT <columns> FROM <entity>` builder - no parameters.
+pub fn selectAllFn(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     return queryFn(
         opFnName("selectAll", name, ""),
         "",
-        "SELECT * FROM \"" ++ name ++ "\"",
+        "SELECT " ++ selectList(type_defs, entity) ++ " FROM \"" ++ name ++ "\"",
         "",
     );
 }
@@ -262,8 +349,8 @@ pub fn updateFn(comptime type_defs: anytype, comptime name: []const u8, comptime
     return queryFn(
         opFnName("update", name, ""),
         "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }, row: { " ++ nonPkTypedParams(type_defs, entity) ++ " }",
-        "UPDATE \"" ++ name ++ "\" SET " ++ nonPkAssignments(entity) ++ " WHERE " ++ pkWhere(entity, nonPkCount(entity)),
-        nonPkAccessors(entity, "row") ++ ", " ++ pkAccessors(entity, "pk"),
+        "UPDATE \"" ++ name ++ "\" SET " ++ nonPkAssignments(type_defs, entity) ++ " WHERE " ++ pkWhere(type_defs, entity, nonPkParamCount(type_defs, entity)),
+        nonPkAccessors(type_defs, entity, "row") ++ ", " ++ pkAccessors(type_defs, entity, "pk"),
     );
 }
 
@@ -272,8 +359,8 @@ pub fn deleteFn(comptime type_defs: anytype, comptime name: []const u8, comptime
     return queryFn(
         opFnName("delete", name, ""),
         "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }",
-        "DELETE FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(entity, 0),
-        pkAccessors(entity, "pk"),
+        "DELETE FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(type_defs, entity, 0),
+        pkAccessors(type_defs, entity, "pk"),
     );
 }
 
@@ -322,7 +409,7 @@ pub fn deleteFnTest(comptime type_defs: anytype, comptime name: []const u8, comp
 fn entityBuilders(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = insertFn(type_defs, name, entity);
     out = out ++ "\n\n" ++ selectByPkFn(type_defs, name, entity);
-    out = out ++ "\n\n" ++ selectAllFn(name);
+    out = out ++ "\n\n" ++ selectAllFn(type_defs, name, entity);
     if (hasNonPkColumns(entity)) out = out ++ "\n\n" ++ updateFn(type_defs, name, entity);
     out = out ++ "\n\n" ++ deleteFn(type_defs, name, entity);
     return out;

@@ -145,10 +145,14 @@ igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` 
   `{ text, values }` y el script los corre con `pool.query(text, values)` directo; no hay
   capa de ejecución todavía (aparece cuando un segundo test la necesite).
 
-**Falta** para completar la interfaz de DML: el codec de los tipos compuestos (`fecha`, ver
-la decisión abajo) y más casos de integración (update toca solo lo nombrado,
-delete→selectByPk vacío, violación de uk/fk como error de dominio, entidad de pk
-compuesta). Después: el resto del backend (endpoints HTTP) y el interop TS → Zig para las
+* **Tipos compuestos (`fecha`), hecho** (ver la decisión abajo): `schemaSql` emite un
+  `CREATE TYPE` por dominio respaldado por un struct antes de las tablas, y los builders
+  llevan el codec en el texto SQL (`ROW(...)::fecha` / `to_jsonb`). El test de integración
+  de ida y vuelta de `fecha` (`clases`) pasa contra Postgres.
+
+**Falta** para completar la interfaz de DML: más casos de integración (update toca solo
+lo nombrado, delete→selectByPk vacío, violación de uk/fk como error de dominio, entidad de
+pk compuesta, `fecha` en la pk de `mesas`, `fecha` en `NULL`, `bigint` con su parser). Después: el resto del backend (endpoints HTTP) y el interop TS → Zig para las
 reglas de dominio.
 
 ### Decisión: tipos de dominio compuestos (structs) en Postgres y en TS

@@ -18,16 +18,16 @@ revisión antes de implementar.
 ## Pendientes (módulo `ts_backend_generator` — interfaz de DML en TS)
 
 * Test #2/#3 sobre los builders generados (invariantes que no repiten al generador): un
-  `$n` y un valor por columna; orden de `values` = orden de columnas, independiente del
+  `$n` y un valor por campo hoja (una columna respaldada por un struct toma uno por campo); orden de `values` = orden de columnas, independiente del
   orden de claves del objeto de entrada.
 * Contra Postgres real (la base es el oráculo, ya no string-assert). Hecho: insert→
   selectByPk ida y vuelta (`periodos`). Falta: `update` toca solo las columnas nombradas,
   `delete` y después selectByPk → vacío, violación de uk (`materias.denominacion`) y de fk
   mapeadas a error de dominio, entidad de pk compuesta (`inscripciones`, necesita
-  `cursos`+`alumnos` antes por las fks). En curso: ida y vuelta de `fecha` (test rojo
-  escrito, `clases`); se arregla con tipos compuestos de Postgres, ver la decisión en
-  `GOALS.md`. Pendientes de esa misma decisión: `fecha` en una pk (`mesas`, keys en otro
-  orden), `fecha` nullable en `NULL`, y que la columna sea el compuesto y no `TEXT`.
+  `cursos`+`alumnos` antes por las fks). Hecho también: ida y vuelta de `fecha`
+  (`clases`, tipo compuesto + codec en SQL). Pendientes de esa misma decisión: `fecha` en
+  una pk contra la base (`mesas`, objeto con las keys en otro orden encuentra la fila) y
+  `fecha` nullable en `NULL` (ida y vuelta de `null`).
 * `bigint` en el backend: `integer` es `i64` → `BIGINT` / `bigint`. Falta registrar
   `pg.types.setTypeParser(20, BigInt)` en el backend (hoy `pg` devuelve `BIGINT` como
   `string`) y un test de integración que lo muestre (ida y vuelta de un `orden`).
@@ -53,6 +53,11 @@ revisión antes de implementar.
   Cubierto: pk simple y compuesta (`WHERE` y numeración de placeholders `SET`-luego-`WHERE`
   en `update`), `selectAll` sin parámetros, `update` de fila completa, `update` omitido
   para entidades all-pk (`hasNonPkColumns`).
+* Codec de columnas respaldadas por un struct en el texto SQL: encode
+  `ROW($n::T, …)::<compuesto>` (con `CASE WHEN … IS NULL` si es nullable y no pk), un
+  placeholder por campo hoja; decode `to_jsonb(col) AS col`. Los `SELECT` listan las
+  columnas (ya no `SELECT *`). Fixtures `lugar` (struct nullable fuera de la pk) y `marca`
+  (struct como pk).
 * `insertFnTest` .. `deleteFnTest` / `generateTsBackendTests`: el test #1 por builder y el
   módulo de tests entero (imports `node:test`/`node:assert` + import de `./dml.ts`).
 * Tipos TS resueltos desde `type_defs` con `zig_type_map_ts.tsType`; samples de los tests
