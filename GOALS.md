@@ -378,6 +378,22 @@ en los dos lados. Un `.so` nunca corre en un navegador.
   rechaza, ayudante que no dirige pasa, campo faltante y campo mal tipado son
   `"InvalidInput"`.
 
+**Hecho: `rules.ts`, generado.** Las reglas se registran una vez en `aida.rule_defs`
+(`.validarCargo = .{ .record = cargo, .rule = validarCargo }`), y de esa lista salen los
+dos lados:
+* `examples/aida_rules_wasm.zig` exporta una función por regla (con `@export` en un loop
+  comptime), ya no escrita a mano.
+* `src/ts_rules_generator.zig` (`generateTsRules`, tests en
+  `test/ts_rules_generator_test.zig`) genera `backend/src/rules.ts` (gitignoreado): carga
+  `rules.wasm` una vez y expone cada regla tipada,
+  `validarCargo(value: { cargo: string; denominacion: string; orden: bigint; puede_dirigir: boolean }): ValidarCargoError | null`.
+  El tipo del parámetro sale del record con `tsType`; `ValidarCargoError` sale del error
+  set de la función de Zig (`@typeInfo`) más `"InvalidInput"`. Una regla sin error set
+  explícito no compila.
+* Un `bigint` viaja en el JSON como número exacto (`JSON.rawJSON`; `JSON.stringify` solo
+  tira con un `bigint`) y Zig lo lee con `parseInt`: el `i64` más grande pasa, uno más es
+  `"InvalidInput"` (`test/rules_wasm_test.zig`, que ahora también prueba `rules.ts`).
+
 **Cómo encaja en los contenedores (pensado, no hecho).** `rules.wasm` no depende de la
 plataforma: se compila en el host con `zig build` (como `dml.ts`) y el Dockerfile del
 backend es solo `FROM node` copiando lo generado, sin Zig adentro. Alternativa: Dockerfile
@@ -386,12 +402,7 @@ descargas (ya pasó una vez).
 
 ## Próximos pasos
 
-1. Wrapper TS de las reglas (`rules.ts`): carga el módulo una vez y expone
-   `validarCargo(cargo)` tipado, devolviendo `null` o el error de dominio. Decidir cómo
-   viaja un `bigint` (`orden` es `i64`) en el JSON: `JSON.stringify` no lo serializa.
-2. Generar los exports de WASM y el wrapper TS desde una lista de reglas del sistema, en
-   vez de escribirlos a mano, cuando haya una segunda regla.
-3. HTTP: endpoints CRUD derivados de `entity_defs` sobre los builders de `dml.ts`, con
+1. HTTP: endpoints CRUD derivados de `entity_defs` sobre los builders de `dml.ts`, con
    `domainError` → 409/422 y las reglas de Zig antes de escribir. Probablemente
    `node:http` sin framework.
-4. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`).
+2. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`).

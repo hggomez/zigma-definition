@@ -102,6 +102,16 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const ts_rules_generator_mod = b.addModule("ts_rules_generator", .{
+        .root_source_file = b.path("src/ts_rules_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_mod },
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+        },
+    });
+
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/aida_test.zig"),
@@ -156,6 +166,19 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_zig_type_map_tests = b.addRunArtifact(zig_type_map_tests);
+
+    const ts_rules_generator_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/ts_rules_generator_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "ts_rules_generator", .module = ts_rules_generator_mod },
+            },
+        }),
+    });
+    const run_ts_rules_generator_tests = b.addRunArtifact(ts_rules_generator_tests);
 
     const print_schema_exe = b.addExecutable(.{
         .name = "print_schema",
@@ -307,8 +330,24 @@ pub fn build(b: *std.Build) void {
     rules_wasm.entry = .disabled;
     rules_wasm.rdynamic = true;
 
+    const print_ts_rules_exe = b.addExecutable(.{
+        .name = "print_ts_rules",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/print_ts_rules.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "ts_rules_generator", .module = ts_rules_generator_mod },
+            },
+        }),
+    });
+    const rules_ts = b.addRunArtifact(print_ts_rules_exe).captureStdOut(.{});
+
+    // rules.wasm and its typed TS face rules.ts, side by side (both gitignored)
     const write_rules_wasm = b.addUpdateSourceFiles();
     write_rules_wasm.addCopyFileToSource(rules_wasm.getEmittedBin(), "backend/src/rules.wasm");
+    write_rules_wasm.addCopyFileToSource(rules_ts, "backend/src/rules.ts");
 
     const rules_wasm_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -329,6 +368,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_sql_generator_tests.step);
     test_step.dependOn(&run_ts_backend_generator_tests.step);
     test_step.dependOn(&run_zig_type_map_tests.step);
+    test_step.dependOn(&run_ts_rules_generator_tests.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{

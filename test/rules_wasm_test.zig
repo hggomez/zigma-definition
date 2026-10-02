@@ -43,6 +43,27 @@ const validar_cargo_script =
     \\console.log('RULES_OK');
 ;
 
+// The typed TS face of the module, `backend/src/rules.ts`: it loads
+// rules.wasm once and exposes each rule as a function over the record
+// instance (TS types from the def: `orden` is i64, hence `bigint`) that
+// returns null when the instance passes, or the name of the domain error.
+// A bigint travels in the JSON as an exact number (`JSON.rawJSON`, not
+// `JSON.stringify`, which throws on a bigint): the largest i64 passes and one
+// past it is not an i64, so it is "InvalidInput". Prints RULES_TS_OK.
+const rules_ts_script =
+    \\import { validarCargo } from './src/rules.ts';
+    \\import { strictEqual } from 'node:assert';
+    \\const titular = { cargo: 'TIT', denominacion: 'Titular', orden: 1n, puede_dirigir: true };
+    \\strictEqual(validarCargo(titular), null, 'un titular puede dirigir');
+    \\strictEqual(validarCargo({ cargo: 'AY1', denominacion: 'Ayudante de primera', orden: 5n, puede_dirigir: true }),
+    \\  'AyudanteNoPuedeDirigir', 'un ayudante no puede dirigir');
+    \\strictEqual(validarCargo({ ...titular, orden: 2n ** 63n - 1n }), null,
+    \\  'el i64 más grande viaja exacto');
+    \\strictEqual(validarCargo({ ...titular, orden: 2n ** 63n }), 'InvalidInput',
+    \\  'uno más que el i64 más grande no es un i64');
+    \\console.log('RULES_TS_OK');
+;
+
 /// Runs `script` with node from `backend/` and expects exit 0 and `marker` on
 /// stdout; on failure dumps node's stdout/stderr.
 fn expectNodeScriptOk(script: []const u8, marker: []const u8) !void {
@@ -71,4 +92,8 @@ fn expectNodeScriptOk(script: []const u8, marker: []const u8) !void {
 
 test "validarCargo compiled to WASM runs from Node with the same result as in Zig" {
     try expectNodeScriptOk(validar_cargo_script, "RULES_OK");
+}
+
+test "rules.ts exposes validarCargo typed, returning null or the domain error" {
+    try expectNodeScriptOk(rules_ts_script, "RULES_TS_OK");
 }

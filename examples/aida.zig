@@ -201,6 +201,13 @@ pub fn validarCargo(cargo_sin_validar: DefinedType(cargo)) error{AyudanteNoPuede
     }
 }
 
+/// The domain rules of the system, by name, each with the record it takes:
+/// compiled to WASM (examples/aida_rules_wasm.zig exports every one) and
+/// exposed typed in TS (`rules.ts`, from ts_rules_generator).
+pub const rule_defs = .{
+    .validarCargo = .{ .record = cargo, .rule = validarCargo },
+};
+
 pub const entity_defs = zigma.defineEntities(.{
     .docentes = docentes,
     .materias = materias,

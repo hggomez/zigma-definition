@@ -78,13 +78,24 @@ revisión antes de implementar.
   runtime (por ejemplo el detalle de un error de parseo), hace falta un `free` exportado.
 * Una regla que se llama con una entrada que no es UTF-8 válido / JSON vacío: hoy es
   `"InvalidInput"` por el parseo, no está probado.
-* `alloc` sin memoria devuelve 0: el wrapper TS tiene que chequearlo.
+* `alloc` sin memoria devuelve 0: `rules.ts` lo chequea (tira), pero no está probado.
+* Casos "no compila" de `ts_rules_generator`: una regla que no devuelve un error union, y
+  una con error set inferido como `anyerror` (los `@compileError` existen, sin test).
+* Una regla cuyo parámetro no es la instancia de su record: hoy falla en el wrapper WASM
+  con un error nativo del compilador; un `@compileError` propio en el punto de registro
+  (`rule_defs`) ayudaría más (criterio DevXP).
+* `rules.ts` en el navegador: hoy carga `rules.wasm` con `node:fs`; el frontend necesita
+  `fetch`.
+* Campos `nullable` en el parámetro de una regla: `DefinedType` no tiene opcionales, así
+  que el tipo TS tampoco (`T`, no `T | null`), igual que en los builders de DML.
 
 ## Hechos reglas WASM (referencia rápida, no repetir)
 
 * `validarCargo` compilado a WASM y llamado desde Node (`test/rules_wasm_test.zig`, `zig
   build rules-wasm`): los dos resultados de la regla y `"InvalidInput"` para campo
   faltante y mal tipado.
+* `rules.ts` generado (`ts_rules_generator`: `ruleFn`, `generateTsRules`) y probado desde
+  Node: `null` / nombre del error, `bigint` exacto en el límite de `i64`.
 
 ## Hechos ts_backend_generator (referencia rápida, no repetir)
 
