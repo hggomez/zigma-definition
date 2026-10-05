@@ -45,6 +45,7 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "zig_type_map_ts_optional.zig", .expected = "Zig type '?u8' has no TS mapping" },
     .{ .file = "zig_type_map_ts_other_slice.zig", .expected = "Zig type '[]const i32' has no TS mapping" },
     .{ .file = "zig_type_map_ts_struct_field_unsupported.zig", .expected = "Zig type 'f64' has no TS mapping" },
+    .{ .file = "ts_type_not_in_type_defs.zig", .expected = "type 'fecha' is not in type_defs" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -75,19 +76,20 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const zig_type_map_ts_mod = b.addModule("zig_type_map_ts", .{
+        .root_source_file = b.path("src/zig_type_map_ts.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const ts_backend_generator_mod = b.addModule("ts_backend_generator", .{
         .root_source_file = b.path("src/ts_backend_generator.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zigma", .module = zigma_mod },
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
         },
-    });
-
-    const zig_type_map_ts_mod = b.addModule("zig_type_map_ts", .{
-        .root_source_file = b.path("src/zig_type_map_ts.zig"),
-        .target = target,
-        .optimize = optimize,
     });
 
     const tests = b.addTest(.{
@@ -271,6 +273,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "aida", .module = aida_mod },
                     .{ .name = "sql_generator", .module = sql_generator_mod },
                     .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+                    .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
                 },
             }),
         });

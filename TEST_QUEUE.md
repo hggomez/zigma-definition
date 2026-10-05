@@ -12,8 +12,6 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
 
 ## Pendientes (módulo `ts_backend_generator` — interfaz de DML en TS)
 
-* Caso "no compila": tipo de dominio sin entrada en `ts_type_defs` / `ts_sample_defs` →
-  `@compileError` propio (paralelo a `sql_unknown_type_mapping.zig`).
 * Test #2/#3 sobre los builders generados (invariantes que no repiten al generador): un
   `$n` y un valor por columna; orden de `values` = orden de columnas, independiente del
   orden de claves del objeto de entrada.
@@ -43,7 +41,9 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
   para entidades all-pk (`hasNonPkColumns`).
 * `insertFnTest` .. `deleteFnTest` / `generateTsBackendTests`: el test #1 por builder y el
   módulo de tests entero (imports `node:test`/`node:assert` + import de `./dml.ts`).
-* `ts_type_defs` / `ts_sample_defs` en `aida.zig`, paralelos a `sql_type_defs`.
+* Tipos TS y samples de los tests generados derivados del tipo de Zig de cada dominio
+  (`tsTypeOf` vía `type_defs`); dominio que no está en `type_defs` → no compila
+  (`ts_type_not_in_type_defs.zig`). Reemplaza a `ts_type_defs` / `ts_sample_defs`.
 * `zig build ts-backend`: genera `dml.ts` + `dml.test.ts` y corre `node --test`.
 
 ## Hechos (referencia rápida, no repetir)

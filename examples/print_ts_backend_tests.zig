@@ -7,7 +7,7 @@ const aida = @import("aida");
 const ts_backend_generator = @import("ts_backend_generator");
 
 // Container-level const: comptime scope, same reason as print_ts_backend.zig.
-const test_module = ts_backend_generator.generateTsBackendTests(aida.ts_sample_defs, aida.entity_defs);
+const test_module = ts_backend_generator.generateTsBackendTests(aida.type_defs, aida.entity_defs);
 
 pub fn main(init: std.process.Init) !void {
     var buffer: [4096]u8 = undefined;

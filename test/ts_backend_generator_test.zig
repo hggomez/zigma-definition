@@ -10,8 +10,10 @@ const aida = @import("aida");
 const ts = @import("ts_backend_generator");
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-const minimal_ts_types = .{ .text = "string" };
-const minimal_ts_samples = .{ .text = "\"s1\"" };
+// The generator takes the system's type_defs: each field's TS type and its
+// sample in the generated tests are derived from the Zig type behind its
+// domain (zig_type_map_ts.tsTypeOf). These fixtures only use `text`.
+const types = zigma.common_type_defs;
 
 // cosa: one text column, that same column is the pk (all-pk: no update).
 const cosa = zigma.defineEntity(.{
@@ -50,7 +52,7 @@ const combo_info = zigma.completeEntity(combo);
 
 // ---- insert ----
 
-const cosa_insert_ts = ts.insertFn(minimal_ts_types, "cosa", cosa_info);
+const cosa_insert_ts = ts.insertFn(types, "cosa", cosa_info);
 
 test "insertFn: a typed INSERT builder for an entity with one column" {
     try expectEqualStrings(
@@ -63,7 +65,7 @@ test "insertFn: a typed INSERT builder for an entity with one column" {
     , cosa_insert_ts);
 }
 
-const cosa_insert_test_ts = ts.insertFnTest(minimal_ts_samples, "cosa", cosa_info);
+const cosa_insert_test_ts = ts.insertFnTest(types, "cosa", cosa_info);
 
 test "insertFnTest: a TS test that the insert builder runs and returns a query object" {
     try expectEqualStrings(
@@ -77,7 +79,7 @@ test "insertFnTest: a TS test that the insert builder runs and returns a query o
 
 // ---- selectByPk ----
 
-const cosa_select_by_pk_ts = ts.selectByPkFn(minimal_ts_types, "cosa", cosa_info);
+const cosa_select_by_pk_ts = ts.selectByPkFn(types, "cosa", cosa_info);
 
 test "selectByPkFn: SELECT * ... WHERE the single pk column" {
     try expectEqualStrings(
@@ -90,7 +92,7 @@ test "selectByPkFn: SELECT * ... WHERE the single pk column" {
     , cosa_select_by_pk_ts);
 }
 
-const combo_select_by_pk_ts = ts.selectByPkFn(minimal_ts_types, "combo", combo_info);
+const combo_select_by_pk_ts = ts.selectByPkFn(types, "combo", combo_info);
 
 test "selectByPkFn: composite pk -> WHERE a = $1 AND b = $2, in pk order" {
     try expectEqualStrings(
@@ -103,7 +105,7 @@ test "selectByPkFn: composite pk -> WHERE a = $1 AND b = $2, in pk order" {
     , combo_select_by_pk_ts);
 }
 
-const cosa_select_by_pk_test_ts = ts.selectByPkFnTest(minimal_ts_samples, "cosa", cosa_info);
+const cosa_select_by_pk_test_ts = ts.selectByPkFnTest(types, "cosa", cosa_info);
 
 test "selectByPkFnTest: a TS test that the selectByPk builder runs and returns a query object" {
     try expectEqualStrings(
@@ -144,7 +146,7 @@ test "selectAllFnTest: a TS test that the selectAll builder runs and returns a q
 
 // ---- update ----
 
-const articulo_update_ts = ts.updateFn(minimal_ts_types, "articulo", articulo_info);
+const articulo_update_ts = ts.updateFn(types, "articulo", articulo_info);
 
 test "updateFn: SET every non-pk column, WHERE the pk, placeholders SET-then-WHERE" {
     try expectEqualStrings(
@@ -157,7 +159,7 @@ test "updateFn: SET every non-pk column, WHERE the pk, placeholders SET-then-WHE
     , articulo_update_ts);
 }
 
-const combo_update_ts = ts.updateFn(minimal_ts_types, "combo", combo_info);
+const combo_update_ts = ts.updateFn(types, "combo", combo_info);
 
 test "updateFn: composite pk -> WHERE placeholders continue after the SET list" {
     try expectEqualStrings(
@@ -170,7 +172,7 @@ test "updateFn: composite pk -> WHERE placeholders continue after the SET list" 
     , combo_update_ts);
 }
 
-const articulo_update_test_ts = ts.updateFnTest(minimal_ts_samples, "articulo", articulo_info);
+const articulo_update_test_ts = ts.updateFnTest(types, "articulo", articulo_info);
 
 test "updateFnTest: a TS test that the update builder runs and returns a query object" {
     try expectEqualStrings(
@@ -184,7 +186,7 @@ test "updateFnTest: a TS test that the update builder runs and returns a query o
 
 // ---- delete ----
 
-const cosa_delete_ts = ts.deleteFn(minimal_ts_types, "cosa", cosa_info);
+const cosa_delete_ts = ts.deleteFn(types, "cosa", cosa_info);
 
 test "deleteFn: DELETE ... WHERE the pk" {
     try expectEqualStrings(
@@ -197,7 +199,7 @@ test "deleteFn: DELETE ... WHERE the pk" {
     , cosa_delete_ts);
 }
 
-const cosa_delete_test_ts = ts.deleteFnTest(minimal_ts_samples, "cosa", cosa_info);
+const cosa_delete_test_ts = ts.deleteFnTest(types, "cosa", cosa_info);
 
 test "deleteFnTest: a TS test that the delete builder runs and returns a query object" {
     try expectEqualStrings(
@@ -215,7 +217,7 @@ test "deleteFnTest: a TS test that the delete builder runs and returns a query o
 // per-entity builder order, the update-skipped branch, and the order between
 // entities (declaration order).
 const dos_entidades = zigma.defineEntities(.{ .cosa = cosa, .articulo = articulo });
-const dos_entidades_ts = ts.generateTsBackend(minimal_ts_types, dos_entidades);
+const dos_entidades_ts = ts.generateTsBackend(types, dos_entidades);
 
 test "generateTsBackend: every builder of every entity, in declaration order" {
     try expectEqualStrings(
@@ -284,7 +286,7 @@ test "generateTsBackend: every builder of every entity, in declaration order" {
     , dos_entidades_ts);
 }
 
-const dos_entidades_tests_ts = ts.generateTsBackendTests(minimal_ts_samples, dos_entidades);
+const dos_entidades_tests_ts = ts.generateTsBackendTests(types, dos_entidades);
 
 test "generateTsBackendTests: imports plus the generated test for every builder, in declaration order" {
     try expectEqualStrings(
@@ -347,4 +349,59 @@ test "generateTsBackendTests: imports plus the generated test for every builder,
         \\  assert.ok(Array.isArray(q.values));
         \\});
     , dos_entidades_tests_ts);
+}
+
+// ---- TS types and samples derived from the Zig type of each domain ----
+//
+// Every kind of tsTypeOf in one entity: text ([]const u8) -> string, boolean
+// -> boolean, integer (i64) -> bigint, a u8 domain -> number, a struct domain
+// -> the object written inline, recursively for a struct inside a struct.
+// The sample of the generated test is derived from the same description:
+// "s1", true, 0n, 0 (0 is inside the interval of every Zig integer) and an
+// object with the sample of each field.
+
+const Punto = struct { x: i16, y: u16 };
+
+const tipos = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{
+    .cantidad = zigma.TypeDef{ .Type = u8 },
+    .punto = zigma.TypeDef{ .Type = Punto },
+    .recorrido = zigma.TypeDef{ .Type = struct { desde: Punto, hasta: Punto } },
+} }));
+
+const todos_los_tipos = zigma.defineEntity(.{
+    .pk = .{"id"},
+    .fields = zigma.record(tipos, .{
+        .id = .{ .type = "text" },
+        .activo = .{ .type = "boolean" },
+        .orden = .{ .type = "integer" },
+        .cantidad = .{ .type = "cantidad" },
+        .ubicacion = .{ .type = "punto" },
+        .camino = .{ .type = "recorrido" },
+    }),
+});
+const todos_los_tipos_info = zigma.completeEntity(todos_los_tipos);
+
+const todos_los_tipos_insert_ts = ts.insertFn(tipos, "todos", todos_los_tipos_info);
+
+test "insertFn: each field's TS type comes from the Zig type of its domain" {
+    try expectEqualStrings(
+        \\export function insertTodos(row: { id: string, activo: boolean, orden: bigint, cantidad: number, ubicacion: { x: number; y: number }, camino: { desde: { x: number; y: number }; hasta: { x: number; y: number } } }): { text: string; values: unknown[] } {
+        \\  return {
+        \\    text: 'INSERT INTO "todos" ("id", "activo", "orden", "cantidad", "ubicacion", "camino") VALUES ($1, $2, $3, $4, $5, $6)',
+        \\    values: [row.id, row.activo, row.orden, row.cantidad, row.ubicacion, row.camino],
+        \\  };
+        \\}
+    , todos_los_tipos_insert_ts);
+}
+
+const todos_los_tipos_insert_test_ts = ts.insertFnTest(tipos, "todos", todos_los_tipos_info);
+
+test "insertFnTest: each field's sample comes from the Zig type of its domain" {
+    try expectEqualStrings(
+        \\test("insertTodos: returns a { text, values } query object", () => {
+        \\  const q = insertTodos({ id: "s1", activo: true, orden: 0n, cantidad: 0, ubicacion: { x: 0, y: 0 }, camino: { desde: { x: 0, y: 0 }, hasta: { x: 0, y: 0 } } });
+        \\  assert.equal(typeof q.text, "string");
+        \\  assert.ok(Array.isArray(q.values));
+        \\});
+    , todos_los_tipos_insert_test_ts);
 }

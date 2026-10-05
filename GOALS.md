@@ -119,9 +119,9 @@ igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` 
   * `update` es de fila completa (todas las columnas no-pk en el `SET`), no un patch
     parcial: así sigue siendo un template estático como los demás. El patch parcial, si se
     quiere, es otro builder aparte más adelante.
-  * `examples/aida.zig` tiene ahora `ts_type_defs` (dominio → tipo TS; `fecha` es el struct
-    inline `{ año; mes; día }`) y `ts_sample_defs` (dominio → literal de ejemplo para los
-    tests generados), ambos paralelos a `sql_type_defs`.
+  * El tipo TS de cada campo sale del tipo de Zig de su dominio: el generador recibe el
+    `type_defs` del sistema y pasa por `zig_type_map_ts.tsTypeOf` (rama `type-translation`,
+    reemplaza a las tablas a mano `ts_type_defs` / `ts_sample_defs` que tenía aida).
 * El generador **también genera los tests TS** (`generateTsBackendTests`): por cada builder,
   el test #1 (arma un argumento de ejemplo tipado, llama al builder, chequea que no tira y
   devuelve `{ text, values }`). Correrlos en Node es lo que prueba que el TS emitido

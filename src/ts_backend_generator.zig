@@ -1,8 +1,9 @@
 //! DML entry-point generation as TypeScript source, from zigma EntityInfo.
 //! Sibling of `sql_generator.zig` (which emits DDL): same idea, but the output
-//! string is TypeScript code instead of a `CREATE TABLE` statement. The
-//! domain-type -> TS-type and domain-type -> sample-literal mappings are
-//! supplied by the caller, the same way `sql_generator` takes `sql_types`.
+//! string is TypeScript code instead of a `CREATE TABLE` statement. Each
+//! field's TS type, and its sample in the generated tests, is derived from the
+//! Zig type behind its domain in the system's `type_defs`, through
+//! `zig_type_map_ts.tsTypeOf`.
 //!
 //! Per entity the generator emits up to five parameterized builders, each
 //! returning the `{ text, values }` shape a `pg` query call takes:
@@ -11,23 +12,66 @@
 
 const std = @import("std");
 const zigma = @import("zigma");
+const zig_type_map_ts = @import("zig_type_map_ts");
+const TsType = zig_type_map_ts.TsType;
+const tsTypeOf = zig_type_map_ts.tsTypeOf;
 
-// ---- domain-type maps, supplied by the system (like sql_types) ----
+// ---- TS type and sample of a field, from the Zig type of its domain ----
 
-fn tsType(comptime ts_types: anytype, comptime type_name: []const u8) []const u8 {
-    if (!@hasField(@TypeOf(ts_types), type_name))
-        @compileError("type '" ++ type_name ++ "' has no TS mapping");
-    return @field(ts_types, type_name);
+/// The Zig type behind the domain `type_name` of `type_defs`.
+fn zigTypeOf(comptime type_defs: anytype, comptime type_name: []const u8) type {
+    if (!@hasField(@TypeOf(type_defs), type_name))
+        @compileError("type '" ++ type_name ++ "' is not in type_defs");
+    return @field(type_defs, type_name).Type;
 }
 
-/// A sample literal for a domain type, for the generated tests to feed the
-/// builders (the value only has to type-check, not be meaningful).
-/// `ts_samples` is supplied by the caller keyed by domain type name, the same
-/// way `ts_types` / `sql_types` are.
-fn tsSample(comptime ts_samples: anytype, comptime type_name: []const u8) []const u8 {
-    if (!@hasField(@TypeOf(ts_samples), type_name))
-        @compileError("type '" ++ type_name ++ "' has no TS sample");
-    return @field(ts_samples, type_name);
+/// The TS text of a type description: its name, or for an object its fields
+/// written inline, recursively (`{ x: number; y: number }`).
+fn tsText(comptime t: TsType) []const u8 {
+    return switch (t) {
+        .boolean => "boolean",
+        .string => "string",
+        .number => "number",
+        .bigint => "bigint",
+        .object => |fields| blk: {
+            var out: []const u8 = "{ ";
+            for (fields, 0..) |field, i| {
+                const sep = if (i > 0) "; " else "";
+                out = out ++ sep ++ field.name ++ ": " ++ tsText(field.type);
+            }
+            break :blk out ++ " }";
+        },
+    };
+}
+
+/// A sample literal of a type description, for the generated tests to feed
+/// the builders (the value only has to fit the type, not be meaningful). An
+/// integer is 0, which is inside the interval of every Zig integer type.
+fn tsSampleText(comptime t: TsType) []const u8 {
+    return switch (t) {
+        .boolean => "true",
+        .string => "\"s1\"",
+        .number => "0",
+        .bigint => "0n",
+        .object => |fields| blk: {
+            var out: []const u8 = "{ ";
+            for (fields, 0..) |field, i| {
+                const sep = if (i > 0) ", " else "";
+                out = out ++ sep ++ field.name ++ ": " ++ tsSampleText(field.type);
+            }
+            break :blk out ++ " }";
+        },
+    };
+}
+
+/// The TS type of a field whose domain is `type_name`.
+fn fieldTsType(comptime type_defs: anytype, comptime type_name: []const u8) []const u8 {
+    return tsText(tsTypeOf(zigTypeOf(type_defs, type_name)));
+}
+
+/// The sample literal of a field whose domain is `type_name`.
+fn fieldTsSample(comptime type_defs: anytype, comptime type_name: []const u8) []const u8 {
+    return tsSampleText(tsTypeOf(zigTypeOf(type_defs, type_name)));
 }
 
 // ---- names ----
@@ -75,23 +119,23 @@ fn hasNonPkColumns(comptime entity: anytype) bool {
 }
 
 /// `a: string, b: string` for the pk columns, in pk order.
-fn pkTypedParams(comptime ts_types: anytype, comptime entity: anytype) []const u8 {
+fn pkTypedParams(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = "";
     inline for (entity.pk, 0..) |col, i| {
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ col ++ ": " ++ tsType(ts_types, @field(entity.fields, col).type);
+        out = out ++ sep ++ col ++ ": " ++ fieldTsType(type_defs, @field(entity.fields, col).type);
     }
     return out;
 }
 
 /// `nombre: string` for the non-pk columns, in declaration order.
-fn nonPkTypedParams(comptime ts_types: anytype, comptime entity: anytype) []const u8 {
+fn nonPkTypedParams(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = "";
     comptime var i: usize = 0;
     inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |col| {
         if (comptime isPkColumn(entity, col)) continue;
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ col ++ ": " ++ tsType(ts_types, @field(entity.fields, col).type);
+        out = out ++ sep ++ col ++ ": " ++ fieldTsType(type_defs, @field(entity.fields, col).type);
         i += 1;
     }
     return out;
@@ -144,33 +188,33 @@ fn nonPkAccessors(comptime entity: anytype, comptime obj: []const u8) []const u8
 }
 
 /// `cosa: "s1"` for all fields (the sample INSERT row).
-fn fieldsSampleObject(comptime ts_samples: anytype, comptime entity: anytype) []const u8 {
+fn fieldsSampleObject(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = "";
     inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names, 0..) |col, i| {
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ col ++ ": " ++ tsSample(ts_samples, @field(entity.fields, col).type);
+        out = out ++ sep ++ col ++ ": " ++ fieldTsSample(type_defs, @field(entity.fields, col).type);
     }
     return out;
 }
 
 /// `a: "s1", b: "s1"` for the pk columns (the sample pk object).
-fn pkSampleObject(comptime ts_samples: anytype, comptime entity: anytype) []const u8 {
+fn pkSampleObject(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = "";
     inline for (entity.pk, 0..) |col, i| {
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ col ++ ": " ++ tsSample(ts_samples, @field(entity.fields, col).type);
+        out = out ++ sep ++ col ++ ": " ++ fieldTsSample(type_defs, @field(entity.fields, col).type);
     }
     return out;
 }
 
 /// `nombre: "s1"` for the non-pk columns (the sample UPDATE row).
-fn nonPkSampleObject(comptime ts_samples: anytype, comptime entity: anytype) []const u8 {
+fn nonPkSampleObject(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
     comptime var out: []const u8 = "";
     comptime var i: usize = 0;
     inline for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |col| {
         if (comptime isPkColumn(entity, col)) continue;
         const sep = if (i > 0) ", " else "";
-        out = out ++ sep ++ col ++ ": " ++ tsSample(ts_samples, @field(entity.fields, col).type);
+        out = out ++ sep ++ col ++ ": " ++ fieldTsSample(type_defs, @field(entity.fields, col).type);
         i += 1;
     }
     return out;
@@ -187,10 +231,10 @@ fn queryFn(comptime fn_name: []const u8, comptime params: []const u8, comptime t
         "}";
 }
 
-/// Parameterized `INSERT` builder for one entity. `ts_types` maps each domain
-/// type name to its TS type (e.g. `.{ .text = "string" }`), like a system's
-/// `type_defs` maps them to Zig types.
-pub fn insertFn(comptime ts_types: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+/// Parameterized `INSERT` builder for one entity. `type_defs` is the
+/// system's (the one its records are defined with): each field's TS type
+/// comes from the Zig type of its domain.
+pub fn insertFn(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     const field_names = @typeInfo(@TypeOf(entity.fields)).@"struct".field_names;
 
     comptime var params: []const u8 = "";
@@ -199,7 +243,7 @@ pub fn insertFn(comptime ts_types: anytype, comptime name: []const u8, comptime 
     comptime var values: []const u8 = "";
     inline for (field_names, 0..) |field_name, i| {
         const sep = if (i > 0) ", " else "";
-        params = params ++ sep ++ field_name ++ ": " ++ tsType(ts_types, @field(entity.fields, field_name).type);
+        params = params ++ sep ++ field_name ++ ": " ++ fieldTsType(type_defs, @field(entity.fields, field_name).type);
         columns = columns ++ sep ++ "\"" ++ field_name ++ "\"";
         placeholders = placeholders ++ sep ++ std.fmt.comptimePrint("${d}", .{i + 1});
         values = values ++ sep ++ "row." ++ field_name;
@@ -214,10 +258,10 @@ pub fn insertFn(comptime ts_types: anytype, comptime name: []const u8, comptime 
 }
 
 /// Parameterized `SELECT * ... WHERE <pk>` builder for one entity.
-pub fn selectByPkFn(comptime ts_types: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+pub fn selectByPkFn(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     return queryFn(
         opFnName("select", name, "ByPk"),
-        "pk: { " ++ pkTypedParams(ts_types, entity) ++ " }",
+        "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }",
         "SELECT * FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(entity, 0),
         pkAccessors(entity, "pk"),
     );
@@ -236,20 +280,20 @@ pub fn selectAllFn(comptime name: []const u8) []const u8 {
 /// Parameterized full-row `UPDATE` builder: every non-pk column in `SET`,
 /// the pk in `WHERE`. Not meaningful for an all-pk entity (nothing to set) -
 /// callers should guard with `hasNonPkColumns`.
-pub fn updateFn(comptime ts_types: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+pub fn updateFn(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     return queryFn(
         opFnName("update", name, ""),
-        "pk: { " ++ pkTypedParams(ts_types, entity) ++ " }, row: { " ++ nonPkTypedParams(ts_types, entity) ++ " }",
+        "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }, row: { " ++ nonPkTypedParams(type_defs, entity) ++ " }",
         "UPDATE \"" ++ name ++ "\" SET " ++ nonPkAssignments(entity) ++ " WHERE " ++ pkWhere(entity, nonPkCount(entity)),
         nonPkAccessors(entity, "row") ++ ", " ++ pkAccessors(entity, "pk"),
     );
 }
 
 /// Parameterized `DELETE ... WHERE <pk>` builder for one entity.
-pub fn deleteFn(comptime ts_types: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+pub fn deleteFn(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     return queryFn(
         opFnName("delete", name, ""),
-        "pk: { " ++ pkTypedParams(ts_types, entity) ++ " }",
+        "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }",
         "DELETE FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(entity, 0),
         pkAccessors(entity, "pk"),
     );
@@ -270,39 +314,39 @@ fn queryObjectTest(comptime fn_name: []const u8, comptime args: []const u8) []co
         "});";
 }
 
-pub fn insertFnTest(comptime ts_samples: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
-    return queryObjectTest(opFnName("insert", name, ""), "{ " ++ fieldsSampleObject(ts_samples, entity) ++ " }");
+pub fn insertFnTest(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+    return queryObjectTest(opFnName("insert", name, ""), "{ " ++ fieldsSampleObject(type_defs, entity) ++ " }");
 }
 
-pub fn selectByPkFnTest(comptime ts_samples: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
-    return queryObjectTest(opFnName("select", name, "ByPk"), "{ " ++ pkSampleObject(ts_samples, entity) ++ " }");
+pub fn selectByPkFnTest(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+    return queryObjectTest(opFnName("select", name, "ByPk"), "{ " ++ pkSampleObject(type_defs, entity) ++ " }");
 }
 
 pub fn selectAllFnTest(comptime name: []const u8) []const u8 {
     return queryObjectTest(opFnName("selectAll", name, ""), "");
 }
 
-pub fn updateFnTest(comptime ts_samples: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+pub fn updateFnTest(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
     return queryObjectTest(
         opFnName("update", name, ""),
-        "{ " ++ pkSampleObject(ts_samples, entity) ++ " }, { " ++ nonPkSampleObject(ts_samples, entity) ++ " }",
+        "{ " ++ pkSampleObject(type_defs, entity) ++ " }, { " ++ nonPkSampleObject(type_defs, entity) ++ " }",
     );
 }
 
-pub fn deleteFnTest(comptime ts_samples: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
-    return queryObjectTest(opFnName("delete", name, ""), "{ " ++ pkSampleObject(ts_samples, entity) ++ " }");
+pub fn deleteFnTest(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+    return queryObjectTest(opFnName("delete", name, ""), "{ " ++ pkSampleObject(type_defs, entity) ++ " }");
 }
 
 // ---- whole-system aggregation ----
 
 /// Every builder for one entity, in the order insert, selectByPk, selectAll,
 /// update (when applicable), delete; blank-line separated.
-fn entityBuilders(comptime ts_types: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
-    comptime var out: []const u8 = insertFn(ts_types, name, entity);
-    out = out ++ "\n\n" ++ selectByPkFn(ts_types, name, entity);
+fn entityBuilders(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+    comptime var out: []const u8 = insertFn(type_defs, name, entity);
+    out = out ++ "\n\n" ++ selectByPkFn(type_defs, name, entity);
     out = out ++ "\n\n" ++ selectAllFn(name);
-    if (hasNonPkColumns(entity)) out = out ++ "\n\n" ++ updateFn(ts_types, name, entity);
-    out = out ++ "\n\n" ++ deleteFn(ts_types, name, entity);
+    if (hasNonPkColumns(entity)) out = out ++ "\n\n" ++ updateFn(type_defs, name, entity);
+    out = out ++ "\n\n" ++ deleteFn(type_defs, name, entity);
     return out;
 }
 
@@ -318,12 +362,12 @@ fn entityBuilderNames(comptime name: []const u8, comptime entity: anytype) []con
 
 /// The generated test for every builder of one entity, matching
 /// `entityBuilders`; blank-line separated.
-fn entityBuilderTests(comptime ts_samples: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
-    comptime var out: []const u8 = insertFnTest(ts_samples, name, entity);
-    out = out ++ "\n\n" ++ selectByPkFnTest(ts_samples, name, entity);
+fn entityBuilderTests(comptime type_defs: anytype, comptime name: []const u8, comptime entity: anytype) []const u8 {
+    comptime var out: []const u8 = insertFnTest(type_defs, name, entity);
+    out = out ++ "\n\n" ++ selectByPkFnTest(type_defs, name, entity);
     out = out ++ "\n\n" ++ selectAllFnTest(name);
-    if (hasNonPkColumns(entity)) out = out ++ "\n\n" ++ updateFnTest(ts_samples, name, entity);
-    out = out ++ "\n\n" ++ deleteFnTest(ts_samples, name, entity);
+    if (hasNonPkColumns(entity)) out = out ++ "\n\n" ++ updateFnTest(type_defs, name, entity);
+    out = out ++ "\n\n" ++ deleteFnTest(type_defs, name, entity);
     return out;
 }
 
@@ -331,13 +375,13 @@ fn entityBuilderTests(comptime ts_samples: anytype, comptime name: []const u8, c
 /// `entity_defs` (as produced by `zigma.defineEntity`/`defineEntities`, not
 /// yet completed), in declaration order, blank-line separated. The `schemaSql`
 /// of the TypeScript side. No header, for parity with `sql_generator`.
-pub fn generateTsBackend(comptime ts_types: anytype, comptime entity_defs: anytype) []const u8 {
+pub fn generateTsBackend(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     @setEvalBranchQuota(100000);
     const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
     comptime var module: []const u8 = "";
     inline for (entity_names, 0..) |entity_name, i| {
         if (i > 0) module = module ++ "\n\n";
-        module = module ++ entityBuilders(ts_types, entity_name, zigma.completeEntity(@field(entity_defs, entity_name)));
+        module = module ++ entityBuilders(type_defs, entity_name, zigma.completeEntity(@field(entity_defs, entity_name)));
     }
     return module;
 }
@@ -351,7 +395,7 @@ const impl_module_path = "./dml.ts";
 /// `node:assert` imports, a named import of every builder from the generated
 /// impl module, then the generated test for every builder in declaration
 /// order, blank-line separated. The test counterpart of `generateTsBackend`.
-pub fn generateTsBackendTests(comptime ts_samples: anytype, comptime entity_defs: anytype) []const u8 {
+pub fn generateTsBackendTests(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     @setEvalBranchQuota(100000);
     const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
 
@@ -364,7 +408,7 @@ pub fn generateTsBackendTests(comptime ts_samples: anytype, comptime entity_defs
             tests = tests ++ "\n\n";
         }
         imports = imports ++ entityBuilderNames(entity_name, entity);
-        tests = tests ++ entityBuilderTests(ts_samples, entity_name, entity);
+        tests = tests ++ entityBuilderTests(type_defs, entity_name, entity);
     }
 
     return "import { test } from \"node:test\";\n" ++
