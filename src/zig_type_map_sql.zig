@@ -3,12 +3,13 @@
 //! stores it: an integer goes in the smallest Postgres integer whose range
 //! contains its whole Zig interval, and when that range is wider than the Zig
 //! one, a `DOMAIN` named after the Zig type restricts it to the real interval.
+//! A struct is a composite type, its fields mapped the same way.
 //! It does not render SQL: the generators write the text (the column type,
-//! the `CREATE DOMAIN`) from this description.
+//! the `CREATE DOMAIN`, the `CREATE TYPE`) from this description.
 
 const std = @import("std");
 
-pub const SqlKind = enum { boolean, text, integer };
+pub const SqlKind = enum { boolean, text, integer, composite };
 
 /// The Postgres integer types, by width: SMALLINT (i16), INTEGER (i32),
 /// BIGINT (i64).
@@ -25,20 +26,30 @@ pub const SqlInteger = struct {
     domain: ?[]const u8,
 };
 
+/// A field of a struct mapped to a Postgres composite type, in declaration
+/// order.
+pub const SqlField = struct { name: []const u8, type: SqlType };
+
 pub const SqlType = union(SqlKind) {
     boolean,
     text,
     integer: SqlInteger,
+    /// a struct: a Postgres composite type with one attribute per field. The
+    /// composite has no name here (the Zig type has no SQL name): the
+    /// generator names it after the domain. A field cannot be a struct itself
+    /// (nested structs have no SQL mapping yet).
+    composite: []const SqlField,
 };
 
-/// The Postgres type that stores the Zig type `T`: `bool`, `[]const u8`, or
-/// an integer whose interval fits in a BIGINT. Anything else is a compile
-/// error.
+/// The Postgres type that stores the Zig type `T`: `bool`, `[]const u8`, an
+/// integer whose interval fits in a BIGINT, or a struct of those (a
+/// composite). Anything else is a compile error.
 pub fn sqlTypeOf(comptime T: type) SqlType {
     if (T == bool) return .boolean;
     if (T == []const u8) return .text;
     return switch (@typeInfo(T)) {
         .int => .{ .integer = integerOf(T) },
+        .@"struct" => .{ .composite = compositeFieldsOf(T) },
         else => @compileError("Zig type '" ++ @typeName(T) ++ "' has no SQL mapping"),
     };
 }
@@ -68,4 +79,16 @@ fn integerOf(comptime T: type) SqlInteger {
         }
     }
     @compileError("Zig type '" ++ @typeName(T) ++ "' does not fit in a Postgres BIGINT");
+}
+
+fn compositeFieldsOf(comptime T: type) []const SqlField {
+    const info = @typeInfo(T).@"struct";
+    var fields: [info.field_names.len]SqlField = undefined;
+    for (info.field_names, info.field_types, 0..) |name, field_type, i| {
+        if (@typeInfo(field_type) == .@"struct")
+            @compileError("field '" ++ name ++ "' is a struct: nested structs have no SQL mapping yet");
+        fields[i] = .{ .name = name, .type = sqlTypeOf(field_type) };
+    }
+    const result = fields;
+    return &result;
 }

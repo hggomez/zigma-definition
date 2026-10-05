@@ -51,8 +51,8 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "zig_type_map_sql_float.zig", .expected = "Zig type 'f32' has no SQL mapping" },
     .{ .file = "zig_type_map_sql_optional.zig", .expected = "Zig type '?u8' has no SQL mapping" },
     .{ .file = "zig_type_map_sql_other_slice.zig", .expected = "Zig type '[]const i32' has no SQL mapping" },
-    // the struct's type name starts with the module name, which is not stable: match the end
-    .{ .file = "zig_type_map_sql_struct.zig", .expected = "Punto' has no SQL mapping" },
+    .{ .file = "zig_type_map_sql_nested_struct.zig", .expected = "field 'desde' is a struct: nested structs have no SQL mapping yet" },
+    .{ .file = "zig_type_map_sql_struct_field_unsupported.zig", .expected = "Zig type 'f64' has no SQL mapping" },
 };
 
 pub fn build(b: *std.Build) void {

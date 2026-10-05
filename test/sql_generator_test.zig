@@ -381,3 +381,89 @@ test "schemaSql emits each domain once, in order of first appearance, before the
         \\);
     , con_dominios_ddl);
 }
+
+// ---- struct domains: a composite type named after the domain ----
+//
+// A struct-backed domain is a Postgres composite type named after the domain
+// (`CREATE TYPE punto AS (...)`), its attributes typed like columns (a narrow
+// integer with its domain). The column is typed with the composite.
+//
+// A Zig struct has no optional fields, but a composite's attributes cannot be
+// NOT NULL: `ROW(1, NULL)::punto` is a punto for Postgres. A CHECK per struct
+// column, named `<entity>_<column>_complete`, requires every field once the
+// value is not NULL (a nullable column can still be NULL as a whole).
+
+const Punto = struct { x: i16, y: u16 };
+const Etiqueta = struct { texto: []const u8, visible: bool };
+
+const lugar_types = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{
+    .punto = zigma.TypeDef{ .Type = Punto },
+    .etiqueta = zigma.TypeDef{ .Type = Etiqueta },
+    .cantidad = zigma.TypeDef{ .Type = u8 },
+} }));
+
+const lugar = zigma.defineEntity(.{
+    .pk = .{"lugar"},
+    .fields = zigma.record(lugar_types, .{
+        .lugar = .{ .type = "text" },
+        .ubicacion = .{ .type = "punto" },
+        .etiqueta = .{ .type = "etiqueta", .nullable = false },
+    }),
+});
+const lugar_info = zigma.completeEntity(lugar);
+const lugar_ddl = sql.createTableSql(lugar_types, "lugar", lugar_info);
+
+test "a struct column is typed with the composite named after its domain, and a CHECK requires the whole struct" {
+    try expectEqualStrings(
+        \\CREATE TABLE lugar (
+        \\    lugar TEXT NOT NULL,
+        \\    ubicacion punto,
+        \\    etiqueta etiqueta NOT NULL,
+        \\    PRIMARY KEY (lugar),
+        \\    CONSTRAINT lugar_ubicacion_complete CHECK (ubicacion IS NULL OR ((ubicacion).x IS NOT NULL AND (ubicacion).y IS NOT NULL)),
+        \\    CONSTRAINT lugar_etiqueta_complete CHECK (etiqueta IS NULL OR ((etiqueta).texto IS NOT NULL AND (etiqueta).visible IS NOT NULL))
+        \\);
+    , lugar_ddl);
+}
+
+// ruta: punto again (its CREATE TYPE is emitted once) and a u8 column; the
+// domain zig_u16 is only used inside punto, and still comes before it.
+const ruta = zigma.defineEntity(.{
+    .pk = .{"ruta"},
+    .fields = zigma.record(lugar_types, .{
+        .ruta = .{ .type = "text" },
+        .origen = .{ .type = "punto" },
+        .paradas = .{ .type = "cantidad" },
+    }),
+});
+const con_compuestos = zigma.defineEntities(.{ .lugar = lugar, .ruta = ruta });
+const con_compuestos_ddl = sql.schemaSql(lugar_types, con_compuestos);
+
+test "schemaSql emits the domains (also those used inside a composite), then each composite once, then the tables" {
+    try expectEqualStrings(
+        \\CREATE DOMAIN zig_u16 AS INTEGER CHECK (VALUE BETWEEN 0 AND 65535);
+        \\
+        \\CREATE DOMAIN zig_u8 AS SMALLINT CHECK (VALUE BETWEEN 0 AND 255);
+        \\
+        \\CREATE TYPE punto AS (x SMALLINT, y zig_u16);
+        \\
+        \\CREATE TYPE etiqueta AS (texto TEXT, visible BOOLEAN);
+        \\
+        \\CREATE TABLE lugar (
+        \\    lugar TEXT NOT NULL,
+        \\    ubicacion punto,
+        \\    etiqueta etiqueta NOT NULL,
+        \\    PRIMARY KEY (lugar),
+        \\    CONSTRAINT lugar_ubicacion_complete CHECK (ubicacion IS NULL OR ((ubicacion).x IS NOT NULL AND (ubicacion).y IS NOT NULL)),
+        \\    CONSTRAINT lugar_etiqueta_complete CHECK (etiqueta IS NULL OR ((etiqueta).texto IS NOT NULL AND (etiqueta).visible IS NOT NULL))
+        \\);
+        \\
+        \\CREATE TABLE ruta (
+        \\    ruta TEXT NOT NULL,
+        \\    origen punto,
+        \\    paradas zig_u8,
+        \\    PRIMARY KEY (ruta),
+        \\    CONSTRAINT ruta_origen_complete CHECK (origen IS NULL OR ((origen).x IS NOT NULL AND (origen).y IS NOT NULL))
+        \\);
+    , con_compuestos_ddl);
+}

@@ -70,3 +70,31 @@ test "the boundaries between Postgres integers: u15 fits SMALLINT, u16 needs INT
     try expectInteger(comptime map.sqlTypeOf(u31), .integer, 0, (1 << 31) - 1, "zig_u31");
     try expectInteger(comptime map.sqlTypeOf(u63), .bigint, 0, (1 << 63) - 1, "zig_u63");
 }
+
+// ---- structs: a composite type, each field mapped like a column ----
+
+const Fecha = struct { @"año": u16, mes: u8, @"día": u8 };
+
+test "a struct maps to a composite with each field mapped, in declaration order; narrow integers keep their domain" {
+    const fields = comptime map.sqlTypeOf(Fecha).composite;
+    try expect(fields.len == 3);
+    try expectEqualStrings("año", fields[0].name);
+    try expectInteger(fields[0].type, .integer, 0, 65535, "zig_u16");
+    try expectEqualStrings("mes", fields[1].name);
+    try expectInteger(fields[1].type, .smallint, 0, 255, "zig_u8");
+    try expectEqualStrings("día", fields[2].name);
+    try expectInteger(fields[2].type, .smallint, 0, 255, "zig_u8");
+}
+
+const Etiqueta = struct { texto: []const u8, visible: bool, prioridad: i32 };
+
+test "a struct's text, boolean and exact-integer fields map like columns" {
+    const fields = comptime map.sqlTypeOf(Etiqueta).composite;
+    try expect(fields.len == 3);
+    try expectEqualStrings("texto", fields[0].name);
+    try expect(fields[0].type == .text);
+    try expectEqualStrings("visible", fields[1].name);
+    try expect(fields[1].type == .boolean);
+    try expectEqualStrings("prioridad", fields[2].name);
+    try expectInteger(fields[2].type, .integer, -2147483648, 2147483647, null);
+}

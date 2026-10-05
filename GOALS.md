@@ -105,8 +105,13 @@ driver, ver `TEST_QUEUE.md`).
   (el generador recibe el `type_defs` del sistema y pasa por `zig_type_map_sql.sqlTypeOf`),
   reemplaza a la tabla a mano `aida.sql_type_defs`. Un entero más angosto que su entero de
   Postgres va con un `DOMAIN` (`zig_u8`) que lo restringe al intervalo de Zig; `integer`
-  (`i64`) es `BIGINT`. Los structs (`fecha`) todavía no se mapean: el esquema de aida no
-  compila hasta el tipo compuesto (`test/sql_generator_aida_test.zig` en rojo).
+  (`i64`) es `BIGINT`. Un dominio respaldado por un struct (`fecha`) es un tipo compuesto
+  con el nombre del dominio (`CREATE TYPE fecha AS (año zig_u16, mes zig_u8, día zig_u8)`),
+  y cada columna struct lleva un `CHECK` `<entidad>_<columna>_complete` (el struct entero o
+  `NULL`: los atributos de un compuesto no pueden ser `NOT NULL`). Un struct dentro de un
+  struct todavía no compila (el interno no tiene dominio ni nombre). Aplicado a mano contra
+  Postgres: el esquema entra entero, y una `fecha` incompleta, `mes = 300` o `año = -1` se
+  rechazan. Falta el lado TS ↔ Postgres (cómo `dml.ts` manda y lee un `fecha`).
 
 ## Hito 2 (backend): estado y decisiones
 
