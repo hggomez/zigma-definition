@@ -29,6 +29,10 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
   ensucia la salida). Ver si conviene `IF NOT EXISTS` o un `DROP ... CASCADE` previo.
 * `type` del `row`/`pk`: usa `,` como separador; TS idiomático es `;` dentro de un type
   literal (ambos válidos).
+* Pendiente, rehacer en su momento (no es de tipos): violaciones de pk/uk/fk como errores
+  de dominio (`domainError`, constraints nombradas desde el SSOT) y reset de la base de
+  test (`DROP SCHEMA public CASCADE`, `ON_ERROR_STOP=1`). Primer intento como referencia:
+  commit `5fad670` en `lucas-branch`.
 
 ## Hechos ts_backend_generator (referencia rápida, no repetir)
 
