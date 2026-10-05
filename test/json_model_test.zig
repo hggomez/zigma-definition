@@ -57,7 +57,8 @@ test "nested optional structures retain their shape and child nullability" {
     const Details = struct { title: ?[]const u8, inner: ?Inner };
     const types = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{ .details = .{ .Type = Details } } }));
     const rec = zigma.record(types, .{ .id = .{ .type = "text" }, .details = .{ .type = "details" } });
-    const Model = zigma.Framework(types, .{ .entries = zigma.defineEntity(.{ .fields = rec, .pk = .{"id"} }) });
+    const definition = .{ .fields = rec, .pk = .{"id"} };
+    const Model = zigma.Framework(types, .{ .entries = .{ .Type = zigma.Entity(types, definition), .definition = definition } });
     var buf: [4096]u8 = undefined;
     var parsed = try parse(try json.stringifyEntitySchema(Model, "entries", &buf));
     defer parsed.deinit();
@@ -80,13 +81,14 @@ test "entity metadata escapes names labels and foreign key maps" {
     const rec = zigma.record(zigma.common_type_defs, .{
         .@"id\"\\\n" = .{ .type = "text", .label = label },
     });
+    const definition = .{
+        .fields = rec,
+        .pk = .{field_name},
+        .uks = .{ .@"unique\"" = .{field_name} },
+        .fks = .{ .@"self\"" = .{ .entity = entity_name, .fields = .{ .@"id\"\\\n" = field_name } } },
+    };
     const Model = zigma.Framework(zigma.common_type_defs, .{
-        .@"items\"\\\nñ" = zigma.defineEntity(.{
-            .fields = rec,
-            .pk = .{field_name},
-            .uks = .{ .@"unique\"" = .{field_name} },
-            .fks = .{ .@"self\"" = .{ .entity = entity_name, .fields = .{ .@"id\"\\\n" = field_name } } },
-        }),
+        .@"items\"\\\nñ" = .{ .Type = zigma.Entity(zigma.common_type_defs, definition), .definition = definition },
     });
     var buf: [2048]u8 = undefined;
     var parsed = try parse(try json.stringifyEntitySchema(Model, entity_name, &buf));
@@ -103,11 +105,12 @@ test "entity metadata escapes names labels and foreign key maps" {
 
 test "application rules do not change the frontend catalogue" {
     const base = zigma.Framework(tiny.type_defs, tiny.entity_defs);
-    const with_rules = zigma.Framework(tiny.type_defs, .{ .items = zigma.defineEntity(.{
+    const definition = .{
         .fields = tiny.item,
         .pk = .{"id"},
         .rules = .{ .named = .{ .fields = .{"nombre"} } },
-    }) });
+    };
+    const with_rules = zigma.Framework(tiny.type_defs, .{ .items = .{ .Type = zigma.Entity(tiny.type_defs, definition), .definition = definition } });
     var first: [2048]u8 = undefined;
     var second: [2048]u8 = undefined;
     try std.testing.expectEqualStrings(

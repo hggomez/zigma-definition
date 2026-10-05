@@ -10,8 +10,8 @@ combinan. Va desde los elementos más pequeños hasta un sistema completo.
 | --- | --- |
 | `zigma.zig` | La lista de nombres públicos; reexporta las implementaciones. |
 | `records.zig` | Tipos de dominio, campos, validación y defaults de records, tipos de instancia y `merge`. |
-| `entities.zig` | PK, UK, FK y dependencias de reglas; validación local, referencias entre entidades y normalización. |
-| `model.zig` | `Framework`: reúne el contrato normalizado y genera `Row`, `Projection`, `Patch`, `Filters` y `RuleInput`. |
+| `entities.zig` | `Entity`, PK, UK, FK y dependencias de reglas; valida definiciones y registros, normaliza metadatos y genera tipos concretos. |
+| `model.zig` | `Framework`: valida la identidad del tipo registrado, reúne el contrato normalizado y ofrece `Row`, `Patch` y `Filters`. |
 | `names.zig` | Tres helpers internos para reconocer strings, comparar nombres y comprobar pertenencia a una lista. |
 
 Para leer la implementación, conviene seguir `records.zig` → `entities.zig` →
@@ -21,34 +21,35 @@ entre archivos son internas: los consumidores siguen usando el módulo `zigma`.
 
 Por ejemplo, un campo `.id = .{ .type = "integer" }` recibe `nullable = true` al
 completar su record en `records.zig`. Si pertenece a la PK, `entities.zig` lo marca
-no-null al completar la entidad, sin cambiar el record original. `model.zig` usa
-esa entidad para construir `Model.info` y `Model.Row`; tanto la fila como una
-proyección de `id` tendrán `i64`. La conversión de un campo normalizado a `T` o
-`?T` vive solamente en `records.zig` y se comparte con el modelo.
+no-null al completar la entidad, sin cambiar el record original. `Entity` genera
+el tipo de fila; `model.zig` lo comprueba y lo devuelve desde `Model.Row`.
+También reúne los metadatos en `Model.info`; el campo `id` de la fila tendrá `i64`. La conversión de un campo normalizado a `T` o
+`?T` vive solamente en `records.zig` y se comparte con entidades y modelo.
 
 Esta separación conserva el comportamiento: las reglas todavía describen
-dependencias y permiten generar `RuleInput`; no ejecutan funciones de validación
-automáticamente.
+dependencias serializables; no ejecutan funciones de validación automáticamente.
 
-## Comparar un struct manual, una fila y una proyección
+## Lógica de negocio con entidades concretas
 
-El ejemplo [aida.zig](../examples/aida/src/aida.zig) implementa tres variantes de la
-misma regla: un docente con cargo `teorico` necesita al menos cinco años de experiencia.
-Se repite deliberadamente el cuerpo para que la comparación muestre la diferencia
-entre los tipos de entrada, sin ocultarla detrás de una función genérica.
-
-| Función | Entrada | Qué debe mantener o aportar el llamador |
-| --- | --- | --- |
-| `validarDocente` | `DocenteBusinessState`, un struct manual | `cargo` y `experiencia`; sus tipos y nulabilidad se repiten fuera del contrato. |
-| `validarDocenteRow` | `Model.Row("docentes")` | La fila completa, aunque la regla solo consulte dos campos; los tipos vienen del contrato. |
-| `validarDocenteProjection` | `Model.Projection("docentes", .{ "cargo", "experiencia" })` | Solo esos dos campos; sus tipos y nulabilidad vienen del contrato. |
-
-Estas son tres llamadas alternativas, no una secuencia de validaciones necesaria:
+El ejemplo [aida.zig](../examples/aida/src/aida.zig) declara
+`Docente = zigma.Entity(type_defs, docente_def)` y utiliza ese tipo directamente:
 
 ```zig
-try aida.validarDocente(.{ .cargo = "teorico", .experiencia = 5 });
+pub fn validarDocente(value: Docente) DocenteValidationError!void {
+    const cargo_value = value.cargo orelse return;
+    const normalized_cargo = std.mem.trim(u8, cargo_value, " \t\r\n");
+    if (!std.ascii.eqlIgnoreCase(normalized_cargo, "teorico")) return;
+    const experiencia = value.experiencia orelse
+        return error.TeoricoRequiereCincoAniosExperiencia;
+    if (experiencia < 5) return error.TeoricoRequiereCincoAniosExperiencia;
+}
+```
 
-try aida.validarDocenteRow(.{
+La regla lee dos campos, pero recibe la entidad completa. No repite sus tipos ni su
+nulabilidad fuera del contrato. `Model.Row("docentes")` devuelve exactamente `Docente`.
+
+```zig
+try aida.validarDocente(.{
     .docente = "d1",
     .apellido = null,
     .nombres = "Ada",
@@ -60,21 +61,17 @@ try aida.validarDocenteRow(.{
     .experiencia = 5,
     .esImportador = null,
 });
-
-try aida.validarDocenteProjection(.{ .cargo = "teorico", .experiencia = 5 });
 ```
 
-Si `experiencia` deja de admitir null, `Row` y `Projection` producirán `i64` para ese
-campo: los `orelse` de sus validadores deberán adaptarse y el compilador señalará el
-código incompatible. El struct manual seguirá declarando `?i64` hasta actualizarlo.
-Si se agrega un campo ajeno a la regla, los literales de la fila completa deberán
-incluirlo, mientras que la proyección seguirá pidiendo solo sus dos campos.
+Si `experiencia` deja de admitir null, `Docente` tendrá `i64` para ese campo y el
+compilador señalará el `orelse` incompatible. Si se agrega un campo, los literales de
+fila completa deberán incluirlo aunque sea ajeno a la regla y admita null.
 
-`Projection` genera el tipo; el llamador construye el valor con los campos elegidos.
-REST continúa usando `validarDocente`. Las tres variantes se ejecutan en
-[test/aida_test.zig](../test/aida_test.zig) con los mismos nueve casos, incluidos nulos,
-mayúsculas, espacios y el límite de cinco años. Los tests de `Row` también verifican
-que cambiar datos ajenos a la regla no altere su resultado.
+REST construye la entidad con una conversión genérica y llama al adaptador tipado;
+este delega en `validarDocente`. Los [tests](../test/aida_test.zig) conservan nueve
+casos con nulos, espacios, mayúsculas y el límite de cinco años. También comprueban
+que modificar datos ajenos a la regla no cambie el resultado. El registro y su
+relación con los metadatos `rules` se explican en [validators.md](validators.md).
 
 ## El vocabulario
 
@@ -92,12 +89,13 @@ Two words appear everywhere:
 
 Both are plain data (structs, strings, lists). Special behavior is referenced
 by name, never embedded as a function. A viable shape for per-row input checks
-is [validators.md](validators.md) (not implemented).
+is described in [validators.md](validators.md), including the implemented REST registry
+and the pending automatic binding of named rules.
 
-Everything below is a **comptime value**: checked while the program compiles,
-then available as ordinary data at runtime. The Zig types of instances (the
-actual field values of a row) are *derived* from those values, so field names
-are written once.
+Las definiciones se evalúan en compilación y pueden convertirse en metadatos
+ordinarios para runtime. Los tipos Zig se derivan de ellas; viven en `TypeDef`,
+los tipos concretos y el registro, fuera de `Model.info`. Los nombres y tipos de
+los campos se escriben una sola vez.
 
 ```
 TypeDef                          domain type (a Zig type with a name)
@@ -106,12 +104,13 @@ TypeDef                          domain type (a Zig type with a name)
             └─ Record Def        a row shape (record)
                  ├─ instance     RecordInstanceType  → runtime Zig struct
                  ├─ Record Info  completeRecord      → FieldInfo per field
-                 └─ Entity Def   defineEntity        → grid: fields + keys
+                 └─ Entity Def   valor descriptivo   → fields + claves + reglas
                       ├─ pk / uks                    name lists into fields
                       ├─ Fk Def                      link to another entity
                       ├─ reuse                       extractPk / merge / mergePk
                       ├─ Entity Info                 completeEntity
-                      └─ system                      defineEntities
+                      ├─ tipo concreto               Entity(type_defs, definition)
+                      └─ registro Type + definition  defineEntities → Framework
 ```
 
 ---
@@ -264,21 +263,21 @@ For `materia` that is, conceptually:
 
 ```zig
 struct {
-    materia: []const u8,        // "text"
+    materia: ?[]const u8,       // "text", nullable por default
     denominacion: []const u8,   // "text"
 }
 ```
 
-aida binds this once to its own collection so business code does not repeat
-`type_defs`:
+AIDA publica un alias por record para usarlo como tipo en las funciones:
 
 ```zig
-pub fn DefinedType(comptime rec: anytype) type {
-    return zigma.RecordInstanceType(type_defs, rec);
-}
+pub const Cargo = zigma.RecordInstanceType(type_defs, cargo);
 
-pub fn validarCargo(cargo_sin_validar: DefinedType(cargo)) error{AyudanteNoPuedeDirigir}!void {
-    // cargo_sin_validar.denominacion is []const u8, .orden is i64, …
+pub fn validarCargo(cargo_sin_validar: Cargo) error{AyudanteNoPuedeDirigir}!void {
+    if (!(cargo_sin_validar.puede_dirigir orelse false)) return;
+    const denomination = cargo_sin_validar.denominacion orelse return;
+    if (std.ascii.findIgnoreCase(denomination, "ayudante") != null)
+        return error.AyudanteNoPuedeDirigir;
 }
 ```
 
@@ -344,7 +343,7 @@ Two design choices matter for everything that follows.
 
 2. The field mapping has **two spellings**:
    - a **list of names** when source and target fields are named the same
-     (`.fields = cursos.pk` means “the fields called `periodo` and `materia`
+     (`.fields = curso_def.pk` means “the fields called `periodo` and `materia`
      here are `periodo` and `materia` over there”);
    - a **source → target map** when they are not
      (`.fields = .{ .jefe = "docente" }`).
@@ -367,40 +366,50 @@ actually its primary key, needs the whole system — that is `defineEntities`.
 
 ---
 
-## 9. Entity Def: `defineEntity`
+## 9. Definición de entidad y tipo concreto: `Entity`
 
-An entity is the unit that can be shown as a grid: a record plus the keys that
-make rows identifiable and related.
+Una entidad agrega las claves y relaciones a un record. Conviene distinguir las
+cuatro piezas sin repetir la descripción de sus campos:
 
 ```zig
-pub const materias = zigma.defineEntity(.{
+// Record: los campos y su nulabilidad declarada.
+pub const materia = zigma.record(type_defs, .{
+    .materia = .{ .type = "text" },
+    .denominacion = .{ .type = "text", .nullable = false },
+});
+
+// Definición de entidad: restricciones sobre ese record.
+pub const materia_def = .{
     .pk = .{"materia"},
     .uks = .{ .denominacion = .{"denominacion"} },
     .fields = materia,
+};
+
+// Tipo de datos: ya puede usarse en funciones y arrays, sin Framework.
+pub const Materia = zigma.Entity(type_defs, materia_def);
+const materias_iniciales = [_]Materia{
+    .{ .materia = "AlgoI", .denominacion = "Algoritmos I" },
+};
+
+// Registro: el nombre plural sigue identificando la tabla y la ruta.
+pub const entity_defs = zigma.defineEntities(.{
+    .materias = .{ .Type = Materia, .definition = materia_def },
 });
 ```
 
-| Property | Required | Role |
-|----------|----------|------|
-| `fields` | yes | a record Def (the columns) |
-| `pk`     | yes | list of field names: the primary key |
-| `fks`    | no  | named foreign keys (section 8) |
-| `uks`    | no  | named unique keys; each value is a list of field names |
+`Entity` valida los dominios, los campos y las restricciones locales. La definición
+requiere `fields` y `pk`; puede omitir `fks`, `uks` y `rules`. Todos los nombres de
+claves y dependencias deben existir; las reglas no admiten dependencias repetidas.
+La comprobación de destinos de FK se hace al reunir el registro completo.
 
-`defineEntity` checks what is **local** to this entity:
+El resultado de `Entity` tiene solo los campos de datos y no lleva defaults ni
+metadatos ocultos. En el ejemplo, `Materia.materia` es `[]const u8`, porque es PK.
+Una instancia de `RecordInstanceType(type_defs, materia)` mantiene `?[]const u8`
+para ese campo: la restricción pertenece a la entidad.
 
-- every pk name is a field of `fields`;
-- every uk name is a field of `fields`;
-- every fk **source** field is a field of `fields`;
-- no unknown properties on the entity or on each fk.
-
-It then returns a normalized struct: the pk becomes a real array of names,
-and missing `fks` / `uks` become empty structs. The record in `fields` is
-kept as-is (still a Def, not yet an Info).
-
-Convention in aida: the record is singular (`materia`), the entity is plural
-(`materias`). The entity’s name in `defineEntities` is that plural string,
-which is also what fks put in `.entity`.
+La definición es un valor, `Materia` es un tipo y `entity_defs.materias` es la
+asociación de ambos. Para leer las restricciones se usa `materia_def` o
+`Model.info.materias`, no `Materia.definition`.
 
 ---
 
@@ -409,16 +418,16 @@ which is also what fks put in `.entity`.
 SSOTIGAD’s “good repetition” is inheritance of keys, not copy-paste of field
 lists.
 
-### `extractPk(entity)`
+### `extractPk(definition)`
 
 Returns the pk fields of an entity **as a record Def** (the same field defs,
 only those names). That record can be `merge`d into another record:
 
 ```zig
 pub const curso = zigma.record(type_defs, zigma.merge(.{
-    zigma.extractPk(periodos),   // field `periodo`
-    zigma.extractPk(materias),   // field `materia`
-    zigma.extractPk(docentes),   // field `docente` (responsable)
+    zigma.extractPk(periodo_def),   // campo periodo
+    zigma.extractPk(materia_def),   // campo materia
+    zigma.extractPk(docente_def),   // campo docente (responsable)
 }));
 ```
 
@@ -432,8 +441,8 @@ order. Used when the new entity’s pk *is* the combination of other pks,
 possibly plus extra fields:
 
 ```zig
-.pk = zigma.mergePk(.{ cursos.pk, .{"orden"} })           // clases
-.pk = zigma.mergePk(.{ inscripciones.pk, clases.pk })     // presencias
+.pk = zigma.mergePk(.{ curso_def.pk, .{"orden"} })           // clases
+.pk = zigma.mergePk(.{ inscripcion_def.pk, clase_def.pk })     // presencias
 ```
 
 `presencias` is the interesting case: `inscripciones` and `clases` both
@@ -448,14 +457,18 @@ when writing the Def.
 
 ## 11. Entity Info: `completeEntity`
 
-`completeEntity(entity)` is Def → Info for a whole entity. One form, nothing
+`completeEntity(definition)` is Def → Info for a whole entity. One form, nothing
 implicit:
 
 - `fields` → `completeRecord` (every field a `FieldInfo`);
 - `pk` → deduplicated name list (same rule as `mergePk`);
 - `fks` → every fk’s `fields` rewritten as a **source → target map**, even if
   the Def used the list shorthand;
-- `uks` → unchanged (or the empty default from `defineEntity`).
+- `uks` → conserva la definición o usa una colección vacía si se omitió;
+- `rules` → dependencias serializables, vacías si se omitieron.
+
+Los campos PK quedan no-null y el record original conserva su nulabilidad.
+`completeEntity` acepta directamente la definición descriptiva, sin registro ni tipo.
 
 After completion there is no “list of names” spelling for an fk. A generator
 only has to understand maps.
@@ -465,52 +478,61 @@ this entity.
 
 ---
 
-## 12. The system: `defineEntities`
+## 12. Registro y modelo: `defineEntities` y `Framework`
 
-A system is a struct of entities, each already passed through `defineEntity`.
-This is the first place **all** entities are known, so it is the first place
-the target side of foreign keys can be checked.
+`defineEntities` recibe asociaciones con exactamente `.Type` y `.definition`.
+Verifica la forma del registro y las relaciones entre sus definiciones:
 
 ```zig
 pub const entity_defs = zigma.defineEntities(.{
-    .docentes = docentes,
-    .materias = materias,
+    .docentes = .{ .Type = Docente, .definition = docente_def },
+    .materias = .{ .Type = Materia, .definition = materia_def },
     // …
 });
+pub const Model = zigma.Framework(type_defs, entity_defs);
 ```
 
-For every fk of every entity:
+Para cada FK, el destino debe existir y los campos referenciados deben coincidir
+con la PK completa o una UK completa. Por eso `materia_def` declara la UK de
+`denominacion`: otra entidad puede identificar una materia por ese campo. Un
+subconjunto cualquiera de columnas no constituye una clave válida.
 
-1. `fk.entity` must be the name of an entity in this struct.
-2. The **target** field names must be exactly the target’s full primary key,
-   or exactly one of its unique keys.
+Las relaciones reflexivas y circulares siguen siendo nombres de entidades. No
+hace falta construir un tipo que contenga otro tipo para expresar una FK.
+El generador DDL conserva su restricción sobre ciclos entre tablas diferentes.
 
-That is why `materias` declares `uks = .{ .denominacion = .{"denominacion"} }`:
-so another entity could point at a materia by denominación, not only by pk.
-A fk that names a random subset of columns is rejected.
+`defineEntities` devuelve el registro sin modificarlo. `Framework` vuelve a
+validarlo y exige que cada tipo sea exactamente el generado con sus dominios y
+su definición. Un registro incompatible produce un error localizado:
 
-Like `record` and `defineTypes`, `defineEntities` returns its argument
-unchanged. The value you wrote is the value you get; the function’s job is
-the compile-time check.
+```zig
+const Manual = struct { docente: []const u8 };
+const Invalid = zigma.Framework(type_defs, .{
+    .docentes = .{ .Type = Manual, .definition = docente_def },
+}); // Error: entity 'docentes': registered Type does not match Entity(type_defs, definition)
+```
 
-Reflexive and circular fks work because targets are names: `docentes.jefe`
-points at `"docentes"` while `docentes` is still being listed.
+`Model.Row("docentes") == Docente`. El modelo ofrece también `Patch` y `Filters`;
+los metadatos serializables permanecen en `Model.info`,
+sin incluir las asociaciones ni valores Zig `type`.
+
+Si cambia la nulabilidad o el dominio de un campo, `Entity` cambia su tipo y el
+cambio se refleja en los consumidores. Si se conserva por error un tipo anterior
+en el registro, la comprobación de identidad lo rechaza. Si se agrega un campo,
+los literales de fila completa deben proporcionarlo aunque admita null.
 
 ---
 
-## How a definition is meant to be read
+## Cómo leer una definición
 
-For a concrete entity, the story is always the same:
+1. Nombrar los dominios con `TypeDef` y `defineTypes`.
+2. Describir los campos en un `record`.
+3. Agregar claves y relaciones en una definición `*_def`, heredando campos con
+   `extractPk` y `merge` cuando corresponde.
+4. Generar un tipo concreto con `Entity(type_defs, definition)`.
+5. Asociar el nombre plural con el tipo y la definición en `defineEntities`.
+6. Construir `Framework` para que los generadores compartan `Model.info` y los
+   tipos derivados. La lógica de negocio puede recibir el tipo concreto directamente.
 
-1. Name the domain types (`TypeDef` in a `defineTypes` collection).
-2. Describe the row (`record` of field defs).
-3. Wrap it as a grid (`defineEntity`: pk, optional uks and fks).
-4. If the row includes another entity’s identity, inherit it (`extractPk` +
-   `merge`, and `mergePk` for the new pk).
-5. Put every entity in `defineEntities` so links are globally consistent.
-6. When a tool needs “everything explicit”, call `completeRecord` /
-   `completeEntity`. When Zig code needs an actual row, use
-   `RecordInstanceType` (or aida’s `DefinedType`).
-
-The human-facing names stay in the Defs. The Infos and instance types are
-computed, not maintained by hand.
+`RecordInstanceType` sigue disponible para records independientes; AIDA publica
+`Cargo` como alias de su tipo de instancia. Los tipos de entidad incorporan además sus restricciones de PK.

@@ -10,18 +10,14 @@ pub const type_defs = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .
     .email = zigma.common_type_defs.text,
 } }));
 
-/// Tipo de instancia de una definición de record, ligado a los type_defs del sistema:
-/// DefinedType(cargo) = struct { cargo: ?[]const u8, orden: ?i64, ... }
-pub fn DefinedType(comptime rec: anytype) type {
-    return zigma.RecordInstanceType(type_defs, rec);
-}
-
 pub const cargo = zigma.record(type_defs, .{
     .cargo = .{ .type = "text" },
     .denominacion = .{ .type = "text", .label = "denominación" },
     .orden = .{ .type = "integer" },
     .puede_dirigir = .{ .type = "boolean" },
 });
+
+pub const Cargo = zigma.RecordInstanceType(type_defs, cargo);
 
 pub const materia = zigma.record(type_defs, .{
     .materia = .{ .type = "text" },
@@ -51,49 +47,50 @@ pub const periodo = zigma.record(type_defs, .{
     .periodo = .{ .type = "text", .description = "bimestre, cuatrimestre, etc..." },
 });
 
-// Entidades: los nombres plurales envuelven las definiciones de records en singular.
+// Definiciones de entidad: agregan claves y relaciones a los records.
+// Los tipos concretos y su registro se componen al final del contrato.
 
-pub const docentes = zigma.defineEntity(.{
+pub const docente_def = .{
     .pk = .{"docente"},
     // FK reflexiva: dentro de su definición, la entidad se referencia por nombre
     // y el campo origen (jefe) se asocia al campo destino (docente).
     .fks = .{ .jefe = .{ .entity = "docentes", .fields = .{ .jefe = "docente" } } },
     .fields = docente,
-});
-pub const materias = zigma.defineEntity(.{
+};
+pub const materia_def = .{
     .pk = .{"materia"},
     .uks = .{ .denominacion = .{"denominacion"} },
     .fields = materia,
-});
-pub const periodos = zigma.defineEntity(.{ .pk = .{"periodo"}, .fields = periodo });
+};
+pub const periodo_def = .{ .pk = .{"periodo"}, .fields = periodo };
 
 pub const curso = zigma.record(type_defs, zigma.merge(.{
-    zigma.extractPk(periodos),
-    zigma.extractPk(materias),
-    zigma.extractPk(docentes), // docente responsable del curso
+    zigma.extractPk(periodo_def),
+    zigma.extractPk(materia_def),
+    zigma.extractPk(docente_def), // docente responsable del curso
 }));
 
-pub const cursos = zigma.defineEntity(.{
+pub const curso_def = .{
     .pk = .{ "periodo", "materia" },
     .fks = .{
-        .periodos = .{ .entity = "periodos", .fields = periodos.pk },
-        .materias = .{ .entity = "materias", .fields = materias.pk },
-        .responsable = .{ .entity = "docentes", .fields = docentes.pk },
+        .periodos = .{ .entity = "periodos", .fields = periodo_def.pk },
+        .materias = .{ .entity = "materias", .fields = materia_def.pk },
+        .responsable = .{ .entity = "docentes", .fields = docente_def.pk },
     },
     .fields = curso,
-});
+};
 
-pub const clase = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(cursos), .{
+pub const clase = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(curso_def), .{
     .orden = .{ .type = "integer" },
     .fecha = .{ .type = "fecha" },
     .tema = .{ .type = "text" },
 } }));
 
-pub const clases = zigma.defineEntity(.{
-    .pk = zigma.mergePk(.{ cursos.pk, .{"orden"} }),
-    .fks = .{ .cursos = .{ .entity = "cursos", .fields = cursos.pk } },
+pub const clase_def = .{
+    .pk = zigma.mergePk(.{ curso_def.pk, .{"orden"} }),
+    .fks = .{ .cursos = .{ .entity = "cursos", .fields = curso_def.pk } },
     .fields = clase,
-});
+};
 
 pub const alumno = zigma.record(type_defs, .{
     .alumno = .{ .type = "text" },
@@ -102,80 +99,80 @@ pub const alumno = zigma.record(type_defs, .{
     .email = .{ .type = "email" },
 });
 
-pub const alumnos = zigma.defineEntity(.{ .pk = .{"alumno"}, .fields = alumno });
+pub const alumno_def = .{ .pk = .{"alumno"}, .fields = alumno };
 
-pub const pregunta = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(clases), .{
+pub const pregunta = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(clase_def), .{
     .pregunta = .{ .type = "integer" },
     .formulacion = .{ .type = "text", .nullable = false, .label = "formulación", .description = "texto principal de la pregunta" },
     .aclaraciones = .{ .type = "text", .description = "texto que no necesita repetirse cuando se quiera referir a una pregunta por su formulación, pero que es necesario para aclarar el contexto o posibles ambigüedades de la pregunta" },
     .tipo_respuesta = .{ .type = "text", .nullable = false, .label = "tipo" },
 } }));
 
-pub const preguntas = zigma.defineEntity(.{
-    .pk = zigma.mergePk(.{ clases.pk, .{"pregunta"} }),
-    .fks = .{ .clases = .{ .entity = "clases", .fields = clases.pk } },
+pub const pregunta_def = .{
+    .pk = zigma.mergePk(.{ clase_def.pk, .{"pregunta"} }),
+    .fks = .{ .clases = .{ .entity = "clases", .fields = clase_def.pk } },
     .fields = pregunta,
-});
+};
 
-pub const opcion = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(preguntas), .{
+pub const opcion = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(pregunta_def), .{
     .opcion = .{ .type = "text" },
     .detalle = .{ .type = "text" },
 } }));
 
-pub const opciones = zigma.defineEntity(.{
-    .pk = zigma.mergePk(.{ preguntas.pk, .{"opcion"} }),
-    .fks = .{ .preguntas = .{ .entity = "preguntas", .fields = preguntas.pk } },
+pub const opcion_def = .{
+    .pk = zigma.mergePk(.{ pregunta_def.pk, .{"opcion"} }),
+    .fks = .{ .preguntas = .{ .entity = "preguntas", .fields = pregunta_def.pk } },
     .fields = opcion,
-});
+};
 
 pub const inscripcion = zigma.record(type_defs, zigma.merge(.{
-    zigma.extractPk(cursos),
-    zigma.extractPk(alumnos),
+    zigma.extractPk(curso_def),
+    zigma.extractPk(alumno_def),
 }));
 
-pub const inscripciones = zigma.defineEntity(.{
-    .pk = zigma.mergePk(.{ cursos.pk, .{"alumno"} }),
+pub const inscripcion_def = .{
+    .pk = zigma.mergePk(.{ curso_def.pk, .{"alumno"} }),
     .fks = .{
-        .cursos = .{ .entity = "cursos", .fields = cursos.pk },
-        .alumnos = .{ .entity = "alumnos", .fields = alumnos.pk },
+        .cursos = .{ .entity = "cursos", .fields = curso_def.pk },
+        .alumnos = .{ .entity = "alumnos", .fields = alumno_def.pk },
     },
     .fields = inscripcion,
-});
+};
 
 // PK combinada: inscripciones y clases comparten periodo y materia, sin
 // repeticiones; periodo y materia pertenecen a ambas FKs.
 
 pub const presencia = zigma.record(type_defs, zigma.merge(.{
-    zigma.extractPk(inscripciones),
-    zigma.extractPk(clases),
+    zigma.extractPk(inscripcion_def),
+    zigma.extractPk(clase_def),
 }));
 
-pub const presencias = zigma.defineEntity(.{
-    .pk = zigma.mergePk(.{ inscripciones.pk, clases.pk }),
+pub const presencia_def = .{
+    .pk = zigma.mergePk(.{ inscripcion_def.pk, clase_def.pk }),
     .fks = .{
-        .inscripciones = .{ .entity = "inscripciones", .fields = inscripciones.pk },
-        .clases = .{ .entity = "clases", .fields = clases.pk },
+        .inscripciones = .{ .entity = "inscripciones", .fields = inscripcion_def.pk },
+        .clases = .{ .entity = "clases", .fields = clase_def.pk },
     },
     .fields = presencia,
-});
+};
 
 // Dos FKs a la misma entidad, con campos renombrados.
 
-pub const mesa = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(cursos), .{
+pub const mesa = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(curso_def), .{
     .fecha = .{ .type = "fecha" },
     .presidente = .{ .type = "text" },
     .vocal = .{ .type = "text" },
 } }));
 
-pub const mesas = zigma.defineEntity(.{
-    .pk = zigma.mergePk(.{ cursos.pk, .{"fecha"} }),
+pub const mesa_def = .{
+    .pk = zigma.mergePk(.{ curso_def.pk, .{"fecha"} }),
     .fks = .{
-        .cursos = .{ .entity = "cursos", .fields = cursos.pk },
+        .cursos = .{ .entity = "cursos", .fields = curso_def.pk },
         .presidente = .{ .entity = "docentes", .fields = .{ .presidente = "docente" } },
         .vocal = .{ .entity = "docentes", .fields = .{ .vocal = "docente" } },
     },
     .fields = mesa,
-});
+};
 
 pub const record_defs = .{
     .cargo = cargo,
@@ -194,11 +191,8 @@ pub const record_defs = .{
 };
 
 /// Función de negocio con tipado estricto: el parámetro tiene el tipo concreto
-/// de instancia derivado de la definición, no anytype. Un literal anónimo se
-/// convierte implícitamente y se comprueba en el punto de llamada. Dar un tipo
-/// concreto a un valor de runtime (por ejemplo, JSON parseado) corresponde a una
-/// función previa de parseo y validación, no a las funciones de negocio.
-pub fn validarCargo(cargo_sin_validar: DefinedType(cargo)) error{AyudanteNoPuedeDirigir}!void {
+/// de instancia derivado de la definición, no anytype.
+pub fn validarCargo(cargo_sin_validar: Cargo) error{AyudanteNoPuedeDirigir}!void {
     if (!(cargo_sin_validar.puede_dirigir orelse false)) return;
     const denomination = cargo_sin_validar.denominacion orelse return;
     if (std.ascii.findIgnoreCase(denomination, "ayudante") != null) {
@@ -206,22 +200,10 @@ pub fn validarCargo(cargo_sin_validar: DefinedType(cargo)) error{AyudanteNoPuede
     }
 }
 
-// Tres variantes didácticas de la misma regla: struct manual, Row y Projection.
-// Se conserva el cuerpo en cada una para comparar directamente sus firmas y usos.
-// REST utiliza validarDocente; los tests ejercitan las tres alternativas.
-
-/// Subconjunto manual: sus tipos y opcionales deben mantenerse alineados al contrato.
-/// Un cargo null no activa la regla; un docente teórico debe tener un valor de
-/// experiencia conocido y de al menos cinco años.
-pub const DocenteBusinessState = struct {
-    cargo: ?[]const u8,
-    experiencia: ?i64,
-};
-
 pub const DocenteValidationError = error{TeoricoRequiereCincoAniosExperiencia};
 
-/// Variante 1: recibe únicamente los campos escritos en el struct manual.
-pub fn validarDocente(value: DocenteBusinessState) DocenteValidationError!void {
+/// La entidad concreta lleva todos los campos; la regla usa cargo y experiencia.
+pub fn validarDocente(value: Docente) DocenteValidationError!void {
     const cargo_value = value.cargo orelse return;
     const normalized_cargo = std.mem.trim(u8, cargo_value, " \t\r\n");
     if (!std.ascii.eqlIgnoreCase(normalized_cargo, "teorico")) return;
@@ -232,43 +214,32 @@ pub fn validarDocente(value: DocenteBusinessState) DocenteValidationError!void {
         return error.TeoricoRequiereCincoAniosExperiencia;
 }
 
-/// Variante 2: los tipos vienen del contrato, pero el llamador debe aportar toda la fila.
-/// La regla solo consulta cargo y experiencia; los demás campos no afectan el resultado.
-pub fn validarDocenteRow(value: Model.Row("docentes")) DocenteValidationError!void {
-    const cargo_value = value.cargo orelse return;
-    const normalized_cargo = std.mem.trim(u8, cargo_value, " \t\r\n");
-    if (!std.ascii.eqlIgnoreCase(normalized_cargo, "teorico")) return;
+/// Tipos concretos de aplicación; sus campos se generan desde las definiciones.
+pub const Docente = zigma.Entity(type_defs, docente_def);
+pub const Materia = zigma.Entity(type_defs, materia_def);
+pub const Periodo = zigma.Entity(type_defs, periodo_def);
+pub const Curso = zigma.Entity(type_defs, curso_def);
+pub const Clase = zigma.Entity(type_defs, clase_def);
+pub const Alumno = zigma.Entity(type_defs, alumno_def);
+pub const Pregunta = zigma.Entity(type_defs, pregunta_def);
+pub const Opcion = zigma.Entity(type_defs, opcion_def);
+pub const Inscripcion = zigma.Entity(type_defs, inscripcion_def);
+pub const Presencia = zigma.Entity(type_defs, presencia_def);
+pub const Mesa = zigma.Entity(type_defs, mesa_def);
 
-    const experiencia = value.experiencia orelse
-        return error.TeoricoRequiereCincoAniosExperiencia;
-    if (experiencia < 5)
-        return error.TeoricoRequiereCincoAniosExperiencia;
-}
-
-/// Variante 3: solo declara los campos necesarios; sus tipos y nulabilidad son derivados.
-pub fn validarDocenteProjection(value: Model.Projection("docentes", .{ "cargo", "experiencia" })) DocenteValidationError!void {
-    const cargo_value = value.cargo orelse return;
-    const normalized_cargo = std.mem.trim(u8, cargo_value, " \t\r\n");
-    if (!std.ascii.eqlIgnoreCase(normalized_cargo, "teorico")) return;
-
-    const experiencia = value.experiencia orelse
-        return error.TeoricoRequiereCincoAniosExperiencia;
-    if (experiencia < 5)
-        return error.TeoricoRequiereCincoAniosExperiencia;
-}
-
+/// Nombres de tablas y rutas asociados a cada tipo y su definición descriptiva.
 pub const entity_defs = zigma.defineEntities(.{
-    .docentes = docentes,
-    .materias = materias,
-    .periodos = periodos,
-    .cursos = cursos,
-    .clases = clases,
-    .alumnos = alumnos,
-    .preguntas = preguntas,
-    .opciones = opciones,
-    .inscripciones = inscripciones,
-    .presencias = presencias,
-    .mesas = mesas,
+    .docentes = .{ .Type = Docente, .definition = docente_def },
+    .materias = .{ .Type = Materia, .definition = materia_def },
+    .periodos = .{ .Type = Periodo, .definition = periodo_def },
+    .cursos = .{ .Type = Curso, .definition = curso_def },
+    .clases = .{ .Type = Clase, .definition = clase_def },
+    .alumnos = .{ .Type = Alumno, .definition = alumno_def },
+    .preguntas = .{ .Type = Pregunta, .definition = pregunta_def },
+    .opciones = .{ .Type = Opcion, .definition = opcion_def },
+    .inscripciones = .{ .Type = Inscripcion, .definition = inscripcion_def },
+    .presencias = .{ .Type = Presencia, .definition = presencia_def },
+    .mesas = .{ .Type = Mesa, .definition = mesa_def },
 });
 
 /// Modelo normalizado compartido por REST, PostgreSQL y los tipos de aplicación.

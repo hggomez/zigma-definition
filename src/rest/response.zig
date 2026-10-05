@@ -96,6 +96,15 @@ pub fn businessViolationResponse(
     return errorResponse(allocator, 422, violation.code, violation.message);
 }
 
+/// La conversión previa a la regla falló: nunca es una violación de negocio.
+pub fn businessValidationErrorResponse(allocator: std.mem.Allocator, err: anyerror) !Response {
+    return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.InvalidRepositoryResult => errorResponse(allocator, 500, "invalid_repository_result", "Repository returned an invalid row shape"),
+        else => errorResponse(allocator, 500, "business_validation_error", "Business validation could not be completed"),
+    };
+}
+
 /// Serializa filas y mantiene uniforme el tratamiento de resultados inválidos.
 /// La falta de memoria se propaga por el canal de errores Zig; las columnas,
 /// anchos de fila o valores incompatibles producen un 500 sin detalles internos.

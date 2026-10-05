@@ -48,6 +48,18 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     });
 
     const model_test_step = b.step("test-model", "Test normalized contract metadata and generated model types");
+    const aida_system = b.createModule(.{
+        .root_source_file = b.path("examples/aida/src/system.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{.{ .name = "aida", .module = modules.aida }},
+    });
+    const run_entity_tests = addTestRun(b, target, optimize, "test/concrete_entity_test.zig", &.{
+        .{ .name = "zigma", .module = modules.zigma },
+        .{ .name = "aida", .module = modules.aida },
+        .{ .name = "aida_system", .module = aida_system },
+    });
+    model_test_step.dependOn(&run_entity_tests.step);
     for ([_][]const u8{
         "model_nullability_test.zig",
         "system_model_test.zig",
@@ -87,7 +99,7 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
         .{ .name = "zigma_postgres_migrations", .module = modules.postgres_migrations },
     });
 
-    const run_postgres_migration_tool_tests = addTestRun(b, target, optimize, "tools/postgres_migration_tool.zig", &.{
+    const run_postgres_migration_tool_tests = addTestRun(b, target, optimize, "migration_tools/postgres_migration_tool.zig", &.{
         .{ .name = "aida_postgres", .module = modules.aida_postgres },
         .{ .name = "zigma_postgres_migrations", .module = modules.postgres_migrations },
     });
@@ -109,6 +121,13 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     const run_rest_tests = addTestRun(b, target, optimize, "test/rest_test.zig", &.{
         .{ .name = "zigma", .module = modules.zigma },
         .{ .name = "zigma_rest", .module = modules.rest },
+    });
+
+    const run_typed_validation_tests = addTestRun(b, target, optimize, "test/typed_business_validation_test.zig", &.{
+        .{ .name = "zigma", .module = modules.zigma },
+        .{ .name = "zigma_rest", .module = modules.rest },
+        .{ .name = "aida", .module = modules.aida },
+        .{ .name = "aida_rest", .module = modules.aida_rest },
     });
 
     const run_postgres_crud_tests = addTestRun(b, target, optimize, "test/postgres_crud_test.zig", &.{
@@ -146,6 +165,7 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     test_step.dependOn(&run_postgres_migration_tool_tests.step);
     test_step.dependOn(&run_liquibase_runner_tests.step);
     test_step.dependOn(&run_rest_tests.step);
+    test_step.dependOn(&run_typed_validation_tests.step);
     test_step.dependOn(&run_postgres_crud_tests.step);
     test_step.dependOn(&run_aida_rest_tests.step);
     test_step.dependOn(&aida.schema_guard.step);
@@ -261,7 +281,7 @@ fn addPostgresTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
 }
 
 fn addCompileErrors(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, modules: Modules, steps: UnitSteps) void {
-    for (compile_error_cases ++ model_compile_error_cases) |case| {
+    for (compile_error_cases ++ model_compile_error_cases ++ entity_compile_error_cases) |case| {
         const case_obj = b.addObject(.{
             .name = case.file[0 .. case.file.len - 4],
             .root_module = b.createModule(.{
@@ -279,7 +299,7 @@ fn addCompileErrors(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
         });
         case_obj.expect_errors = .{ .contains = case.expected };
         steps.all.dependOn(&case_obj.step);
-        for (model_compile_error_cases) |model_case| {
+        for (model_compile_error_cases ++ entity_compile_error_cases) |model_case| {
             if (std.mem.eql(u8, case.file, model_case.file))
                 steps.model.dependOn(&case_obj.step);
         }
@@ -308,6 +328,33 @@ fn at(comptime file: []const u8) []const u8 {
 /// nativos se usa `at` (ver arriba).
 const CompileErrorCase = struct { file: []const u8, expected: []const u8 };
 
+// Rechazos de la API de entidades concretas. Un error por API ausente no
+// satisface estos diagnósticos; el caso nativo exige la ubicación del literal.
+const entity_compile_error_cases = [_]CompileErrorCase{
+    .{ .file = "entity_registry_not_struct.zig", .expected = "entity registrations must be a struct keyed by entity name" },
+    .{ .file = "entity_registration_not_struct.zig", .expected = "entity 'items': registration must be a struct with 'Type' and 'definition'" },
+    .{ .file = "entity_registration_missing_type.zig", .expected = "entity 'items': registration is missing 'Type'" },
+    .{ .file = "entity_registration_missing_definition.zig", .expected = "entity 'items': registration is missing 'definition'" },
+    .{ .file = "entity_registration_invalid_type.zig", .expected = "entity 'items': registration 'Type' must be a Zig type" },
+    .{ .file = "entity_registration_unknown_property.zig", .expected = "entity 'items': unknown registration property 'extra'" },
+    .{ .file = "entity_registration_invalid_definition.zig", .expected = "an entity definition must be a struct like .{ .pk = ..., .fields = ... }" },
+    .{ .file = "framework_registration_unchecked.zig", .expected = "entity 'items': registration is missing 'Type'" },
+    .{ .file = "framework_entity_type_identity.zig", .expected = "entity 'items': registered Type does not match Entity(type_defs, definition)" },
+    .{ .file = "framework_entity_changed_nullability.zig", .expected = "entity 'items': registered Type does not match Entity(type_defs, definition)" },
+    .{ .file = "framework_entity_changed_domain.zig", .expected = "entity 'items': registered Type does not match Entity(type_defs, definition)" },
+    .{ .file = "concrete_entity_unknown_domain.zig", .expected = "field 'id': unknown type 'missing'" },
+    .{ .file = "concrete_entity_optional_domain.zig", .expected = "type 'optional_integer': domain types must be non-optional; use field 'nullable'" },
+    .{ .file = "concrete_entity_missing_required.zig", .expected = "missing struct field: label" },
+    .{ .file = "concrete_entity_missing_nullable.zig", .expected = "missing struct field: note" },
+    .{ .file = "concrete_entity_null_pk.zig", .expected = "expected type 'i64', found '@TypeOf(null)'" },
+    .{ .file = "concrete_entity_wrong_value.zig", .expected = "expected type 'i64', found 'bool'" },
+    .{ .file = "concrete_entity_unknown_field.zig", .expected = at("concrete_entity_unknown_field.zig") },
+    .{ .file = "concrete_entity_invalid_pk.zig", .expected = "pk field 'missing' is not a field of the entity" },
+    .{ .file = "concrete_entity_invalid_rule.zig", .expected = "rule 'display': field 'missing' is not a field of the entity" },
+    .{ .file = "framework_registration_invalid_fk.zig", .expected = "entity 'items', fk 'parent': unknown target entity 'missing'" },
+    .{ .file = "concrete_entity_ddl_cycle.zig", .expected = "PostgreSQL DDL: foreign key cycle involving entity 'lefts' cannot be generated with inline constraints" },
+};
+
 const compile_error_cases = [_]CompileErrorCase{
     .{ .file = "types_not_a_typedef.zig", .expected = "type 'text': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
     .{ .file = "types_extra_property.zig", .expected = "type 'fecha': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
@@ -325,9 +372,9 @@ const compile_error_cases = [_]CompileErrorCase{
     .{ .file = "system_fk_unknown_entity.zig", .expected = "unknown target entity 'inexistentes'" },
     .{ .file = "system_fk_partial_pk.zig", .expected = "target fields do not match the complete pk nor any uk of entity 'franjas'" },
     .{ .file = "info_fks_no_array_form.zig", .expected = at("info_fks_no_array_form.zig") },
-    .{ .file = "defined_type_wrong_field_type.zig", .expected = "expected type '?i64', found '*const [1:0]u8'" },
+    .{ .file = "cargo_wrong_field_type.zig", .expected = "expected type '?i64', found '*const [1:0]u8'" },
     .{ .file = "validar_cargo_missing_field.zig", .expected = at("validar_cargo_missing_field.zig") },
-    .{ .file = "defined_type_no_field.zig", .expected = at("defined_type_no_field.zig") },
+    .{ .file = "cargo_unknown_field.zig", .expected = at("cargo_unknown_field.zig") },
     .{ .file = "postgres_ddl_mapping_missing.zig", .expected = "entity 'clases', field 'fecha': missing PostgreSQL type mapping for domain type 'fecha'" },
     .{ .file = "postgres_ddl_mapping_invalid.zig", .expected = "PostgreSQL type mapping 'text': 'sql_type' must be a non-empty string" },
     .{ .file = "postgres_ddl_unknown_table.zig", .expected = "PostgreSQL DDL: unknown entity 'inexistentes'" },
@@ -337,7 +384,11 @@ const compile_error_cases = [_]CompileErrorCase{
     .{ .file = "rest_codec_missing.zig", .expected = "entity 'events', field 'when': missing REST codec for domain type 'fecha'" },
     .{ .file = "rest_codec_invalid.zig", .expected = "REST codec 'text': must be a zigma_rest.Codec" },
     .{ .file = "rest_business_validator_unknown_entity.zig", .expected = "REST business validator 'missing': unknown entity" },
-    .{ .file = "rest_business_validator_invalid.zig", .expected = "REST business validator 'things': must be a zigma_rest.BusinessValidator" },
+    .{ .file = "rest_business_validator_invalid.zig", .expected = "REST business validator 'things': must be a zigma_rest.BusinessValidator(Model.Row(\"things\"))" },
+    .{ .file = "rest_typed_validator_wrong_entity_type.zig", .expected = "REST business validator 'things': must be a zigma_rest.BusinessValidator(Model.Row(\"things\"))" },
+    .{ .file = "rest_typed_validator_manual_row.zig", .expected = "REST business validator 'things': must be a zigma_rest.BusinessValidator(Model.Row(\"things\"))" },
+    .{ .file = "rest_typed_validator_wrong_input.zig", .expected = at("rest_typed_validator_wrong_input.zig") },
+    .{ .file = "rest_typed_validator_wrong_return.zig", .expected = at("rest_typed_validator_wrong_return.zig") },
 };
 
 // Los tests de contrato de la primera etapa también tienen el paso `test-model`.
@@ -348,11 +399,8 @@ const model_compile_error_cases = [_]CompileErrorCase{
     .{ .file = "record_optional_domain.zig", .expected = "type 'optional_integer': domain types must be non-optional; use field 'nullable'" },
     .{ .file = "system_optional_domain.zig", .expected = "type 'optional_integer': domain types must be non-optional; use field 'nullable'" },
     .{ .file = "system_row_unknown_entity.zig", .expected = "system: unknown entity 'missing'" },
-    .{ .file = "system_projection_unknown_field.zig", .expected = "entity 'things': projection field 'missing' is not a field of the entity" },
-    .{ .file = "system_projection_duplicate_field.zig", .expected = "entity 'things': duplicate projection field 'note'" },
     .{ .file = "system_rule_unknown_field.zig", .expected = "rule 'display': field 'missing' is not a field of the entity" },
     .{ .file = "system_rule_duplicate_field.zig", .expected = "rule 'display': duplicate field 'note'" },
-    .{ .file = "system_rule_unknown_name.zig", .expected = "entity 'things': unknown rule 'missing'" },
     .{ .file = "entity_rules_invalid.zig", .expected = "entity definition: 'rules' must be a struct of rule definitions" },
     .{ .file = "entity_rule_invalid.zig", .expected = "rule 'display': must be a struct with a 'fields' list" },
     .{ .file = "entity_rule_missing_fields.zig", .expected = "rule 'display': missing 'fields'" },

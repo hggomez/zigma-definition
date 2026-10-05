@@ -1,149 +1,97 @@
-# Object validators (named behavior)
+# Validadores de entidades concretas
 
-**Status:** not implemented. This is a viable shape, not a spec of current code.
+REST ya admite un validador tipado por entidad. El binding automático de las reglas
+nombradas en el contrato y su ejecución en WASM siguen pendientes. Son mecanismos
+distintos: declarar una entrada en `rules` no registra una función.
 
-Defs stay serializable data. A validator is a **behavior referenced by name**, with the
-function registered apart — the same rule as [zigma.md](zigma.md) and the README
-(behaviors are never a `fn` field on the entity). Both generators that accept a row
-(WASM and HTTP) can look that name up and call the implementation after they already
-have a typed instance.
+## Registro REST implementado
 
-This is input validation of **one object** (one row). It is not a Zig constructor, and
-it is not a check against the rest of the store.
-
----
-
-## The split: role name vs implementation
-
-Give the behavior a **reserved role name** that both generators know, for example
-`validate`. That name is the contract: “if this entity has an object validator, this
-is how you find it.”
-
-The function itself lives in a **registry on `system`**, keyed by entity name, next to
-the existing optional `seeds`:
+La aplicación publica tipos concretos desde sus definiciones, por ejemplo
+`Docente = zigma.Entity(type_defs, docente_def)`. La lógica de negocio recibe ese
+tipo; el adaptador REST traduce el resultado al formato de violación público:
 
 ```zig
-// system.zig — illustrative, not in the tree
-pub const type_defs = aida.type_defs;
-pub const entity_defs = aida.entity_defs;
-pub const seeds = .{ /* ... */ };
-
-pub const validators = .{
-    .clases = validateClase, // fn (row: ClaseRow) ValidateError!void
-};
-```
-
-An entity with no entry is valid: no extra check. Same idea as `widgets.js` (`domain
-type → { make, read }`): the page looks up a widget by type name; here WASM and HTTP
-look up a validator by entity name. Unknown → skip.
-
-`zigma` does not import the registry. Generators import `system` already.
-
----
-
-## Why it fits the core
-
-`defineEntity` only accepts `fields`, `pk`, `fks`, `uks`. A `fn` on the Def would be
-rejected today and would break serializability.
-
-A **string** on the Def (`validate = "check_clase"`) is optional later (DevXP: fail at
-declaration if the name is missing from the registry). It is not required for the
-approach to work. The generators can treat `system.validators` as a convention, the
-way they already treat `system.seeds`, with **no change** to `src/core/zigma.zig`.
-
-`TypeDef` stays `{ .Type = T }`. Field defs stay type / label / nullable / is_name /
-description. Schema checks (`record`, `defineEntity`, `defineEntities`) keep validating
-the description, not row values.
-
----
-
-## Call sites (already there)
-
-Both sides build a `RecordInstanceType` and then accept the row. That is the hook:
-parse → **validate** → accept.
-
-| Path | After | On failure |
-| --- | --- | --- |
-| WASM `build_row` / `create_row` | `parseFieldValue` into the entity’s row in `buildRowJson` | return 0; `error_buf` (Post and Save both go through `build_row`) |
-| HTTP `POST /{entity}` | `parseFromSlice(Row, body)` | `400 {"status":"invalid"}` (already used for bad JSON) |
-| HTTP `PUT /{entity}?pk` | same parse, after pk match | same |
-
-Dispatch is the same `inline for` over entity names both files already use:
-`@hasField(system.validators, name)` then call with the typed row.
-
-`GET` and `DELETE` do not build a new object; they do not call this. JSON stringify
-does not call it.
-
-Seeds and tests that write a struct literal (`DefinedType(alumno){ ... }`) **will not**
-run it unless those paths call the same function. `RecordInstanceType` remains a plain
-struct. The generators are the constructor-like boundary, not Zig’s `.{ }`.
-
----
-
-## What a validator may do
-
-**Viable on both WASM and HTTP** (same Zig `fn`, compiled twice):
-
-- Checks on **one row**: ranges, combinations of fields, “this `fecha` is a real date”,
-  format rules that are not the Zig type.
-- Freestanding-safe code: no filesystem, no HTTP, no process. WASM is
-  `wasm32-freestanding`.
-- Failure as `error` plus a **static** message string (WASM has a fixed `error_buf`,
-  not a general allocator for messages).
-
-**Not viable as a shared check** (backend has the lists; WASM only has the row being
-edited):
-
-- Uniqueness, “this pk already exists”, FK existence, “does this `alumno` exist”.
-  Those can run on HTTP only, or WASM must be given that data. They are a different
-  behavior, not this one.
-
----
-
-## Signature (sketch)
-
-Per entity, the row type is different, so the registry cannot be one `fn (anytype)`
-value. Each entry is a function of that entity’s `RecordInstanceType`. Generators
-pick it at comptime by entity name.
-
-Something in this family is enough:
-
-```zig
-const ValidateError = error{ InvalidRow };
-
-fn validateClase(row: zigma.RecordInstanceType(type_defs, clase.fields)) ValidateError!void {
-    if (row.orden < 1) return error.InvalidRow;
-    // ...
+fn validateDocenteBusinessRules(value: aida.Docente) ?rest.BusinessRuleViolation {
+    aida.validarDocente(value) catch return .{
+        .code = "teorico_requires_five_years_experience",
+        .message = "A docente with cargo 'teorico' requires at least 5 years of experiencia",
+    };
+    return null;
 }
+
+const validators = rest.defineBusinessValidators(aida.Model, .{
+    .docentes = rest.BusinessValidator(aida.Docente){
+        .validate = validateDocenteBusinessRules,
+    },
+});
+const Api = rest.Api(aida.Model, codecs, validators);
 ```
 
-Returning `error{InvalidRow}` is enough if the generator supplies a generic message.
-Returning a static `[]const u8` (or writing into a caller-provided buffer) is better
-if the UI should show why. Do not return allocated strings unless the caller passes
-an allocator — HTTP has one; WASM today does not on this path.
+`BusinessValidator(T)` contiene `validate: *const fn (T) ?BusinessRuleViolation`.
+El registro exige exactamente el tipo `BusinessValidator(Model.Row(entity))`:
+rechaza una entidad desconocida, otra entidad como entrada, un struct manual de
+igual forma o una firma incompatible. Una entidad omitida no tiene validador;
+`Api(Model, codecs, .{})` conserva el CRUD sin reglas de negocio.
 
----
+Los validadores son funciones locales y síncronas. Reciben una fila completa,
+incluidos sus opcionales, y devuelven null o una violación con `code` y `message`.
+No reciben JSON, celdas de PostgreSQL ni una conexión de base de datos.
 
-## Core vs generators
+## Conversión y ejecución
 
-| Piece | Role |
+La frontera del repositorio sigue siendo textual. REST completa el estado y
+reutiliza `postgresToJson` de cada dominio para formar un `std.json.Value` en
+memoria. `std.json.parseFromValueLeaky` materializa `Model.Row(entity)`, que es el
+mismo tipo concreto registrado. No se serializa un documento JSON intermedio.
+SQL NULL se maneja fuera de los codecs; el texto `"null"` conserva su significado.
+`Fecha` mantiene su representación JSON como objeto y su almacenamiento ISO.
+
+| Operación | Comportamiento |
 | --- | --- |
-| `zigma` | Unchanged, or later an optional string on the entity Def. Does not store or call `fn`s. |
-| `system.validators` | Implementations, keyed by entity name. Optional, like `seeds`. |
-| WASM `buildRowJson` | Call after a typed row exists, before stringify / `js_send_post`. |
-| HTTP POST/PUT | Call after a typed row exists, before append / replace. |
-| `widgets.js` | Unrelated: DOM for a **domain type**. Validators are Zig, for an **entity**. |
+| POST | Completa nullable omitidos con null, construye la entidad, valida e inserta. |
+| PUT | Selecciona las filas actuales, combina los campos enviados con cada fila, valida todos los resultados y después actualiza. |
+| GET y DELETE | No ejecutan validadores de negocio. |
+| Entidad sin validador | No agrega conversión para validación ni SELECT preparatorio de PUT. |
 
-Teaching the name to `zigma` is DevXP, not a viability requirement. If the Def gains a
-string, `defineEntities` still should not import implementations; the mismatch check
-belongs where the registry is assembled (`system`), same as fk targets being strings
-until the whole map of entities is known.
+Una violación devuelve HTTP 422 y evita la escritura. Un resultado de repositorio
+malformado o una conversión incompatible produce un HTTP 500 sanitizado.
+`OutOfMemory` de la conversión se propaga. La arena de solicitud conserva las
+reservas temporales y los resultados del repositorio se liberan también en errores.
+La fila se presta durante la llamada: la función no debe retener sus referencias.
+Los mensajes pueden ser literales estáticos; el callback no recibe un allocator.
 
----
+La secuencia SELECT → validación → UPDATE conserva su comportamiento actual y no
+agrega garantías transaccionales frente a escrituras concurrentes.
 
-## Summary
+## Reglas descriptivas y tipos de datos
 
-Object validation is a reserved behavior name, implementations in `system`, called from
-WASM and the backend after parse and before accept. It covers per-row rules. It does
-not replace typed parse, does not run on struct literals by itself, and does not see
-other rows unless a later, separate hook is designed for that.
+`Entity` valida definiciones con `fields`, `pk`, `fks`, `uks` y `rules`. Cada regla
+puede declarar dependencias serializables, por ejemplo:
+
+```zig
+.rules = .{
+    .docente_experience = .{ .fields = .{ "cargo", "experiencia" } },
+},
+```
+
+El núcleo comprueba los nombres de campos y las dependencias repetidas. Conserva
+el orden en `Model.info`, sin funciones ni tipos Zig dentro de los metadatos.
+Estas reglas no se incluyen en DDL ni snapshots PostgreSQL: modificarlas no crea
+una migración. Actualmente no se relacionan automáticamente con el registro REST.
+
+El registro `.Type` + `.definition` asocia entidades concretas con sus definiciones;
+no asocia implementaciones de reglas. Los seeds y literales Zig tampoco ejecutan
+validación automáticamente. `Entity` y `RecordInstanceType` generan tipos de datos;
+el consumidor decide cuándo llamar a una función de negocio.
+
+## Integraciones futuras
+
+Un binding por nombre podría exigir una implementación para cada regla declarada y
+comprobar su firma en compilación. La ejecución en WASM podría reutilizar funciones
+locales después de construir una fila tipada. Ninguno de esos mecanismos está
+implementado: `system.validators` no es parte del contrato actual del frontend.
+
+Las reglas compartibles son las que dependen de una sola fila, como rangos o
+combinaciones de campos. Unicidad y existencia de FK dependen del almacenamiento y
+siguen siendo responsabilidad de la base de datos. Los widgets pertenecen a los
+dominios de la interfaz y no sustituyen validadores de entidades.

@@ -29,7 +29,7 @@ pub const Merged = records.Merged;
 pub const merge = records.merge;
 
 // Entidades: claves, relaciones y metadatos de reglas.
-pub const defineEntity = entities.defineEntity;
+pub const Entity = entities.Entity;
 pub const extractPk = entities.extractPk;
 pub const mergePk = entities.mergePk;
 pub const completeEntity = entities.completeEntity;

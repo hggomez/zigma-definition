@@ -161,7 +161,12 @@ const zigma = b.dependency("zigma_definition", .{}).module("zigma");
 exe.root_module.addImport("zigma", zigma);
 ```
 
-Generate backend + frontend from a `system` file (`type_defs` + `entity_defs`):
+Generate backend + frontend from a `system` file (`type_defs` + `entity_defs`).
+
+`entity_defs` es el registro de asociaciones `.Type` + `.definition` validado por
+`zigma.defineEntities`. El contrato AIDA expone esos tipos como `Docente`, `Curso`, etc.;
+los seeds usan arrays de los mismos tipos. El consumidor sigue inyectando las dos
+propiedades habituales, sin necesitar exponer un `Model` adicional:
 
 ```zig
 const zigma_def = b.dependency("zigma_definition", .{});

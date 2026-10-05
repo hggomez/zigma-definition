@@ -1,5 +1,5 @@
-//! Injected `system` for generators: aida Defs plus optional demo seeds.
-//! Generators require `type_defs` and `entity_defs`; `seeds` is optional.
+//! Contrato AIDA inyectado en los generadores, con seeds opcionales de demostración.
+//! Los generadores requieren type_defs y entity_defs; los seeds usan tipos de entidad.
 
 const aida = @import("aida");
 
@@ -10,16 +10,16 @@ pub const seeds = blk: {
     // Todos los tipos de los seeds se generan en una misma evaluación comptime.
     @setEvalBranchQuota(1_000_000);
     break :blk .{
-        .periodos = [_]aida.DefinedType(aida.periodo){
+        .periodos = [_]aida.Periodo{
             .{ .periodo = "1C2024" },
             .{ .periodo = "2C2024" },
         },
-        .materias = [_]aida.DefinedType(aida.materia){
+        .materias = [_]aida.Materia{
             .{ .materia = "AlgoI", .denominacion = "Algoritmos y Programacion I" },
             .{ .materia = "AlgoII", .denominacion = "Algoritmos y Programacion II" },
             .{ .materia = "BD", .denominacion = "Bases de Datos" },
         },
-        .docentes = [_]aida.DefinedType(aida.docente){
+        .docentes = [_]aida.Docente{
             .{
                 .docente = "1",
                 .apellido = "Perez",
@@ -45,15 +45,15 @@ pub const seeds = blk: {
                 .esImportador = null,
             },
         },
-        .alumnos = [_]aida.DefinedType(aida.alumno){
+        .alumnos = [_]aida.Alumno{
             .{ .alumno = "123", .apellido = "Garcia", .nombres = "Maria", .email = "maria@example.com" },
             .{ .alumno = "456", .apellido = "Lopez", .nombres = "Juan", .email = "juan@example.com" },
         },
-        .cursos = [_]aida.DefinedType(aida.curso){
+        .cursos = [_]aida.Curso{
             .{ .periodo = "1C2024", .materia = "AlgoI", .docente = "1" },
             .{ .periodo = "2C2024", .materia = "AlgoII", .docente = "2" },
         },
-        .clases = [_]aida.DefinedType(aida.clase){
+        .clases = [_]aida.Clase{
             .{
                 .periodo = "1C2024",
                 .materia = "AlgoI",
@@ -69,7 +69,7 @@ pub const seeds = blk: {
                 .tema = "recursion",
             },
         },
-        .preguntas = [_]aida.DefinedType(aida.pregunta){
+        .preguntas = [_]aida.Pregunta{
             .{
                 .periodo = "1C2024",
                 .materia = "AlgoI",
@@ -89,7 +89,7 @@ pub const seeds = blk: {
                 .tipo_respuesta = "texto",
             },
         },
-        .opciones = [_]aida.DefinedType(aida.opcion){
+        .opciones = [_]aida.Opcion{
             .{
                 .periodo = "1C2024",
                 .materia = "AlgoI",
@@ -107,15 +107,15 @@ pub const seeds = blk: {
                 .detalle = "Un lenguaje de programacion",
             },
         },
-        .inscripciones = [_]aida.DefinedType(aida.inscripcion){
+        .inscripciones = [_]aida.Inscripcion{
             .{ .periodo = "1C2024", .materia = "AlgoI", .alumno = "123" },
             .{ .periodo = "1C2024", .materia = "AlgoI", .alumno = "456" },
         },
-        .presencias = [_]aida.DefinedType(aida.presencia){
+        .presencias = [_]aida.Presencia{
             .{ .periodo = "1C2024", .materia = "AlgoI", .alumno = "123", .orden = 1 },
             .{ .periodo = "1C2024", .materia = "AlgoI", .alumno = "456", .orden = 1 },
         },
-        .mesas = [_]aida.DefinedType(aida.mesa){
+        .mesas = [_]aida.Mesa{
             .{
                 .periodo = "1C2024",
                 .materia = "AlgoI",

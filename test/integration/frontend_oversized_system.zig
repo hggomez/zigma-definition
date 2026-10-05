@@ -8,11 +8,12 @@ const long_label = blk: {
 };
 
 pub const type_defs = zigma.common_type_defs;
-pub const entity_defs = .{
-    .items = zigma.defineEntity(.{
-        .fields = zigma.record(type_defs, .{
-            .id = .{ .type = "text", .label = &long_label },
-        }),
-        .pk = .{"id"},
+const item_def = .{
+    .fields = zigma.record(type_defs, .{
+        .id = .{ .type = "text", .label = &long_label },
     }),
+    .pk = .{"id"},
+};
+pub const entity_defs = .{
+    .items = .{ .Type = zigma.Entity(type_defs, item_def), .definition = item_def },
 };

@@ -97,7 +97,24 @@ fi
 
 request --request POST --header 'content-type: application/json' \
     --data '{"docente":"d1","nombres":"Ada"}' "$base_url/docentes"
-expect_response 201 '{"docente":"d1","apellido":null,"nombres":"Ada","cargo":null,"email":null,"email_alternativo":null,"jefe":null,"telefono":null,"experiencia":null}'
+expect_response 201 '{"docente":"d1","apellido":null,"nombres":"Ada","cargo":null,"email":null,"email_alternativo":null,"jefe":null,"telefono":null,"experiencia":null,"esImportador":null}'
+
+# La regla concreta se ejecuta antes de escribir, también con valores de libpq.
+request --request POST --header 'content-type: application/json' \
+    --data '{"docente":"d2","nombres":"Grace","cargo":"teorico","experiencia":4}' "$base_url/docentes"
+expect_response 422 '{"error":{"code":"teorico_requires_five_years_experience","message":"A docente with cargo '\''teorico'\'' requires at least 5 years of experiencia"}}'
+request "$base_url/docentes?docente=d2"
+expect_response 200 '[]'
+
+request --request PUT --header 'content-type: application/json' \
+    --data '{"cargo":"teorico","experiencia":5,"esImportador":false}' "$base_url/docentes?docente=d1"
+expect_response 200 '[{"docente":"d1","apellido":null,"nombres":"Ada","cargo":"teorico","email":null,"email_alternativo":null,"jefe":null,"telefono":null,"experiencia":5,"esImportador":false}]'
+
+request --request PUT --header 'content-type: application/json' \
+    --data '{"experiencia":4}' "$base_url/docentes?docente=d1"
+expect_response 422 '{"error":{"code":"teorico_requires_five_years_experience","message":"A docente with cargo '\''teorico'\'' requires at least 5 years of experiencia"}}'
+request "$base_url/docentes?docente=d1"
+expect_response 200 '[{"docente":"d1","apellido":null,"nombres":"Ada","cargo":"teorico","email":null,"email_alternativo":null,"jefe":null,"telefono":null,"experiencia":5,"esImportador":false}]'
 
 request --request POST --header 'content-type: application/json' \
     --data '{"materia":"m1","denominacion":"Álgebra"}' "$base_url/materias"

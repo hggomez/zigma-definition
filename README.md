@@ -7,6 +7,13 @@ Esta es la guía de uso. La explicación del contrato, los módulos y las APIs e
 [DOCS.md](DOCS.md). El proyecto es un port de
 [system-definition](https://github.com/ari-dc-uba-ar/system-definition).
 
+En el contrato AIDA, `Docente`, `Curso` y las demás entidades son tipos Zig generados
+desde sus definiciones: pueden usarse directamente en funciones y colecciones.
+`Model.Row("docentes")` devuelve ese mismo `Docente`. La composición de record,
+definición, tipo y registro se explica en [DOCS.md](DOCS.md#entidades-definición-tipo-concreto-y-registro).
+REST utiliza esos tipos en los [validadores de negocio](docs/validators.md):
+`validarDocente(Docente)` recibe la fila completa antes de insertar o actualizar.
+
 ## Requisitos
 
 - Zig `0.17.0-dev.1818+7051f8e73`, según [build.zig.zon](build.zig.zon).

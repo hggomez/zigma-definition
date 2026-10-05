@@ -36,7 +36,7 @@ test "entity completion resolves PK nullability without changing shared records"
         .id = .{ .type = "integer", .nullable = true },
         .note = .{ .type = "text" },
     });
-    const entity = comptime zigma.defineEntity(.{ .pk = .{"id"}, .fields = fields });
+    const entity = .{ .pk = .{"id"}, .fields = fields };
     const record_info = zigma.completeRecord(fields);
     const entity_info = zigma.completeEntity(entity);
     try std.testing.expect(record_info.id.nullable);

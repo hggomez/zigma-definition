@@ -3,7 +3,7 @@
 const aida = @import("aida");
 
 comptime {
-    const titular: aida.DefinedType(aida.cargo) = .{
+    const titular: aida.Cargo = .{
         .cargo = "TIT",
         .denominacion = "Titular",
         .orden = 1,

@@ -1,5 +1,5 @@
-//! Minimal system used to prove generators consume Infos without knowing aida.
-//! Required `system` shape: `type_defs` and `entity_defs`.
+//! Contrato mínimo para probar generadores que no conocen AIDA.
+//! El módulo system expone type_defs y el registro entity_defs.
 
 const zigma = @import("zigma");
 
@@ -10,11 +10,13 @@ pub const item = zigma.record(type_defs, .{
     .nombre = .{ .type = "text" },
 });
 
-pub const items = zigma.defineEntity(.{
+pub const item_def = .{
     .pk = .{"id"},
     .fields = item,
-});
+};
+
+pub const Item = zigma.Entity(type_defs, item_def);
 
 pub const entity_defs = zigma.defineEntities(.{
-    .items = items,
+    .items = .{ .Type = Item, .definition = item_def },
 });

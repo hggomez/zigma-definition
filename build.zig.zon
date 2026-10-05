@@ -13,7 +13,7 @@
         "src",
         "examples",
         "db",
-        "tools",
+        "migration_tools",
         "test/integration",
         "README.md",
         "DOCS.md",

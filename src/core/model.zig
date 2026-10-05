@@ -1,6 +1,6 @@
 //! Composición del sistema: metadatos normalizados y tipos derivados de entidades.
 //! Reutiliza la validación y normalización de records.zig y entities.zig.
-//! Row, Projection, Patch, Filters y RuleInput consumen la misma información.
+//! Row, Patch y Filters consumen la misma información.
 
 const std = @import("std");
 const records = @import("records.zig");
@@ -17,30 +17,33 @@ fn DefaultValue(comptime T: type, comptime value: T) type {
     };
 }
 
-fn FrameworkInfo(comptime entity_defs: anytype) type {
+fn FrameworkInfo(comptime registrations: anytype) type {
     @setEvalBranchQuota(1_000_000);
-    const names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
+    const names = @typeInfo(@TypeOf(registrations)).@"struct".field_names;
     var types: [names.len]type = undefined;
-    for (names, 0..) |name, i| types[i] = entities.CompletedEntity(entities.defineEntity(@field(entity_defs, name)));
+    for (names, 0..) |name, i| types[i] = entities.CompletedEntity(@field(registrations, name).definition);
     const frozen = types;
     return @Struct(.auto, null, names, &frozen, &@splat(.{}));
 }
 
 /// Interpretación única del contrato. Los tipos Zig quedan en este namespace;
 /// `info` contiene solamente metadatos serializables para los consumidores.
-pub fn Framework(comptime type_defs: anytype, comptime entity_defs: anytype) type {
+pub fn Framework(comptime type_defs: anytype, comptime registrations: anytype) type {
     @setEvalBranchQuota(1_000_000);
     records.checkTypeDefs(type_defs);
+    entities.checkRegistrations(registrations);
+    for (@typeInfo(@TypeOf(registrations)).@"struct".field_names) |name| {
+        const registration = @field(registrations, name);
+        if (registration.Type != entities.Entity(type_defs, registration.definition))
+            @compileError("entity '" ++ name ++ "': registered Type does not match Entity(type_defs, definition)");
+    }
     const Model = struct {
-        pub const info: FrameworkInfo(entity_defs) = blk: {
+        pub const info: FrameworkInfo(registrations) = blk: {
             @setEvalBranchQuota(1_000_000);
-            var result: FrameworkInfo(entity_defs) = undefined;
-            for (@typeInfo(@TypeOf(entity_defs)).@"struct".field_names) |name| {
-                const entity = entities.defineEntity(@field(entity_defs, name));
-                records.checkRecord(type_defs, entity.fields);
-                @field(result, name) = entities.completeEntity(entity);
+            var result: FrameworkInfo(registrations) = undefined;
+            for (@typeInfo(@TypeOf(registrations)).@"struct".field_names) |name| {
+                @field(result, name) = entities.completeEntity(@field(registrations, name).definition);
             }
-            entities.checkEntities(result);
             break :blk result;
         };
 
@@ -55,21 +58,7 @@ pub fn Framework(comptime type_defs: anytype, comptime entity_defs: anytype) typ
 
         /// Fila completa sin defaults; las PK son obligatorias aunque el record admita null.
         pub fn Row(comptime entity: []const u8) type {
-            const fields = entityInfo(entity).fields;
-            return records.selectedType(type_defs, fields, @typeInfo(@TypeOf(fields)).@"struct".field_names);
-        }
-
-        /// Selección de campos en el orden pedido.
-        pub fn Projection(comptime entity: []const u8, comptime names: anytype) type {
-            const fields = entityInfo(entity).fields;
-            for (names, 0..) |name, i| {
-                if (!@hasField(@TypeOf(fields), name))
-                    @compileError("entity '" ++ entity ++ "': projection field '" ++ name ++ "' is not a field of the entity");
-                for (0..i) |j| {
-                    if (name_lists.eql(name, names[j])) @compileError("entity '" ++ entity ++ "': duplicate projection field '" ++ name ++ "'");
-                }
-            }
-            return records.selectedType(type_defs, fields, names);
+            return @field(registrations, checkedEntity(entity)).Type;
         }
 
         /// Modificación parcial: omitir un campo es distinto de asignarle null.
@@ -110,14 +99,8 @@ pub fn Framework(comptime type_defs: anytype, comptime entity_defs: anytype) typ
             const frozen_attrs = attrs;
             return @Struct(.auto, null, names, &frozen_types, &frozen_attrs);
         }
-
-        pub fn RuleInput(comptime entity: []const u8, comptime rule: []const u8) type {
-            const rules = entityInfo(entity).rules;
-            if (!@hasField(@TypeOf(rules), rule)) @compileError("entity '" ++ entity ++ "': unknown rule '" ++ rule ++ "'");
-            return Projection(entity, @field(rules, rule).fields);
-        }
     };
-    // Dicha asignacion Fuerza la validación aun cuando todavía no se solicite ningún tipo generado.
+    // Fuerza la normalización aun cuando todavía no se solicite ningún tipo derivado.
     _ = Model.info;
     return Model;
 }

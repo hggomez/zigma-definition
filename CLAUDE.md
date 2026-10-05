@@ -29,10 +29,11 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 
 * `README.md`: guía de uso, arranque de AIDA, migraciones y tests.
 * `DOCS.md`: referencia del contrato, arquitectura y APIs del framework.
-* `docs/`: guías de build, ejecución del ejemplo, frontend, vocabulario y diseño de validadores.
+* `docs/`: guías de build, ejecución del ejemplo, frontend, vocabulario, validadores REST tipados y bindings de reglas pendientes.
 * `src/core/zigma.zig`: entrada pública del descriptor y modelo normalizado (módulo
   `zigma`). Reexporta `records.zig` (dominios, campos y records), `entities.zig`
-  (claves, relaciones y reglas declaradas) y `model.zig` (`Framework` y tipos derivados).
+  (tipos concretos `Entity`, claves, relaciones y reglas declaradas) y `model.zig`
+  (`Framework`, registro de tipos y tipos derivados).
   `names.zig` contiene los helpers internos de nombres. El núcleo no conoce ningún
   sistema concreto ni importa generadores; `docs/zigma.md` explica cómo recorrerlo.
 * `src/json.zig`: catálogo basado en `Model`, serialización con `std.json` y parsing
@@ -44,7 +45,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `src/frontend/`: cliente WASM genérico que consume el mismo contrato `system`.
 * `src/rest/api.zig`: entrada pública de `zigma_rest`, rutas y coordinación CRUD.
   Reexporta los tipos compartidos de `types.zig`, los codecs de `codecs.zig` y el registro
-  de validadores de `validation.zig`. Delega parsing a `request.zig` y respuestas a
+  de validadores de `validation.zig`, que convierte filas textuales a entidades concretas
+  antes de llamar a la lógica de negocio. Delega parsing a `request.zig` y respuestas a
   `response.zig`; estos archivos no conocen sockets ni conexiones PostgreSQL.
 * `src/rest/std_http.zig`: servidor secuencial de referencia (módulo `zigma_std_http`).
 * `src/postgres/ddl.zig`: generación comptime del DDL inicial (módulo
@@ -73,10 +75,10 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `test/integration/postgres_bootstrap.zig`: auxiliar de las integraciones DDL/REST que
   usa los mappings PostgreSQL de AIDA; no tiene comando público de arranque.
 * `db/`: snapshot aceptado, baseline/changesets inmutables y directorio del único draft.
-* `tools/postgres_migration_tool.zig`: workflow de init/check/draft/accept-files.
-* `tools/apply_migrations.zig`: aplica el historial aceptado y termina sin iniciar HTTP;
+* `migration_tools/postgres_migration_tool.zig`: workflow de init/check/draft/accept-files.
+* `migration_tools/apply_migrations.zig`: aplica el historial aceptado y termina sin iniciar HTTP;
   se ejecuta mediante `zig build apply-migrations` y también desde `test-migrations`.
-* `tools/postgres_schema_validator.zig`: comparación SSOT↔`pg_catalog` en un schema esperado
+* `migration_tools/postgres_schema_validator.zig`: comparación SSOT↔`pg_catalog` en un schema esperado
   temporal; se usa al aceptar migraciones y en las integraciones PostgreSQL.
 * `build.zig`: opciones generales, conexiones del grafo y API pública del build.
 * `build/modules.zig`: módulos publicados e imports compartidos; configuración de libpq.
@@ -132,12 +134,16 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   (los chequeos son comptime), no un `any`: Zig no permite declarar la cota del genérico
   en la firma, la cota se impone con estos chequeos.
 * De la definición se derivan los tipos estáticos con funciones comptime
-  (`RecordInstanceType`, `RecordInfoOf`, etc.): los campos se escriben una sola vez.
+  (`Entity`, `RecordInstanceType`, `RecordInfoOf`, etc.): los campos se escriben una sola vez.
+  `Entity(type_defs, definition)` devuelve un struct de datos sin defaults ni metadatos.
+  El registro asocia nombres plurales con `.Type` y `.definition`; `Framework` comprueba
+  la identidad exacta y `Model.Row` devuelve el tipo registrado. Records y definiciones
+  siguen siendo valores descriptivos; `Model.info` no contiene tipos Zig.
 * Def → Info: `completeRecord` / `completeEntity` explicitan todos los defaults
   (`is_name: false`, `nullable: true`, label derivado del nombre con `_`→espacio,
   fks siempre en forma de mapa origen→destino, pk deduplicada).
 * Las fks referencian la entidad destino **por nombre** (string): serializable y permite
-  fks circulares y reflexivas. Chequeo local en `defineEntity` (campos origen, pk, uks);
+  fks circulares y reflexivas. Chequeo local en `Entity` (campos origen, pk, uks y reglas);
   chequeo global en `defineEntities` (entidad destino existe, campos destino son su pk
   completa o una de sus uks). Los errores son `@compileError` con mensajes diseñados.
 * En vez del spread de TypeScript: `zigma.merge(.{a, b})` para records y colecciones de

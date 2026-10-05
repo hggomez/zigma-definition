@@ -15,29 +15,12 @@ fn nameListSlice(comptime list: anytype) []const [:0]const u8 {
     return names;
 }
 
-fn lenOfListType(comptime T: type) usize {
-    return switch (@typeInfo(T)) {
-        .array => |a| a.len,
-        .@"struct" => |s| if (s.is_tuple) s.field_names.len else @compileError("expected a list of names"),
-        else => @compileError("expected a list of names"),
-    };
-}
-
-fn normalizedPk(comptime pk: anytype) [lenOfListType(@TypeOf(pk))][:0]const u8 {
-    var result: [lenOfListType(@TypeOf(pk))][:0]const u8 = undefined;
-    comptime var i: usize = 0;
-    inline while (i < pk.len) : (i += 1) {
-        result[i] = pk[i];
-    }
-    return result;
-}
-
 /// Las FKs referencian la entidad destino POR NOMBRE: un string, no el objeto.
 /// Así las definiciones son serializables y se pueden representar FKs circulares
 /// y reflexivas. A cambio, el destino solo se puede comprobar a nivel de sistema:
 /// ver `defineEntities`.
 /// `fields` tiene dos formas: una lista cuando los campos de origen y destino
-/// se llaman igual (`.fields = cursos.pk`), o un mapa origen→destino si difieren
+/// se llaman igual (`.fields = curso_def.pk`), o un mapa origen→destino si difieren
 /// (`.fields = .{ .jefe = "docente" }`).
 fn checkFkDef(comptime fk: anytype, comptime fk_name: []const u8, comptime fields: anytype) void {
     const FkType = @TypeOf(fk);
@@ -92,47 +75,39 @@ fn checkEntityDef(comptime def: anytype) void {
     }
 }
 
-fn DefinedEntity(comptime Def: type) type {
-    return struct {
-        fields: @FieldType(Def, "fields"),
-        pk: [lenOfListType(@FieldType(Def, "pk"))][:0]const u8,
-        fks: (if (@hasField(Def, "fks")) @FieldType(Def, "fks") else @TypeOf(.{})),
-        uks: (if (@hasField(Def, "uks")) @FieldType(Def, "uks") else @TypeOf(.{})),
-        rules: (if (@hasField(Def, "rules")) @FieldType(Def, "rules") else @TypeOf(.{})),
-    };
+fn collection(comptime definition: anytype, comptime name: []const u8) @TypeOf(if (@hasField(@TypeOf(definition), name)) @field(definition, name) else .{}) {
+    return if (@hasField(@TypeOf(definition), name)) @field(definition, name) else .{};
 }
 
-/// Nivel contenedor: una entidad es la unidad representable como una grilla.
-/// Comprueba lo local a la entidad: que PK, UK y campos origen de FK existan
-/// en `fields`. `defineEntities` comprueba el destino de las FKs.
-/// En runtime es esencialmente la identidad: solo normaliza la PK y
-/// completa FKs, UKs y reglas omitidas con colecciones vacías.
-pub fn defineEntity(comptime def: anytype) DefinedEntity(@TypeOf(def)) {
-    comptime checkEntityDef(def);
-    return .{
-        .fields = def.fields,
-        .pk = normalizedPk(def.pk),
-        .fks = if (@hasField(@TypeOf(def), "fks")) def.fks else .{},
-        .uks = if (@hasField(@TypeOf(def), "uks")) def.uks else .{},
-        .rules = if (@hasField(@TypeOf(def), "rules")) def.rules else .{},
-    };
+/// Tipo concreto de fila, utilizable sin construir un Framework.
+/// Comprueba dominios y restricciones locales; los destinos de FK se validan
+/// al registrar las entidades. Solo contiene datos, sin defaults ni metadatos.
+pub fn Entity(comptime type_defs: anytype, comptime definition: anytype) type {
+    @setEvalBranchQuota(1_000_000);
+    records.checkTypeDefs(type_defs);
+    const info = completeEntity(definition);
+    records.checkRecord(type_defs, definition.fields);
+    return records.selectedType(type_defs, info.fields, @typeInfo(@TypeOf(info.fields)).@"struct".field_names);
 }
 
 fn ExtractedPk(comptime entity: anytype) type {
-    var types: [entity.pk.len]type = undefined;
-    for (entity.pk, 0..) |name, i| {
+    checkEntityDef(entity);
+    const names = PkMerge(.{entity.pk}).names;
+    var types: [names.len]type = undefined;
+    for (names, 0..) |name, i| {
         types[i] = @TypeOf(@field(entity.fields, name));
     }
     const frozen = types;
-    return @Struct(.auto, null, &entity.pk, &frozen, &@splat(.{}));
+    return @Struct(.auto, null, names, &frozen, &@splat(.{}));
 }
 
 /// Campos PK de una entidad como definición de record, para heredarlos en otra
 /// entidad con `merge`: la repetición semántica útil del documento SSOTIGAD.
-/// Ejemplo: `merge(.{ extractPk(cursos), .{ .orden = ... } })`.
+/// Recibe la definición descriptiva, conservando la nulabilidad del record.
+/// Ejemplo: `merge(.{ extractPk(curso_def), .{ .orden = ... } })`.
 pub fn extractPk(comptime entity: anytype) ExtractedPk(entity) {
     var result: ExtractedPk(entity) = undefined;
-    inline for (entity.pk) |name| {
+    inline for (PkMerge(.{entity.pk}).names) |name| {
         @field(result, name) = @field(entity.fields, name);
     }
     return result;
@@ -161,7 +136,7 @@ fn PkMerge(comptime pks: anytype) type {
 
 /// Une PKs que pueden solaparse, sin repetir nombres y conservando el orden
 /// de primera aparición. Sirve para PKs combinadas como
-/// `mergePk(.{ inscripciones.pk, clases.pk })`; para los campos, `merge`
+/// `mergePk(.{ inscripcion_def.pk, clase_def.pk })`; para los campos, `merge`
 /// ya elimina por sí mismo las claves duplicadas.
 /// Se escribe `PkMerge(pks).names` en vez de usar una función auxiliar: acceder
 /// a una declaración es comptime-known incluso en contexto runtime,
@@ -247,12 +222,13 @@ fn completeFks(comptime fks: anytype) CompletedFksType(fks) {
 }
 
 pub fn CompletedEntity(comptime entity: anytype) type {
+    checkEntityDef(entity);
     return struct {
         fields: records.RecordInfoOf(@TypeOf(entity.fields)),
         pk: [PkMerge(.{entity.pk}).names.len][:0]const u8,
-        fks: CompletedFksType(entity.fks),
-        uks: @TypeOf(entity.uks),
-        rules: RulesInfo(@TypeOf(entity.rules)),
+        fks: CompletedFksType(collection(entity, "fks")),
+        uks: @TypeOf(collection(entity, "uks")),
+        rules: RulesInfo(@TypeOf(collection(entity, "rules"))),
     };
 }
 
@@ -267,9 +243,9 @@ pub fn completeEntity(comptime entity: anytype) CompletedEntity(entity) {
     return .{
         .fields = fields,
         .pk = mergePk(.{entity.pk}),
-        .fks = completeFks(entity.fks),
-        .uks = entity.uks,
-        .rules = completeRules(entity.rules),
+        .fks = completeFks(collection(entity, "fks")),
+        .uks = collection(entity, "uks"),
+        .rules = completeRules(collection(entity, "rules")),
     };
 }
 
@@ -289,14 +265,36 @@ fn fkMatchesTargetKey(comptime target_fields: anytype, comptime target: anytype)
     return false;
 }
 
-pub fn checkEntities(comptime entity_defs: anytype) void {
-    inline for (@typeInfo(@TypeOf(entity_defs)).@"struct".field_names) |entity_name| {
-        const entity = @field(entity_defs, entity_name);
+/// Comprueba primero la forma de todas las asociaciones y luego sus relaciones.
+/// Así una referencia circular no exige construir los tipos recursivamente.
+pub fn checkRegistrations(comptime registrations: anytype) void {
+    @setEvalBranchQuota(1_000_000);
+    const info = @typeInfo(@TypeOf(registrations));
+    if (info != .@"struct" or (info.@"struct".is_tuple and info.@"struct".field_names.len != 0))
+        @compileError("entity registrations must be a struct keyed by entity name");
+    inline for (info.@"struct".field_names) |name| {
+        const registration = @field(registrations, name);
+        const Registration = @TypeOf(registration);
+        const registration_info = @typeInfo(Registration);
+        if (registration_info != .@"struct" or (registration_info.@"struct".is_tuple and registration_info.@"struct".field_names.len != 0))
+            @compileError("entity '" ++ name ++ "': registration must be a struct with 'Type' and 'definition'");
+        inline for (registration_info.@"struct".field_names) |property| {
+            if (!name_lists.eql(property, "Type") and !name_lists.eql(property, "definition"))
+                @compileError("entity '" ++ name ++ "': unknown registration property '" ++ property ++ "'");
+        }
+        if (!@hasField(Registration, "Type")) @compileError("entity '" ++ name ++ "': registration is missing 'Type'");
+        if (!@hasField(Registration, "definition")) @compileError("entity '" ++ name ++ "': registration is missing 'definition'");
+        if (@TypeOf(registration.Type) != type) @compileError("entity '" ++ name ++ "': registration 'Type' must be a Zig type");
+        checkEntityDef(registration.definition);
+    }
+    inline for (info.@"struct".field_names) |entity_name| {
+        const entity = completeEntity(@field(registrations, entity_name).definition);
         inline for (@typeInfo(@TypeOf(entity.fks)).@"struct".field_names) |fk_name| {
             const fk = @field(entity.fks, fk_name);
-            if (!@hasField(@TypeOf(entity_defs), fk.entity))
+            if (!@hasField(@TypeOf(registrations), fk.entity))
                 @compileError("entity '" ++ entity_name ++ "', fk '" ++ fk_name ++ "': unknown target entity '" ++ fk.entity ++ "'");
-            const matches = fkMatchesTargetKey(fkTargetNames(fk), @field(entity_defs, fk.entity));
+            const target = completeEntity(@field(registrations, fk.entity).definition);
+            const matches = fkMatchesTargetKey(fkTargetNames(fk), target);
             if (!matches)
                 @compileError("entity '" ++ entity_name ++ "', fk '" ++ fk_name ++ "': target fields do not match the complete pk nor any uk of entity '" ++ fk.entity ++ "'");
         }
@@ -305,10 +303,11 @@ pub fn checkEntities(comptime entity_defs: anytype) void {
 
 /// Nivel de sistema, donde se conocen todas las entidades: cada FK debe apuntar
 /// a una entidad del sistema y sus campos destino deben ser la PK completa
-/// o una de sus UKs. Devuelve las entidades sin cambios.
-pub fn defineEntities(comptime entity_defs: anytype) @TypeOf(entity_defs) {
-    comptime checkEntities(entity_defs);
-    return entity_defs;
+/// o una de sus UKs. Devuelve el registro de Type + definition sin cambios.
+/// Framework comprueba además la identidad del tipo según sus type_defs.
+pub fn defineEntities(comptime registrations: anytype) @TypeOf(registrations) {
+    comptime checkRegistrations(registrations);
+    return registrations;
 }
 
 fn checkRules(comptime rules: anytype, comptime fields: anytype) void {

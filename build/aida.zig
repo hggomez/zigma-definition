@@ -26,7 +26,7 @@ pub fn addSteps(
     const migration_tool = b.addExecutable(.{
         .name = "postgres-migration-tool",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/postgres_migration_tool.zig"),
+            .root_source_file = b.path("migration_tools/postgres_migration_tool.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -127,7 +127,7 @@ pub fn addSteps(
     const schema_validator = b.addExecutable(.{
         .name = "postgres-schema-validator",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/postgres_schema_validator.zig"),
+            .root_source_file = b.path("migration_tools/postgres_schema_validator.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -140,7 +140,7 @@ pub fn addSteps(
     const migration_applier = b.addExecutable(.{
         .name = "apply-migrations",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("tools/apply_migrations.zig"),
+            .root_source_file = b.path("migration_tools/apply_migrations.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -160,7 +160,7 @@ pub fn addSteps(
 
     // Verifica el borrador antes de incorporarlo al historial aceptado.
     const accept_migration = b.addSystemCommand(&.{"sh"});
-    accept_migration.addFileArg(b.path("tools/accept_migration.sh"));
+    accept_migration.addFileArg(b.path("migration_tools/accept_migration.sh"));
     accept_migration.addArtifactArg(migration_tool);
     accept_migration.addArtifactArg(schema_validator);
     accept_migration.addArg(liquibase_bin);

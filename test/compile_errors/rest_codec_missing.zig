@@ -6,8 +6,8 @@ const type_defs = zigma.defineTypes(zigma.merge(.{
     .{ .fecha = zigma.TypeDef{ .Type = []const u8 } },
 }));
 const fields = zigma.record(type_defs, .{ .when = .{ .type = "fecha" } });
-const entity = zigma.defineEntity(.{ .pk = .{"when"}, .fields = fields });
-const entities = zigma.defineEntities(.{ .events = entity });
+const entity = .{ .pk = .{"when"}, .fields = fields };
+const entities = zigma.defineEntities(.{ .events = .{ .Type = zigma.Entity(type_defs, entity), .definition = entity } });
 
 comptime {
     _ = rest.Api(Model, rest.common_codecs, .{});

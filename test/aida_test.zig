@@ -44,10 +44,10 @@ test "deduces the record instance type" {
     }
 }
 
-test "types record instances anywhere with DefinedType" {
+test "types record instances anywhere with Cargo" {
     // Declaración tipada: el literal anónimo adquiere un tipo concreto
     // mediante conversión implícita y comprobación contra el tipo declarado, acá mismo.
-    const titular: aida.DefinedType(aida.cargo) = .{
+    const titular: aida.Cargo = .{
         .cargo = "TIT",
         .denominacion = "Titular",
         .orden = 1,
@@ -64,22 +64,7 @@ test "types record instances anywhere with DefinedType" {
     }));
 }
 
-test "a docente with cargo teorico needs at least five years of experience" {
-    try std.testing.expectError(
-        error.TeoricoRequiereCincoAniosExperiencia,
-        aida.validarDocente(.{ .cargo = "teorico", .experiencia = 4 }),
-    );
-    try std.testing.expectError(
-        error.TeoricoRequiereCincoAniosExperiencia,
-        aida.validarDocente(.{ .cargo = "TEORICO", .experiencia = null }),
-    );
-
-    try aida.validarDocente(.{ .cargo = "teorico", .experiencia = 5 });
-    try aida.validarDocente(.{ .cargo = "practico", .experiencia = 2 });
-    try aida.validarDocente(.{ .cargo = null, .experiencia = null });
-}
-
-// Las tres variantes deben aplicar la misma regla; solo cambia el tipo de entrada.
+// Casos de negocio compartidos por la entidad concreta.
 const docente_validation_cases = [_]struct {
     cargo: ?[]const u8,
     experiencia: ?i64,
@@ -104,21 +89,11 @@ fn expectDocenteValidation(valid: bool, actual: aida.DocenteValidationError!void
     }
 }
 
-test "manual docente validation uses an explicitly declared subset" {
-    const validate: *const fn (aida.DocenteBusinessState) aida.DocenteValidationError!void = aida.validarDocente;
-    for (docente_validation_cases) |case| {
-        try expectDocenteValidation(case.valid, validate(.{
-            .cargo = case.cargo,
-            .experiencia = case.experiencia,
-        }));
-    }
-}
-
 test "row docente validation receives all fields but only uses cargo and experiencia" {
-    const validate: *const fn (aida.Model.Row("docentes")) aida.DocenteValidationError!void = aida.validarDocenteRow;
+    const validate: *const fn (aida.Docente) aida.DocenteValidationError!void = aida.validarDocente;
     for (docente_validation_cases) |case| {
-        // Row exige construir la fila completa, incluso los campos ajenos a la regla.
-        var row: aida.Model.Row("docentes") = .{
+        // Docente exige la fila completa, incluso los campos ajenos a la regla.
+        var row: aida.Docente = .{
             .docente = "d1",
             .apellido = null,
             .nombres = "Ada",
@@ -136,18 +111,6 @@ test "row docente validation receives all fields but only uses cargo and experie
         row.telefono = "555-0100";
         row.esImportador = true;
         try expectDocenteValidation(case.valid, validate(row));
-    }
-}
-
-test "projection docente validation receives only fields derived from the contract" {
-    const Input = aida.Model.Projection("docentes", .{ "cargo", "experiencia" });
-    const validate: *const fn (Input) aida.DocenteValidationError!void = aida.validarDocenteProjection;
-    for (docente_validation_cases) |case| {
-        // No se repiten tipos ni se completan campos que la regla no necesita.
-        try expectDocenteValidation(case.valid, validate(.{
-            .cargo = case.cargo,
-            .experiencia = case.experiencia,
-        }));
     }
 }
 
@@ -184,12 +147,12 @@ test "completes preserving the field set, and derives the label from the name" {
 // Entidades de aida.
 
 test "keeps the pk names, in order" {
-    try expectNames(aida.cursos.pk, &.{ "periodo", "materia" });
-    try expectNames(aida.clases.pk, &.{ "periodo", "materia", "orden" });
+    try expectNames(aida.curso_def.pk, &.{ "periodo", "materia" });
+    try expectNames(aida.clase_def.pk, &.{ "periodo", "materia", "orden" });
 }
 
 test "extracts the pk fields with their exact types and order" {
-    const cursos_pk_fields = zigma.extractPk(aida.cursos);
+    const cursos_pk_fields = zigma.extractPk(aida.curso_def);
     comptime {
         std.debug.assert(fieldNames(@TypeOf(cursos_pk_fields)).len == 2);
         std.debug.assert(eqlComptime(fieldNames(@TypeOf(cursos_pk_fields))[0], "periodo"));
@@ -224,11 +187,11 @@ test "inherits pk fields into other entities" {
         std.debug.assert(eqlComptime(clase_names[4], "tema"));
     }
     // Los campos heredados conservan su tipo:
-    try expectEqualStrings("text", aida.clases.fields.periodo.type);
+    try expectEqualStrings("text", aida.clase_def.fields.periodo.type);
 }
 
 test "chains pk inheritance (clases → preguntas → opciones)" {
-    try expectNames(aida.opciones.pk, &.{ "periodo", "materia", "orden", "pregunta", "opcion" });
+    try expectNames(aida.opcion_def.pk, &.{ "periodo", "materia", "orden", "pregunta", "opcion" });
     comptime {
         const opcion_names = fieldNames(@TypeOf(aida.opcion));
         std.debug.assert(opcion_names.len == 6);
@@ -243,10 +206,10 @@ test "chains pk inheritance (clases → preguntas → opciones)" {
 
 test "merges overlapping pks without repeating (inscripciones + clases)" {
     // periodo y materia están en ambas PKs y deben aparecer una sola vez, en orden.
-    const merged = zigma.mergePk(.{ aida.inscripciones.pk, aida.clases.pk });
+    const merged = zigma.mergePk(.{ aida.inscripcion_def.pk, aida.clase_def.pk });
     try expectNames(merged, &.{ "periodo", "materia", "alumno", "orden" });
     // presencias usa esa combinación como su PK:
-    try expectNames(aida.presencias.pk, &.{ "periodo", "materia", "alumno", "orden" });
+    try expectNames(aida.presencia_def.pk, &.{ "periodo", "materia", "alumno", "orden" });
     // Y la combinación de campos elimina por sí misma los campos compartidos duplicados:
     comptime std.debug.assert(fieldNames(@TypeOf(aida.presencia)).len == 4);
     // Toda la cadena sigue deduciendo el tipo de instancia:
@@ -259,22 +222,22 @@ test "merges overlapping pks without repeating (inscripciones + clases)" {
 // FKs, UKs e is_name de aida.
 
 test "keeps the fks as written (array form)" {
-    try expectEqualStrings("inscripciones", aida.presencias.fks.inscripciones.entity);
-    try expectNames(aida.presencias.fks.inscripciones.fields, &.{ "periodo", "materia", "alumno" });
-    try expectEqualStrings("clases", aida.presencias.fks.clases.entity);
-    try expectNames(aida.presencias.fks.clases.fields, &.{ "periodo", "materia", "orden" });
+    try expectEqualStrings("inscripciones", aida.presencia_def.fks.inscripciones.entity);
+    try expectNames(aida.presencia_def.fks.inscripciones.fields, &.{ "periodo", "materia", "alumno" });
+    try expectEqualStrings("clases", aida.presencia_def.fks.clases.entity);
+    try expectNames(aida.presencia_def.fks.clases.fields, &.{ "periodo", "materia", "orden" });
 }
 
 test "represents a reflexive fk with renamed fields (jefe → docente)" {
-    try expectEqualStrings("docentes", aida.docentes.fks.jefe.entity);
-    try expectEqualStrings("docente", aida.docentes.fks.jefe.fields.jefe);
+    try expectEqualStrings("docentes", aida.docente_def.fks.jefe.entity);
+    try expectEqualStrings("docente", aida.docente_def.fks.jefe.fields.jefe);
 }
 
 test "represents two fks to the same entity (mesas: presidente y vocal)" {
-    try expectEqualStrings("docentes", aida.mesas.fks.presidente.entity);
-    try expectEqualStrings("docente", aida.mesas.fks.presidente.fields.presidente);
-    try expectEqualStrings("docentes", aida.mesas.fks.vocal.entity);
-    try expectEqualStrings("docente", aida.mesas.fks.vocal.fields.vocal);
+    try expectEqualStrings("docentes", aida.mesa_def.fks.presidente.entity);
+    try expectEqualStrings("docente", aida.mesa_def.fks.presidente.fields.presidente);
+    try expectEqualStrings("docentes", aida.mesa_def.fks.vocal.entity);
+    try expectEqualStrings("docente", aida.mesa_def.fks.vocal.fields.vocal);
 }
 
 test "marks the is_name field and completes it as false elsewhere" {
@@ -300,30 +263,30 @@ test "defineTypes accepts the anonymous TypeDef shape too" {
 
 // Comprobaciones de sistema: se acepta una FK que referencia una UK de la entidad destino.
 
-const apuntes = zigma.defineEntity(.{
+const apuntes = .{
     .pk = .{"apunte"},
     .fks = .{ .materia_por_nombre = .{ .entity = "materias", .fields = .{ .denominacion_materia = "denominacion" } } },
     .fields = zigma.record(aida.type_defs, .{
         .apunte = .{ .type = "text" },
         .denominacion_materia = .{ .type = "text" },
     }),
-});
-const mini_system = zigma.defineEntities(.{ .materias = aida.materias, .apuntes = apuntes });
+};
+const mini_system = zigma.defineEntities(.{ .materias = aida.entity_defs.materias, .apuntes = .{ .Type = zigma.Entity(aida.type_defs, apuntes), .definition = apuntes } });
 
 test "cross-checks the fks of the whole system" {
     // entity_defs de aida ya pasó por defineEntities;
     // se comprueba con algunos casos que conservó todo:
     comptime std.debug.assert(fieldNames(@TypeOf(aida.entity_defs)).len == 11);
-    try expectNames(aida.entity_defs.presencias.pk, &.{ "periodo", "materia", "alumno", "orden" });
+    try expectNames(aida.entity_defs.presencias.definition.pk, &.{ "periodo", "materia", "alumno", "orden" });
     // Se acepta una FK que referencia una UK de la entidad destino: mini_system compiló.
     comptime std.debug.assert(fieldNames(@TypeOf(mini_system)).len == 2);
-    try expectEqualStrings("denominacion", mini_system.apuntes.fks.materia_por_nombre.fields.denominacion_materia);
+    try expectEqualStrings("denominacion", mini_system.apuntes.definition.fks.materia_por_nombre.fields.denominacion_materia);
 }
 
 // Normalización de entidades aida: Def → Info.
 
 test "normalizes array-form fks to the source→target map form" {
-    const cursos_info = zigma.completeEntity(aida.cursos);
+    const cursos_info = zigma.completeEntity(aida.curso_def);
     try expectEqualStrings("periodos", cursos_info.fks.periodos.entity);
     try expectEqualStrings("periodo", cursos_info.fks.periodos.fields.periodo);
     try expectEqualStrings("materia", cursos_info.fks.materias.fields.materia);
@@ -339,7 +302,7 @@ test "normalizes array-form fks to the source→target map form" {
 }
 
 test "keeps map-form fks as they are" {
-    const mesas_info = zigma.completeEntity(aida.mesas);
+    const mesas_info = zigma.completeEntity(aida.mesa_def);
     try expectEqualStrings("docentes", mesas_info.fks.presidente.entity);
     try expectEqualStrings("docente", mesas_info.fks.presidente.fields.presidente);
     try expectEqualStrings("periodo", mesas_info.fks.cursos.fields.periodo);
@@ -347,10 +310,10 @@ test "keeps map-form fks as they are" {
 }
 
 // periodo y materia aparecen dos veces en la concatenación:
-const presencias_alt = zigma.defineEntity(.{
-    .pk = aida.inscripciones.pk ++ aida.clases.pk,
+const presencias_alt = .{
+    .pk = aida.inscripcion_def.pk ++ aida.clase_def.pk,
     .fields = aida.presencia,
-});
+};
 
 test "dedups the pk, so overlapping pks can be concatenated without mergePk" {
     comptime std.debug.assert(presencias_alt.pk.len == 6);
@@ -359,7 +322,7 @@ test "dedups the pk, so overlapping pks can be concatenated without mergePk" {
 }
 
 test "completes the fields and keeps the uks" {
-    const materias_info = zigma.completeEntity(aida.materias);
+    const materias_info = zigma.completeEntity(aida.materia_def);
     const materia_info = zigma.completeRecord(aida.materia);
     try expectEqualStrings(materia_info.denominacion.label, materias_info.fields.denominacion.label);
     try expect(materias_info.fields.denominacion.is_name);

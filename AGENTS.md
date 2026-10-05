@@ -1,6 +1,6 @@
 # Agent map
 
-Do not scan the repo. Open only the files listed for the task. Design rules, TDD, and Zig 0.17 notes live in `CLAUDE.md` (always loaded). Human how-tos: `README.md`, `docs/build.md`, `docs/run-example.md`, `docs/frontend.md`. Vocabulary walkthrough (leaves → root): `docs/zigma.md`. Named object validators (design, not implemented): `docs/validators.md`.
+Do not scan the repo. Open only the files listed for the task. Design rules, TDD, and Zig 0.17 notes live in `CLAUDE.md` (always loaded). Human how-tos: `README.md`, `docs/build.md`, `docs/run-example.md`, `docs/frontend.md`. Vocabulary walkthrough (leaves → root): `docs/zigma.md`. Typed REST validators and pending named-rule bindings: `docs/validators.md`.
 
 ## Where to look
 
@@ -9,25 +9,26 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | API pública del núcleo | `src/core/zigma.zig` (reexporta las implementaciones; no importa generadores) |
 | Tipos de dominio / records / campos / merge | `src/core/records.zig`, `test/aida_test.zig`, `test/model_nullability_test.zig` |
 | Entidades / PK, UK y FK / metadatos de reglas | `src/core/entities.zig`, `test/aida_test.zig` |
+| Tipos concretos / registro Type + definition | `src/core/entities.zig`, `src/core/model.zig`, `test/concrete_entity_test.zig`, `test/compile_errors/fixtures/concrete_entities.zig`, `test/integration/concrete_entities_review.md` |
 | Framework / Model.info / tipos derivados | `src/core/model.zig`, `test/system_model_test.zig`, `test/model_consumers_test.zig` |
 | Helpers internos de nombres | `src/core/names.zig` |
-| Example system (records, entities, `DefinedType`) | `examples/aida/src/aida.zig` |
+| Example system (records, entities, `Cargo`) | `examples/aida/src/aida.zig` |
 | Example app (`system` + seeds, own `build.zig`) | `examples/aida/` |
 | Positive tests (runtime + comptime asserts) | `test/aida_test.zig` |
 | Expected compile failures | `test/compile_errors/<case>.zig` **and** the matching entry in `compile_error_cases` in `build/tests.zig` |
 | JSON stringify of record instances / schema | `src/json.zig` + `test/json_test.zig` (+ `test/tiny_system.zig` for the non-aida contract) |
 | Catálogo basado en Model / nulabilidad / pruebas WASM | `test/json_model_test.zig`, `test/integration/run_frontend_test.mjs`, `test/integration/frontend_review.md`, `examples/aida/build.zig` |
 | WASM page | `src/frontend/main.zig`, `src/frontend/main.js`, `src/frontend/index.html` |
-| Named object validators (design, not implemented) | `docs/validators.md` |
+| Typed REST validators and pending named-rule bindings | `docs/validators.md` |
 | Consumer widgets | `examples/aida/src/widgets.js` (optional `widgets_js` on `addAppFromDep`) |
 | Consumer page title | optional `title` on `addApp` / `addAppFromDep`; generated `title.js` |
 | API REST / routing / secuencia CRUD | `src/rest/api.zig`, `src/rest/types.zig`, `test/rest_test.zig` |
 | Entrada y salida REST / codecs | `src/rest/request.zig`, `src/rest/response.zig`, `src/rest/codecs.zig`, `test/rest_test.zig` |
-| Validadores REST actuales | `src/rest/validation.zig`, `examples/aida/src/rest.zig`, `test/aida_rest_test.zig`, `test/rest_test.zig` |
+| Validadores REST actuales | `src/rest/validation.zig`, `examples/aida/src/rest.zig`, `test/aida_rest_test.zig`, `test/rest_test.zig`, `test/typed_business_validation_test.zig`, `test/fixtures/validation_repository.zig` |
 | Backend de pruebas en memoria | `src/testing_backend/main.zig`, `src/testing_backend/memory_repository.zig`, `src/rest/std_http.zig` |
 | Comprobación HTTP del backend de pruebas | `test/integration/run_testing_backend.py`, `examples/aida/build.zig` |
 | Entrada de AIDA / arranque conjunto del backend real y frontend | `examples/aida/src/main.zig`, `test/integration/run_aida_test.py`, `build/aida.zig`, `src/frontend/api_config.js` |
-| AIDA PostgreSQL y aplicación del historial | `examples/aida/src/postgres.zig`, `examples/aida/src/server.zig`, `tools/apply_migrations.zig` |
+| AIDA PostgreSQL y aplicación del historial | `examples/aida/src/postgres.zig`, `examples/aida/src/server.zig`, `migration_tools/apply_migrations.zig` |
 | API de migraciones / snapshot canónico | `src/postgres/migrations/schema.zig`, `src/postgres/migrations/snapshot.zig` |
 | Diff, nombres y drafts SQL de migraciones | `src/postgres/migrations/diff.zig`, `src/postgres/migrations/draft.zig`, `test/postgres_migrations_test.zig` |
 | Bootstrap exclusivo de integraciones / comandos públicos | `test/integration/postgres_bootstrap.zig`, `test/integration/build_commands_test.py`, `build/tests.zig`, `build/aida.zig` |
@@ -52,14 +53,21 @@ Los helpers compartidos entre archivos del núcleo no se reexportan.
 | `RecordInfoOf` / `completeRecord` | `records.zig` | Def → Info; explicita defaults de campos |
 | `FieldInfo` | `records.zig` | Forma normalizada de un campo |
 | `merge` / `Merged` | `records.zig` | Combina structs: gana el último valor; orden de primera aparición |
-| `defineEntity` | `entities.zig` | Comprueba PK, UK, origen de FK y reglas; completa colecciones omitidas |
-| `defineEntities` | `entities.zig` | Comprueba destinos de FK y correspondencia con PK o UK completas |
+| `Entity` | `entities.zig` | Definición → tipo concreto de fila, con dominios validados y nulabilidad efectiva; independiente de Framework |
+| `defineEntities` | `entities.zig` | Valida registros Type + definition y destinos de FK hacia PK o UK completas |
 | `extractPk` / `mergePk` | `entities.zig` | Extrae campos PK / combina claves sin duplicados |
 | `completeEntity` | `entities.zig` | Normaliza campos, PK no-null, mapas FK y dependencias de reglas |
 | `RuleInfo` | `entities.zig` | Dependencias serializables de una regla, sin implementación |
-| `Framework` | `model.zig` | Construye `Model.info` y genera `Row`, `Projection`, `Patch`, `Filters`, `RuleInput` |
+| `Framework` | `model.zig` | Comprueba identidad de tipos registrados; construye `Model.info`, devuelve el tipo en `Row` y genera `Patch`, `Filters` |
 
 Field Def properties: `type` (required, name in `type_defs`), optional `label`, `nullable`, `is_name` (**only `true`**), `description`. Entity Def: required `fields` + `pk`; optional `fks`, `uks`, `rules`. Fk `fields`: name list (same names) or source→target map. Fk target is a **string** entity name. Cada regla declara una lista `fields`; su binding y ejecución automática siguen fuera del núcleo.
+
+Las cuatro piezas de AIDA son `docente` (record), `docente_def` (definición),
+`Docente = Entity(type_defs, docente_def)` (tipo de datos) y
+`entity_defs.docentes = .{ .Type = Docente, .definition = docente_def }` (registro).
+`Model.Row("docentes") == Docente`. `Model.info` solo contiene metadatos serializables;
+los tipos no llevan campos ni declaraciones de metadatos. `extractPk` y `completeEntity`
+reciben definiciones. `defineEntity` fue retirado, sin alias.
 
 ## Generators
 
@@ -102,6 +110,6 @@ WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr
 
 ## Published package
 
-`build.zig.zon` `.paths`: `build.zig`, `build.zig.zon`, `build/`, `src`, `examples`, `db`, `tools`,
+`build.zig.zon` `.paths`: `build.zig`, `build.zig.zon`, `build/`, `src`, `examples`, `db`, `migration_tools`,
 `test/integration`, `README.md`, `DOCS.md`, `LICENSE`. Los tests unitarios y `docs/` no
 forman parte del paquete; los auxiliares de integración sí.

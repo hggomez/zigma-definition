@@ -28,7 +28,6 @@ pub const RepositoryError = types.RepositoryError;
 pub const Config = types.Config;
 
 pub const BusinessRuleViolation = validation.BusinessRuleViolation;
-pub const BusinessValidationError = validation.BusinessValidationError;
 pub const BusinessValidator = validation.BusinessValidator;
 pub const defineBusinessValidators = validation.defineBusinessValidators;
 
@@ -225,9 +224,9 @@ pub fn Api(
                     // incluidos los SQL NULL que completan propiedades nullable omitidas.
                     if (comptime @hasField(@TypeOf(checked_validators), entity_name)) {
                         const validator = @field(checked_validators, entity_name);
-                        const violation = validator.validate(values) catch
-                            return responses.errorResponse(response_allocator, 500, "business_validation_error", "Business validation could not be completed");
-                        if (violation) |details|
+                        const row = validation.decodeRow(Model, entity_name, codecs, scratch_allocator, values) catch |err|
+                            return responses.businessValidationErrorResponse(response_allocator, err);
+                        if (validator.validate(row)) |details|
                             return responses.businessViolationResponse(response_allocator, details);
                     }
 
@@ -265,10 +264,8 @@ pub fn Api(
                         defer current.deinit();
 
                         const validator = @field(checked_validators, entity_name);
-                        const violation = validation.validateUpdatedRows(entity, current, values, validator) catch |err| switch (err) {
-                            error.InvalidRepositoryResult => return responses.errorResponse(response_allocator, 500, "invalid_repository_result", "Repository returned an invalid row shape"),
-                            error.InvalidState => return responses.errorResponse(response_allocator, 500, "business_validation_error", "Business validation could not be completed"),
-                        };
+                        const violation = validation.validateUpdatedRows(Model, entity_name, codecs, scratch_allocator, current, values, validator) catch |err|
+                            return responses.businessValidationErrorResponse(response_allocator, err);
                         if (violation) |details|
                             return responses.businessViolationResponse(response_allocator, details);
                     }

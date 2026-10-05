@@ -16,33 +16,33 @@ const base_fields = zigma.record(zigma.common_type_defs, .{
     .id = .{ .type = "integer" },
     .name = .{ .type = "text", .nullable = false },
 });
-const base_entity = zigma.defineEntity(.{
+const base_entity = .{
     .fields = base_fields,
     .pk = .{"id"},
-});
-const base_defs = zigma.defineEntities(.{ .things = base_entity });
+};
+const base_defs = zigma.defineEntities(.{ .things = .{ .Type = zigma.Entity(zigma.common_type_defs, base_entity), .definition = base_entity } });
 
 const extended_fields = zigma.record(zigma.common_type_defs, .{
     .id = .{ .type = "integer" },
     .name = .{ .type = "text" },
     .note = .{ .type = "text" },
 });
-const extended_entity = zigma.defineEntity(.{
+const extended_entity = .{
     .fields = extended_fields,
     .pk = .{"id"},
     .uks = .{ .by_name = .{"name"} },
-});
-const extended_defs = zigma.defineEntities(.{ .things = extended_entity });
+};
+const extended_defs = zigma.defineEntities(.{ .things = .{ .Type = zigma.Entity(zigma.common_type_defs, extended_entity), .definition = extended_entity } });
 
 const unsafe_fields = zigma.record(zigma.common_type_defs, .{
     .id = .{ .type = "integer" },
     .renamed = .{ .type = "boolean", .nullable = false },
 });
-const unsafe_entity = zigma.defineEntity(.{
+const unsafe_entity = .{
     .fields = unsafe_fields,
     .pk = .{"id"},
-});
-const unsafe_defs = zigma.defineEntities(.{ .things = unsafe_entity });
+};
+const unsafe_defs = zigma.defineEntities(.{ .things = .{ .Type = zigma.Entity(zigma.common_type_defs, unsafe_entity), .definition = unsafe_entity } });
 
 const empty_snapshot =
     \\{"format_version":1,"dialect":"postgresql","tables":[]}

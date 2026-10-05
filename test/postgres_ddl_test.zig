@@ -16,12 +16,12 @@ const type_mappings = postgres_ddl.defineTypeMappings(zigma.merge(.{
 const quoted_fields = zigma.record(aida.type_defs, .{
     .@"quoted\"field" = .{ .type = "text" },
 });
-const quoted_entity = zigma.defineEntity(.{
+const quoted_entity = .{
     .pk = .{"quoted\"field"},
     .fields = quoted_fields,
-});
+};
 const quoted_entity_defs = zigma.defineEntities(.{
-    .@"quoted\"table" = quoted_entity,
+    .@"quoted\"table" = .{ .Type = zigma.Entity(aida.type_defs, quoted_entity), .definition = quoted_entity },
 });
 
 const base_fields = zigma.record(aida.type_defs, .{
@@ -30,31 +30,31 @@ const base_fields = zigma.record(aida.type_defs, .{
 const extended_fields = zigma.record(aida.type_defs, zigma.merge(.{ base_fields, .{
     .created_on = .{ .type = "fecha", .nullable = false },
 } }));
-const extended_entity = zigma.defineEntity(.{
+const extended_entity = .{
     .pk = .{"thing"},
     .fields = extended_fields,
-});
-const extended_entity_defs = zigma.defineEntities(.{ .things = extended_entity });
+};
+const extended_entity_defs = zigma.defineEntities(.{ .things = .{ .Type = zigma.Entity(aida.type_defs, extended_entity), .definition = extended_entity } });
 
 const parent_fields = zigma.record(aida.type_defs, .{
     .parent = .{ .type = "text" },
 });
-const parents = zigma.defineEntity(.{
+const parents = .{
     .pk = .{"parent"},
     .fields = parent_fields,
-});
+};
 const child_fields = zigma.record(aida.type_defs, .{
     .child = .{ .type = "text" },
     .parent = .{ .type = "text" },
 });
-const children = zigma.defineEntity(.{
+const children = .{
     .pk = .{"child"},
     .fks = .{ .parents = .{ .entity = "parents", .fields = parents.pk } },
     .fields = child_fields,
-});
+};
 const reverse_dependency_defs = zigma.defineEntities(.{
-    .children = children,
-    .parents = parents,
+    .children = .{ .Type = zigma.Entity(aida.type_defs, children), .definition = children },
+    .parents = .{ .Type = zigma.Entity(aida.type_defs, parents), .definition = parents },
 });
 
 test "defines PostgreSQL mappings separately from domain types" {

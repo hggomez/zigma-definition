@@ -50,7 +50,8 @@ Cada concepto descriptivo tiene (al menos) dos versiones, distinguidas por sufij
 La `Info` se deriva determinísticamente de la `Def` con funciones comptime (`completeRecord`,
 `completeEntity`). `Model.info` reúne los metadatos serializables de todas las entidades:
 no contiene valores Zig `type` ni funciones. Las colecciones `TypeDef`, que sí contienen
-tipos Zig, permanecen fuera de esa representación.
+tipos Zig, y el registro `entity_defs`, que asocia tipos con definiciones, permanecen
+fuera de esa representación.
 
 ## Vocabulario
 
@@ -63,7 +64,7 @@ Cada sistema define su propia colección de tipos, asociando un nombre de tipo (
 puede agregar los suyos (en el ejemplo, `fecha` y `email`) combinándolos con `zigma.merge`.
 `defineTypes(.{...})` valida la colección en el punto de declaración. `TypeDef.Type` describe
 un valor no-null: se rechazan dominios opcionales como `?i64`; la propiedad `nullable` del
-campo es la única responsable de generar `?T`. `Framework` y `RecordInstanceType` también
+campo es la única responsable de generar `?T`. `Entity`, `Framework` y `RecordInstanceType` también
 comprueban esto si se les pasa una colección sin usar `defineTypes`.
 
 ### Campos: `FieldDef` / `FieldInfo`
@@ -84,37 +85,75 @@ y los literales de `type` de cada campo — y es el tipo que devuelve `completeR
 
 `RecordInstanceType(type_defs, rec)` deduce, a partir de un record y la colección de tipos del
 sistema, el tipo Zig de una instancia real de ese record (los valores que tomaría cada campo
-en tiempo de ejecución). `DefinedType` en el ejemplo `aida` es ese mismo cálculo, atado de una
-vez a los `type_defs` del sistema, para no repetirlos en cada función de negocio. Cada campo
+en tiempo de ejecución). AIDA publica `Cargo = zigma.RecordInstanceType(type_defs, cargo)`
+para utilizar el record como un tipo con nombre en la lógica de negocio. Cada campo
 es `T` o `?T` según su nulabilidad declarada, cuyo default es `true`. El record no conoce
 las restricciones de PK de las entidades que lo reutilizan.
 
-### Entidades: `EntityDef`
+### Entidades: definición, tipo concreto y registro
 
-Una entidad es el nivel contenedor — la unidad representable como grilla —, con la forma
-`{fields, pk, fks, uks, rules}`. Se construye con `zigma.defineEntity(.{...})`, que chequea en
-compilación que cada nombre de `pk` (y de cada `uk`, y cada campo origen de cada `fk`) sea
-un campo de `fields`, y preserva los literales.
+Una definición de entidad agrega claves y relaciones a un record. Es un valor descriptivo
+con `fields` y `pk`, y colecciones opcionales `fks`, `uks` y `rules`.
+
+```zig
+pub const docente_def = .{
+    .fields = docente,
+    .pk = .{"docente"},
+    .fks = .{ .jefe = .{ .entity = "docentes", .fields = .{ .jefe = "docente" } } },
+};
+pub const Docente = zigma.Entity(type_defs, docente_def);
+
+pub const entity_defs = zigma.defineEntities(.{
+    .docentes = .{ .Type = Docente, .definition = docente_def },
+    // Las demás entidades siguen el mismo patrón.
+});
+```
+
+Las cuatro piezas tienen responsabilidades distintas:
+
+| Pieza | Ejemplo | Contenido |
+| --- | --- | --- |
+| Record | `docente` | Campos, dominios y nulabilidad declarada; reutilizable entre entidades. |
+| Definición de entidad | `docente_def` | Record y restricciones: PK, UK, FK y dependencias de reglas. |
+| Tipo concreto | `Docente` | Struct generado con los valores de una fila y la nulabilidad efectiva. |
+| Registro | `entity_defs.docentes` | Asociación del nombre plural de tabla/ruta con `.Type` y `.definition`. |
+
+`Entity(type_defs, definition)` valida dominios y restricciones locales y devuelve un tipo
+Zig usable directamente en parámetros, variables y arrays, por ejemplo `[]const Docente`.
+No necesita construir antes `Framework`. Sus campos PK son obligatorios; los demás siguen
+la nulabilidad del record. No agrega defaults, campos internos, métodos ni declaraciones
+de metadatos: `std.json` puede serializar la fila directamente.
+
+La definición se escribe una sola vez. `Framework` comprueba que cada `.Type` sea exactamente
+`Entity(type_defs, .definition)`, también si se omite `defineEntities`. Rechaza un struct
+manual incompatible o una asociación que quedó desactualizada al cambiar un dominio o la
+nulabilidad. `Model.Row("docentes") == Docente` permite combinar lógica de negocio con
+nombres concretos y generadores que recorren el registro por nombre.
+
+Esta API reemplaza `defineEntity`; no se conserva un alias. Los tipos se llaman en singular
+y PascalCase, las definiciones usan `*_def`, y las tablas y rutas conservan nombres plurales.
 
 ### Claves foráneas: `FkDef` / `FkInfo`
 
 Una `fk` referencia la entidad destino **por nombre** (un string, no el valor): eso mantiene
 la definición serializable y permite fks circulares y reflexivas. `fields` admite dos formas:
-una lista de nombres cuando el campo origen y el destino se llaman igual (`.fields = cursos.pk`),
+una lista de nombres cuando el campo origen y el destino se llaman igual (`.fields = curso_def.pk`),
 o un mapa origen→destino cuando no (`.fields = .{ .jefe = "docente" }`). La key del mapa de
 `fks` es el nombre de la fk, lo que permite dos fks distintas a la misma entidad (`presidente`
 y `vocal` → `docentes`).
 
-Los chequeos de fks tienen dos niveles: `defineEntity` chequea lo local (que los campos origen
+Los chequeos de fks tienen dos niveles: `Entity` chequea lo local (que los campos origen
 existan en `fields`); `zigma.defineEntities(.{...})` chequea lo global del sistema (que la
 entidad destino exista, y que sus campos destino sean su pk completa o una de sus uks).
 
 ### Reutilización de claves: `extractPk` / `mergePk`
 
-* `zigma.extractPk(entity)` devuelve los campos de la pk de una entidad como un record con el
+* `zigma.extractPk(definition)` devuelve los campos de la pk de una definición como un record con el
   tipo exacto, para heredarlos con `zigma.merge` en otra entidad (por ejemplo, `curso` hereda
   las pk de `periodos`, `materias` y `docentes`). Para el resto de los campos no hace falta
-  una función especial: `merge` ya deduplica nombres por sí solo.
+  una función especial: `merge` ya deduplica nombres por sí solo. Por ejemplo,
+  `extractPk(docente_def)` conserva los metadatos originales, incluida la nulabilidad
+  del campo del record; no extrae campos desde el tipo `Docente`.
 * `zigma.mergePk(.{pk1, pk2, ...})` une varias pk que pueden superponerse, sin repetir
   elementos y preservando el orden de primera aparición. Se usa para pks combinadas, como la
   de `presencias`, que junta las de `inscripciones` y `clases`. La concatenación con
@@ -122,7 +161,7 @@ entidad destino exista, y que sus campos destino sean su pk completa o una de su
 
 ### Def → Info de una entidad: `completeEntity`
 
-`zigma.completeEntity(entity)` completa una entidad entera: los campos (con `completeRecord`),
+`zigma.completeEntity(definition)` completa una definición descriptiva: los campos (con `completeRecord`),
 la pk (deduplicada), las fks (siempre en la forma de mapa origen→destino, aunque se hayan
 escrito como lista), las uks y las reglas (vacías por default). Los campos de la PK
 quedan con `nullable = false` en la entidad normalizada, sin alterar el record original.
@@ -133,8 +172,7 @@ La composición se hace una sola vez; AIDA la publica como `aida.Model`:
 
 ```zig
 pub const Model = zigma.Framework(type_defs, entity_defs);
-const Docente = Model.Row("docentes");
-const Contacto = Model.Projection("docentes", .{ "docente", "telefono" });
+const Row = Model.Row("docentes"); // Es exactamente el tipo Docente registrado.
 const DocentePatch = Model.Patch("docentes");
 const DocenteFilters = Model.Filters("docentes");
 ```
@@ -142,13 +180,12 @@ const DocenteFilters = Model.Filters("docentes");
 | Tipo | Uso y nulabilidad |
 |---|---|
 | `RecordInstanceType(type_defs, record)` | Instancia del record; respeta su `nullable`, sin imponer PK. |
-| `Model.Row(entity)` | Fila completa con nulabilidad efectiva: los campos PK son obligatorios. |
-| `Model.Projection(entity, fields)` | Selección en el orden solicitado, con los mismos tipos que la fila; admite selección vacía. |
+| `Entity(type_defs, definition)` | Tipo concreto de fila completa, con PK obligatorias, sin necesitar Model. |
+| `Model.Row(entity)` | Devuelve exactamente el tipo concreto registrado para esa entidad. |
 | `Model.Patch(entity)` | Campos no-PK; cada uno tiene `unset` por default o `set: FieldType`. |
 | `Model.Filters(entity)` | Cada campo es `?T`, usando el dominio no-null; default `null` significa ausencia de filtro. |
-| `Model.RuleInput(entity, rule)` | Proyección de las dependencias declaradas de una regla. |
 
-Las filas y proyecciones no tienen defaults Zig: una fila completa debe incluir también los
+Las filas completas no tienen defaults Zig: una fila completa debe incluir también los
 campos nullable, aunque su valor sea `null`. En HTTP, el parser de POST sigue completando
 con null los campos nullable omitidos.
 
@@ -189,24 +226,27 @@ sin defaults implícitos. Véase [la referencia del frontend](docs/frontend.md).
 Una entidad puede declarar un mapa de reglas, sin funciones ni tipos repetidos:
 
 ```zig
-const docentes = zigma.defineEntity(.{
+const docente_def = .{
     .fields = docente,
     .pk = .{"docente"},
     .rules = .{
         .docente_experience = .{ .fields = .{ "cargo", "experiencia" } },
     },
+};
+const Docente = zigma.Entity(type_defs, docente_def);
+const Model = zigma.Framework(type_defs, .{
+    .docentes = .{ .Type = Docente, .definition = docente_def },
 });
-const Model = zigma.Framework(type_defs, .{ .docentes = docentes });
-const Input = Model.RuleInput("docentes", "docente_experience");
-// Input tiene cargo: ?[]const u8 y experiencia: ?i64 según este contrato.
+const dependencies = Model.info.docentes.rules.docente_experience.fields;
+// Metadatos: .{ "cargo", "experiencia" }, sin generar un tipo parcial.
 ```
 
 Se comprueban estructura, propiedades, campos inexistentes y dependencias repetidas al
-compilar. El orden de reglas y campos se conserva. Consultar una entidad o regla inexistente,
-o repetir un campo en una proyección, también produce un diagnóstico localizado.
+compilar. El orden de reglas y campos se conserva. Consultar una entidad inexistente
+mediante `Model.Row`, `Patch` o `Filters` produce un diagnóstico localizado.
 
-En esta etapa `rules` aporta metadatos y tipos; no registra ni ejecuta validadores. Los
-validadores REST existentes se siguen componiendo explícitamente por entidad. Las reglas
+En esta etapa `rules` aporta únicamente metadatos; no registra ni ejecuta validadores.
+Los validadores REST se componen explícitamente por entidad y reciben su tipo concreto completo. Las reglas
 pueden serializarse como parte de `Model.info`, pero se excluyen del DDL y del snapshot
 PostgreSQL: modificarlas no genera una migración. No hay todavía un comando de exportación
 ni un formato público de manifest.
@@ -300,8 +340,7 @@ de ese motor. Los nombres públicos de módulos (`zigma`, `zigma_rest`,
   de tipos de campo. Centraliza los defaults y la interpretación de `nullable`.
 * `src/core/entities.zig`: claves, relaciones y dependencias de reglas; normaliza las
   entidades y aplica la restricción no-null de las PK sobre sus campos completados.
-* `src/core/model.zig`: `Framework`, `Model.info` y tipos `Row`, `Projection`, `Patch`,
-  `Filters` y `RuleInput`. Reutiliza la validación y normalización de records y entidades.
+* `src/core/model.zig`: `Framework`, `Model.info` y tipos `Row`, `Patch` y `Filters`. Reutiliza la validación y normalización de records y entidades.
 * `src/core/names.zig`: helpers internos para reconocer y comparar nombres. Ningún
   archivo del núcleo importa generadores ni conoce AIDA. [Recorrido del núcleo](docs/zigma.md).
 * `src/postgres/ddl.zig`: generación comptime del DDL PostgreSQL inicial.
@@ -333,7 +372,7 @@ de ese motor. Los nombres públicos de módulos (`zigma`, `zigma_rest`,
 * `examples/aida/src/rest.zig`: codecs de `fecha`/`email` y API REST compilada de AIDA.
 * `examples/aida/src/server.zig`: composición Liquibase → libpq → REST → `std.http`.
 * `db/`: snapshot aceptado, changelog raíz, changesets inmutables y drafts.
-* `tools/`: comandos de desarrollo para crear/aceptar migraciones, adoptar bases existentes
+* `migration_tools/`: comandos de desarrollo para crear, aceptar y aplicar migraciones,
   y comparar estructuralmente schemas vía `pg_catalog`.
 * `test/*_test.zig`: tests positivos del descriptor, el DDL y el executor.
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
@@ -612,18 +651,36 @@ var repository = postgres_crud.Repository(aida.Model).init(&connection);
 ```
 
 Las aplicaciones pueden registrar reglas de negocio por entidad sin modificar los
-controllers generados. Cada validador recibe una fila completa en la representación textual actual
-(`[]const rest.FieldValue`, con valores de texto o null). `POST` valida
+controllers generados. Cada validador recibe la entidad concreta completa, por ejemplo
+`aida.Docente`, con sus valores Zig y opcionales. `POST` valida
 antes del `INSERT`; para `PUT`, el controller selecciona las filas actuales, aplica el patch
 en memoria y valida cada estado resultante antes del `UPDATE`:
 
 ```zig
 const validators = rest.defineBusinessValidators(aida.Model, .{
-    .docentes = rest.BusinessValidator{ .validate = validateDocenteBusinessRules },
+    .docentes = rest.BusinessValidator(aida.Docente){ .validate = validateDocenteBusinessRules },
 });
 
 const Api = rest.Api(aida.Model, codecs, validators);
 ```
+
+La firma del callback es `fn (aida.Docente) ?rest.BusinessRuleViolation`: devuelve
+null o una violación. El registro exige exactamente `BusinessValidator(Model.Row(entity))`;
+un struct manual de igual forma, otra entidad o una firma incompatible no compilan.
+En AIDA el adaptador llama a `validarDocente(value: Docente)` y traduce su error de
+dominio al código y mensaje públicos, sin buscar columnas ni parsear enteros.
+
+REST convierte la fila textual completa con `postgresToJson`, construye un árbol
+`std.json.Value` y obtiene el tipo registrado con `std.json.parseFromValueLeaky`.
+No serializa un documento intermedio. SQL NULL se trata fuera de los codecs. Los
+repositorios siguen recibiendo parámetros textuales; los codecs y repositorios tipados
+son una etapa pendiente.
+
+La arena de la solicitud conserva los datos temporales. La fila se presta al
+validador durante la llamada síncrona; no debe retener referencias después de ella.
+Los resultados del repositorio se liberan después de utilizarlos, también en errores.
+Una conversión imposible produce HTTP 500 sanitizado; `OutOfMemory` de esa conversión
+se propaga. El error público `BusinessValidationError` se retiró de los callbacks.
 
 Una regla rechazada responde `422` con el `code` y `message` definidos por la aplicación.
 Las entidades sin regla registrada conservan el flujo normal y no realizan la lectura previa

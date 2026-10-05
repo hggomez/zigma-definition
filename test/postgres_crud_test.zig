@@ -8,16 +8,16 @@ const fields = zigma.record(zigma.common_type_defs, .{
     .name = .{ .type = "text", .nullable = false },
     .note = .{ .type = "text" },
 });
-const things = zigma.defineEntity(.{ .pk = .{"id"}, .fields = fields });
+const things = .{ .pk = .{"id"}, .fields = fields };
 
 const quoted_fields = zigma.record(zigma.common_type_defs, .{
     .@"id\"part" = .{ .type = "text" },
 });
-const quoted = zigma.defineEntity(.{ .pk = .{"id\"part"}, .fields = quoted_fields });
+const quoted = .{ .pk = .{"id\"part"}, .fields = quoted_fields };
 
 const entity_defs = zigma.defineEntities(.{
-    .things = things,
-    .@"quoted\"table" = quoted,
+    .things = .{ .Type = zigma.Entity(zigma.common_type_defs, things), .definition = things },
+    .@"quoted\"table" = .{ .Type = zigma.Entity(zigma.common_type_defs, quoted), .definition = quoted },
 });
 
 const FakeConnection = struct {

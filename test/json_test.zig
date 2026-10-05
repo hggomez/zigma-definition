@@ -125,7 +125,7 @@ test "stringifies entity fks as source-to-target maps" {
 }
 
 test "stringifies integer and boolean record fields" {
-    const cargo: aida.DefinedType(aida.cargo) = .{
+    const cargo: aida.Cargo = .{
         .cargo = "JTP",
         .denominacion = "Jefe de Trabajos Prácticos",
         .orden = 4,
@@ -139,7 +139,7 @@ test "stringifies integer and boolean record fields" {
 }
 
 test "stringifies a fecha field as a JSON object" {
-    const clase: aida.DefinedType(aida.clase) = .{
+    const clase: zigma.RecordInstanceType(aida.type_defs, aida.clase) = .{
         .periodo = "1C2024",
         .materia = "AlgoI",
         .orden = 1,

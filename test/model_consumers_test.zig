@@ -11,15 +11,16 @@ const aida = @import("aida");
 const aida_postgres = @import("aida_postgres");
 
 fn modelFor(comptime nullable: bool, comptime rules: anytype) type {
-    return zigma.Framework(zigma.common_type_defs, .{
-        .things = zigma.defineEntity(.{
-            .pk = .{"id"},
-            .fields = zigma.record(zigma.common_type_defs, .{
-                .id = .{ .type = "integer", .nullable = true },
-                .note = .{ .type = "text", .nullable = nullable },
-            }),
-            .rules = rules,
+    const definition = .{
+        .pk = .{"id"},
+        .fields = zigma.record(zigma.common_type_defs, .{
+            .id = .{ .type = "integer", .nullable = true },
+            .note = .{ .type = "text", .nullable = nullable },
         }),
+        .rules = rules,
+    };
+    return zigma.Framework(zigma.common_type_defs, .{
+        .things = .{ .Type = zigma.Entity(zigma.common_type_defs, definition), .definition = definition },
     });
 }
 
@@ -185,22 +186,17 @@ test "adding or changing rule metadata leaves every PostgreSQL artifact unchange
     }
 }
 
-fn rejectBlockedNote(values: []const rest.FieldValue) rest.BusinessValidationError!?rest.BusinessRuleViolation {
-    for (values) |value| {
-        if (std.mem.eql(u8, value.name, "note")) {
-            if (value.value) |note| {
-                if (std.mem.eql(u8, note, "blocked")) return .{ .code = "blocked_note", .message = "Blocked note" };
-            }
-            return null;
-        }
+fn rejectBlockedNote(value: modelFor(true, .{}).Row("things")) ?rest.BusinessRuleViolation {
+    if (value.note) |note| {
+        if (std.mem.eql(u8, note, "blocked")) return .{ .code = "blocked_note", .message = "Blocked note" };
     }
-    return error.InvalidState;
+    return null;
 }
 
 test "existing business validator composition accepts Model and still rejects before INSERT" {
     const Model = modelFor(true, .{});
     const validators = rest.defineBusinessValidators(Model, .{
-        .things = rest.BusinessValidator{ .validate = rejectBlockedNote },
+        .things = rest.BusinessValidator(Model.Row("things")){ .validate = rejectBlockedNote },
     });
     const Api = rest.Api(Model, rest.common_codecs, validators);
     var api = Api.init(.{});

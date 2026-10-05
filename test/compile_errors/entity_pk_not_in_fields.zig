@@ -3,5 +3,5 @@ const zigma = @import("zigma");
 const aida = @import("aida");
 
 comptime {
-    _ = zigma.defineEntity(.{ .pk = .{"inexistente"}, .fields = aida.materia });
+    _ = zigma.Entity(aida.type_defs, .{ .pk = .{"inexistente"}, .fields = aida.materia });
 }

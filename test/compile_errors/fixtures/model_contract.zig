@@ -9,23 +9,25 @@ pub const fields = zigma.record(zigma.common_type_defs, .{
     .active = .{ .type = "boolean", .nullable = false },
 });
 
-pub const things = zigma.defineEntity(.{
+pub const things = .{
     .pk = .{ "tenant", "id", "id" },
     .fields = fields,
     .fks = .{
         .parent = .{ .entity = "parents", .fields = .{ "tenant", "id" } },
     },
-});
+};
+
+const parents = .{
+    .pk = .{ "tenant", "id" },
+    .fields = zigma.record(zigma.common_type_defs, .{
+        .tenant = .{ .type = "text" },
+        .id = .{ .type = "integer" },
+    }),
+};
 
 pub const entities = zigma.defineEntities(.{
-    .parents = zigma.defineEntity(.{
-        .pk = .{ "tenant", "id" },
-        .fields = zigma.record(zigma.common_type_defs, .{
-            .tenant = .{ .type = "text" },
-            .id = .{ .type = "integer" },
-        }),
-    }),
-    .things = things,
+    .parents = .{ .Type = zigma.Entity(zigma.common_type_defs, parents), .definition = parents },
+    .things = .{ .Type = zigma.Entity(zigma.common_type_defs, things), .definition = things },
 });
 
 pub const Model = zigma.Framework(zigma.common_type_defs, entities);

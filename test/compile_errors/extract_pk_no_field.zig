@@ -5,6 +5,6 @@ const zigma = @import("zigma");
 const aida = @import("aida");
 
 comptime {
-    const cursos_pk_fields = zigma.extractPk(aida.cursos);
+    const cursos_pk_fields = zigma.extractPk(aida.curso_def);
     _ = cursos_pk_fields.docente;
 }
