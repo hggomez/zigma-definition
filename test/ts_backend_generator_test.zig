@@ -239,9 +239,11 @@ test "deleteFnTest: a TS test that the delete builder runs and returns a query o
 //
 // Encode: one parameter per leaf field, the composite assembled with
 // ROW(...)::<type> (explicit casts so Postgres infers the parameter types);
-// a nullable column wraps it in CASE WHEN ... IS NULL (ROW(NULL, NULL) is not
-// NULL). Decode: to_jsonb(<column>) in the SELECT list, which pg already turns
-// into a JS object.
+// a nullable column wraps it in CASE WHEN <every field> IS NULL (ROW(NULL,
+// NULL) is not NULL): only a struct with no field at all is NULL, a partial
+// one becomes a ROW that the `<entity>_<column>_complete` CHECK of the table
+// rejects. Decode: to_jsonb(<column>) in the SELECT list, which pg already
+// turns into a JS object.
 
 // lugar: a nullable struct column outside the pk (`ubicacion`).
 const lugar = zigma.defineEntity(.{
@@ -261,7 +263,7 @@ test "insertFn: a nullable struct column is encoded as CASE/ROW over one paramet
     try expectEqualStrings(
         \\export function insertLugar(row: { lugar: string, ubicacion: { x: number; y: number } }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'INSERT INTO "lugar" ("lugar", "ubicacion") VALUES ($1, CASE WHEN $2::SMALLINT IS NULL THEN NULL ELSE ROW($2::SMALLINT, $3::zig_u16)::punto END)',
+        \\    text: 'INSERT INTO "lugar" ("lugar", "ubicacion") VALUES ($1, CASE WHEN $2::SMALLINT IS NULL AND $3::zig_u16 IS NULL THEN NULL ELSE ROW($2::SMALLINT, $3::zig_u16)::punto END)',
         \\    values: [row.lugar, row.ubicacion?.x ?? null, row.ubicacion?.y ?? null],
         \\  };
         \\}
@@ -294,7 +296,7 @@ test "updateFn: a struct column in SET takes one placeholder per field, the WHER
     try expectEqualStrings(
         \\export function updateLugar(pk: { lugar: string }, row: { ubicacion: { x: number; y: number } }): { text: string; values: unknown[] } {
         \\  return {
-        \\    text: 'UPDATE "lugar" SET "ubicacion" = CASE WHEN $1::SMALLINT IS NULL THEN NULL ELSE ROW($1::SMALLINT, $2::zig_u16)::punto END WHERE "lugar" = $3',
+        \\    text: 'UPDATE "lugar" SET "ubicacion" = CASE WHEN $1::SMALLINT IS NULL AND $2::zig_u16 IS NULL THEN NULL ELSE ROW($1::SMALLINT, $2::zig_u16)::punto END WHERE "lugar" = $3',
         \\    values: [row.ubicacion?.x ?? null, row.ubicacion?.y ?? null, pk.lugar],
         \\  };
         \\}

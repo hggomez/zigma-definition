@@ -453,7 +453,7 @@ generado desde esa misma descripción.
 | TS → Zig (WASM) | `rules.ts` → `rules.wasm` | hecho: `std.json` parsea al tipo real (`"InvalidInput"`) |
 | TS → Postgres | DDL | **hecho: dominios** (abajo) |
 | HTTP → TS | `server.ts`: query string y cuerpo JSON | `check.ts` hecho (abajo); falta usarlo en `server.ts` |
-| Postgres → TS | filas que lee `pg` | cubierto si las otras dos valen |
+| Postgres → TS | filas que lee `pg` | el esquema garantiza los tipos de Zig para cualquier fila, la escriba quien la escriba: tipos, rangos (dominios), `NOT NULL` y structs completos (`CHECK` `_complete`); pendiente: `check` sobre lo leído en los tests |
 | HTTP → frontend | respuestas | pendiente (mismo `check`) |
 
 **Hecho: dominios de Postgres.** Un entero de Zig más angosto que el entero de Postgres
@@ -466,6 +466,16 @@ usan los tipos del sistema antes que todo. Un dominio también sirve dentro de u
 compuesto (`fecha.mes zig_u8`), donde un `CHECK` común no puede ir. Los casts de los
 builders (`$2::zig_u8`) pasan por el chequeo. Probado contra Postgres: `mes: 300` →
 `23514` (check_violation), `mes: 255` entra.
+
+**Hecho: una columna struct guarda el struct entero o nada.** Un struct de Zig no tiene
+campos opcionales, pero un tipo compuesto de Postgres no puede declarar sus atributos
+`NOT NULL` (`ROW(2026, NULL, 14)::fecha` es una `fecha` válida para Postgres). Cada columna
+struct lleva un `CHECK` de tabla, `<entidad>_<columna>_complete`
+(`fecha IS NULL OR ((fecha).año IS NOT NULL AND …)`), y el `CASE` de los builders mira
+todos los campos (antes solo el primero, y `{ año: null, mes: 3, día: 14 }` se guardaba
+como `NULL` en silencio): solo un struct sin ningún campo es `NULL`, uno parcial es un
+`ROW` que el `CHECK` rechaza. Probado contra Postgres desde SQL directo y desde los
+builders.
 
 **Hecho: `check.ts`, el chequeo del lado TS.** `src/ts_check_generator.zig` genera
 `backend/src/check.ts` (gitignoreado, lo escribe `zig build ts-backend`), compartido por
@@ -484,9 +494,59 @@ el server y, más adelante, el frontend:
 Chequea un valor TS ya decodificado; pasar de texto JSON a valores TS exactos (el `bigint`)
 es el decodificador pendiente.
 
+### Restricciones pendientes, por entrada de datos
+
+Estado al cierre de la sesión del 2026-10-02. Postgres y Zig ya están cubiertos; lo que
+falta es casi todo del lado de entrada a TypeScript, y la mayoría tiene sentido junto con
+`server.ts`.
+
+**JSON → TS** (cuerpo HTTP; después, respuestas en el frontend)
+* Decodificar exacto: un número JSON a `bigint` para `i64` (`jsonDecode` /
+  `BigInt(source)`). El mapa lo tiene, ningún decodificador lo usa: sin eso `JSON.parse`
+  redondea el `orden` de un cuerpo pasado 2^53. Diseño propuesto (no acordado del todo):
+  un `decode<E>(text)` por entidad, el reviver guarda cada número como su texto original
+  (`context.source`) y después se convierte campo por campo; `number` cae en
+  `Number(source)` sin cambiar el mapa.
+* Tipo, rango, `null`, completitud, campos de más: lo cubre `check.ts`, pero nadie lo
+  llama todavía.
+* Un `PUT` trae solo los campos no-pk: `check` con esa parte de la descripción.
+
+**Query string → TS** (HTTP)
+* Parsear el texto según `tsType` (`"3"` → `3n` / `3`, `true`/`false`, campos de struct
+  con puntos → objeto): no hay parser.
+* Después, `check` (no está cableado).
+* Parámetro desconocido o repetido → 400; `PUT`/`DELETE` sin la pk completa → 400:
+  decidido, no hecho.
+
+**Postgres → TS** (filas leídas)
+* Tipos, rangos, `NOT NULL`, structs completos: garantizados por el esquema.
+* Pendiente: `check` sobre lo leído en los tests de integración (opción B).
+* El esquema de la base es el generado: solo la de test se resetea; un despliegue real
+  necesita migraciones (no planeado).
+* Un `i64` dentro de un struct (`to_jsonb` → `JSON.parse` pierde precisión): bloqueado en
+  compilación a propósito; soportarlo reusaría el decodificador JSON.
+
+**TS → Postgres** (escrituras)
+* Tipo, rango, `NOT NULL`, structs completos: los impone la base.
+* Pendiente: una violación de rango o de completitud (`23514`) como error de dominio,
+  para que HTTP dé un 400 con el campo en vez de un 500.
+* Texto con un carácter NUL (`\u0000`): válido en un `[]const u8` de Zig y en JSON,
+  Postgres `TEXT` lo rechaza. Hueco menor, el único donde Postgres es más estricto que Zig.
+
+**TS → Zig** (reglas): hecho, `std.json` parsea al tipo real (`"InvalidInput"`).
+
+**Tipos estáticos de TS**: los campos nullable deberían ser `T | null` en `dml.ts` y
+`rules.ts` (hoy `T`; por ejemplo `docente: string` en `insertCursos`).
+
 ## Próximos pasos
 
-1. HTTP (ver "HTTP: decisiones"): endpoints CRUD derivados de `entity_defs` sobre los builders de `dml.ts`, con
-   `domainError` → 409/422 y las reglas de Zig antes de escribir. Probablemente
-   `node:http` sin framework.
-2. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`).
+1. Lo de "Restricciones pendientes" que no depende de `server.ts`: `check` sobre las filas
+   leídas en los tests (opción B), `23514` como error de dominio, `T | null` en los tipos
+   TS generados.
+2. El decodificador JSON (`decode<E>`), terminando de acordar su diseño.
+3. HTTP (ver "HTTP: decisiones"): `server.ts` generado, endpoints CRUD derivados de
+   `entity_defs` sobre los builders de `dml.ts`, con el parser del query string y `check`
+   en cada entrada, `domainError` → 409/422 y las reglas de Zig antes de escribir.
+   Probablemente `node:http` sin framework. Primer test propuesto: `GET /api/periodos`
+   contra la base real.
+4. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`).

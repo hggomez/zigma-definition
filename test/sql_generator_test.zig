@@ -163,10 +163,21 @@ test "schemaSql generates the domains, then the CREATE TYPE of every struct-back
         \\CREATE TABLE lugar (
         \\    lugar TEXT NOT NULL,
         \\    ubicacion punto,
-        \\    CONSTRAINT lugar_pk PRIMARY KEY (lugar)
+        \\    CONSTRAINT lugar_pk PRIMARY KEY (lugar),
+        \\    CONSTRAINT lugar_ubicacion_complete CHECK (ubicacion IS NULL OR ((ubicacion).x IS NOT NULL AND (ubicacion).y IS NOT NULL))
         \\);
     , con_punto_ddl);
 }
+
+// ---- a struct column holds the whole struct or nothing ----
+//
+// A Zig struct has no optional fields, but a Postgres composite type cannot
+// declare its attributes NOT NULL: `ROW(2026, NULL, 14)::fecha` is a valid
+// fecha for Postgres and not a Fecha for Zig. A table CHECK per struct
+// column, `<entity>_<column>_complete`, requires every field once the value
+// is not NULL (a nullable column can still be NULL as a whole). Checked by
+// the tests of the whole schema (lugar above, aida's clases and mesas below)
+// and by con_todos_los_tipos.
 
 // aida.fecha is backed by a nested struct (Fecha{ año, mes, día }), not a
 // primitive: its column is the Postgres composite type named after the
@@ -193,7 +204,8 @@ test "maps every domain type of the system to SQL, including one backed by a nes
         \\    activo BOOLEAN,
         \\    fecha_de_alta fecha,
         \\    contacto TEXT,
-        \\    CONSTRAINT con_todos_los_tipos_pk PRIMARY KEY (id)
+        \\    CONSTRAINT con_todos_los_tipos_pk PRIMARY KEY (id),
+        \\    CONSTRAINT con_todos_los_tipos_fecha_de_alta_complete CHECK (fecha_de_alta IS NULL OR ((fecha_de_alta).año IS NOT NULL AND (fecha_de_alta).mes IS NOT NULL AND (fecha_de_alta).día IS NOT NULL))
         \\);
     , con_todos_los_tipos_ddl);
 }
@@ -449,7 +461,8 @@ test "generates the full aida schema: the domains of Fecha's fields, the fecha c
         \\    fecha fecha,
         \\    tema TEXT,
         \\    CONSTRAINT clases_pk PRIMARY KEY (periodo, materia, orden),
-        \\    CONSTRAINT clases_fk_cursos FOREIGN KEY (periodo, materia) REFERENCES cursos(periodo, materia)
+        \\    CONSTRAINT clases_fk_cursos FOREIGN KEY (periodo, materia) REFERENCES cursos(periodo, materia),
+        \\    CONSTRAINT clases_fecha_complete CHECK (fecha IS NULL OR ((fecha).año IS NOT NULL AND (fecha).mes IS NOT NULL AND (fecha).día IS NOT NULL))
         \\);
         \\
         \\CREATE TABLE alumnos (
@@ -511,7 +524,8 @@ test "generates the full aida schema: the domains of Fecha's fields, the fecha c
         \\    CONSTRAINT mesas_pk PRIMARY KEY (periodo, materia, fecha),
         \\    CONSTRAINT mesas_fk_cursos FOREIGN KEY (periodo, materia) REFERENCES cursos(periodo, materia),
         \\    CONSTRAINT mesas_fk_presidente FOREIGN KEY (presidente) REFERENCES docentes(docente),
-        \\    CONSTRAINT mesas_fk_vocal FOREIGN KEY (vocal) REFERENCES docentes(docente)
+        \\    CONSTRAINT mesas_fk_vocal FOREIGN KEY (vocal) REFERENCES docentes(docente),
+        \\    CONSTRAINT mesas_fecha_complete CHECK (fecha IS NULL OR ((fecha).año IS NOT NULL AND (fecha).mes IS NOT NULL AND (fecha).día IS NOT NULL))
         \\);
     , aida_schema_ddl);
 }

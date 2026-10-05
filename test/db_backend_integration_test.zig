@@ -364,6 +364,53 @@ const zig_range_script =
     \\}
 ;
 
+// A struct column holds the whole struct or nothing: Postgres rejects a fecha
+// with a missing field (check_violation, 23514, from clases_fecha_complete),
+// whoever writes it - raw SQL as from psql, or the builders with a partial
+// object, even when the missing field is the first one. A fecha that is
+// NULL as a whole still goes in. Prints STRUCT_COMPLETE_OK.
+const struct_complete_script =
+    \\import {
+    \\  insertPeriodos, deletePeriodos, insertMaterias, deleteMaterias,
+    \\  insertCursos, deleteCursos, insertClases, selectClasesByPk, deleteClases, pgTypes,
+    \\} from './src/dml.ts';
+    \\import { strictEqual } from 'node:assert';
+    \\import pg from 'pg';
+    \\const connectionString = process.env.DATABASE_URL ?? 'postgres://aida:aida@localhost:5432/aida';
+    \\const pool = new pg.Pool({ connectionString, types: pgTypes(pg.types) });
+    \\const run = (q) => pool.query(q.text, q.values);
+    \\const codeOf = async (q) => {
+    \\  try { await run(q); } catch (err) { return err.code; }
+    \\  return null;
+    \\};
+    \\const periodo = 'it-struct-' + Date.now();
+    \\const materia = periodo;
+    \\const curso = { periodo, materia };
+    \\const clase = { ...curso, orden: 1n };
+    \\try {
+    \\  await run(insertPeriodos({ periodo }));
+    \\  await run(insertMaterias({ materia, denominacion: materia }));
+    \\  await run(insertCursos({ ...curso, docente: null }));
+    \\  strictEqual(await codeOf({
+    \\    text: 'INSERT INTO clases (periodo, materia, orden, fecha) VALUES ($1, $2, 1, ROW(2026, NULL, 14)::fecha)',
+    \\    values: [periodo, materia],
+    \\  }), '23514', 'desde SQL directo: una fecha sin mes no es una Fecha');
+    \\  strictEqual(await codeOf(insertClases({ ...clase, fecha: { año: 2026, mes: null, día: 14 }, tema: 't' })),
+    \\    '23514', 'desde los builders: una fecha sin mes no es una Fecha');
+    \\  strictEqual(await codeOf(insertClases({ ...clase, fecha: { año: null, mes: 3, día: 14 }, tema: 't' })),
+    \\    '23514', 'tampoco sin el primer campo (no se guarda como NULL)');
+    \\  await run(insertClases({ ...clase, fecha: null, tema: 't' }));
+    \\  strictEqual((await run(selectClasesByPk(clase))).rows[0].fecha, null, 'una fecha NULL entera sí entra');
+    \\  console.log('STRUCT_COMPLETE_OK');
+    \\} finally {
+    \\  await run(deleteClases(clase));
+    \\  await run(deleteCursos(curso));
+    \\  await run(deleteMaterias({ materia }));
+    \\  await run(deletePeriodos({ periodo }));
+    \\  await pool.end();
+    \\}
+;
+
 /// Runs `script` with node from `backend/` and expects exit 0 and `marker` on
 /// stdout; on failure dumps node's stdout/stderr.
 fn expectNodeScriptOk(script: []const u8, marker: []const u8) !void {
@@ -428,4 +475,8 @@ test "pk, uk and fk violations map to domain errors" {
 
 test "the database rejects a value outside the range of its Zig type" {
     try expectNodeScriptOk(zig_range_script, "ZIG_RANGE_OK");
+}
+
+test "the database rejects a struct column with a missing field, whoever writes it" {
+    try expectNodeScriptOk(struct_complete_script, "STRUCT_COMPLETE_OK");
 }

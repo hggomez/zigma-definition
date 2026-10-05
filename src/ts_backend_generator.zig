@@ -168,21 +168,29 @@ fn nonPkParamCount(comptime type_defs: anytype, comptime entity: anytype) usize 
 
 /// The SQL value of a column whose parameters start at `$first` (the encode
 /// half of the codec): `$n` for a plain column; for a struct-backed one,
-/// `ROW($n::T1, $n+1::T2, ...)::<composite>`, wrapped in `CASE WHEN ... IS
-/// NULL` when the column is nullable (`ROW(NULL, ...)` is not `NULL`).
+/// `ROW($n::T1, $n+1::T2, ...)::<composite>`, wrapped in `CASE WHEN <every
+/// field> IS NULL` when the column is nullable (`ROW(NULL, ...)` is not
+/// `NULL`).
 fn valueExpr(comptime type_defs: anytype, comptime entity: anytype, comptime col: []const u8, comptime first: usize) []const u8 {
     const field = @field(entity.fields, col);
     const T = StructOf(type_defs, field.type) orelse return placeholder(first);
     const info = @typeInfo(T).@"struct";
     comptime var casts: []const u8 = "";
+    comptime var all_null: []const u8 = "";
     inline for (info.field_types, 0..) |field_type, i| {
-        if (i > 0) casts = casts ++ ", ";
-        casts = casts ++ placeholder(first + i) ++ "::" ++ sqlType(type_defs, @typeName(field_type));
+        const cast = placeholder(first + i) ++ "::" ++ sqlType(type_defs, @typeName(field_type));
+        if (i > 0) {
+            casts = casts ++ ", ";
+            all_null = all_null ++ " AND ";
+        }
+        casts = casts ++ cast;
+        all_null = all_null ++ cast ++ " IS NULL";
     }
     const row = "ROW(" ++ casts ++ ")::" ++ sqlType(type_defs, field.type);
     if (!isNullableColumn(entity, col)) return row;
-    const first_cast = placeholder(first) ++ "::" ++ sqlType(type_defs, @typeName(info.field_types[0]));
-    return "CASE WHEN " ++ first_cast ++ " IS NULL THEN NULL ELSE " ++ row ++ " END";
+    // only a struct with no field at all is NULL; a partial one stays a ROW,
+    // which the `<entity>_<column>_complete` CHECK of the table rejects
+    return "CASE WHEN " ++ all_null ++ " THEN NULL ELSE " ++ row ++ " END";
 }
 
 /// The JS values feeding `valueExpr`'s parameters: `obj.col`, or one per leaf

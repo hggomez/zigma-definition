@@ -50,6 +50,12 @@ pub fn fkConstraintName(comptime entity_name: []const u8, comptime fk_name: []co
     return entity_name ++ "_fk_" ++ fk_name;
 }
 
+/// The CHECK that a struct column holds the whole struct or nothing (see
+/// `completeClause`).
+pub fn completeConstraintName(comptime entity_name: []const u8, comptime column: []const u8) []const u8 {
+    return entity_name ++ "_" ++ column ++ "_complete";
+}
+
 fn columnListClause(comptime constraint_name: []const u8, comptime label: []const u8, comptime names: anytype) []const u8 {
     return "CONSTRAINT " ++ constraint_name ++ " " ++ label ++ " (" ++ joinNames(names) ++ ")";
 }
@@ -95,7 +101,27 @@ pub fn createTableSql(comptime type_defs: anytype, comptime name: []const u8, co
         clauses = appendClause(clauses, fkClause(fkConstraintName(name, fk_name), @field(entity.fks, fk_name)));
     }
 
+    inline for (field_names) |field_name| {
+        const type_name = @field(entity.fields, field_name).type;
+        if (comptime !isStructDomain(type_defs, type_name)) continue;
+        clauses = appendClause(clauses, completeClause(name, field_name, @field(type_defs, type_name).Type));
+    }
+
     return "CREATE TABLE " ++ name ++ " (\n    " ++ clauses ++ "\n);";
+}
+
+/// A struct column holds the whole struct or nothing: a Zig struct has no
+/// optional fields, but a Postgres composite type cannot declare its
+/// attributes NOT NULL (`ROW(2026, NULL, 14)::fecha` is a fecha). So a table
+/// CHECK requires every field once the value is not NULL.
+fn completeClause(comptime entity_name: []const u8, comptime column: []const u8, comptime T: type) []const u8 {
+    comptime var fields: []const u8 = "";
+    inline for (@typeInfo(T).@"struct".field_names, 0..) |field_name, i| {
+        if (i > 0) fields = fields ++ " AND ";
+        fields = fields ++ "(" ++ column ++ ")." ++ field_name ++ " IS NOT NULL";
+    }
+    return "CONSTRAINT " ++ completeConstraintName(entity_name, column) ++
+        " CHECK (" ++ column ++ " IS NULL OR (" ++ fields ++ "))";
 }
 
 /// Generates the `CREATE TYPE` (Postgres composite type) of a struct-backed

@@ -141,12 +141,21 @@ revisión antes de implementar.
   `null`): en HTTP tendría que ser un 400/422 con el campo, no un 500.
 * `domainTypes` mira un solo nivel de struct: un struct anidado en un struct no está
   soportado todavía en SQL (ver arriba), cuando lo esté hay que recorrerlo también.
+* `check` sobre las filas leídas de Postgres en los tests de integración (un fallo ahí
+  sería un esquema que no coincide o datos corruptos: en producción, 500 y log).
+* Un `23514` de un `CHECK` `_complete` tampoco es un `domainError` todavía (como el de
+  rango).
 * Usar `check` en `server.ts` (query string y cuerpo JSON) y, para un `PUT`, con la
   descripción de los campos no-pk solamente.
 * `check` sobre un valor con un array donde va un objeto da `expected an object`, no está
   probado.
 
 ## Hechos restricciones de Zig (referencia rápida, no repetir)
+
+* Columna struct completa o nada: `CHECK` `<entidad>_<columna>_complete` en el DDL y el
+  `CASE` de los builders sobre todos los campos; integración: `ROW(2026, NULL, 14)` desde
+  SQL directo y desde los builders (también sin el primer campo) → `23514`, `fecha: null`
+  entero entra.
 
 * `check.ts` (`ts_check_generator`): `<entidad>Restrictions` derivada de los tipos de Zig
   (`test/ts_check_generator_test.zig`) y `check` genérico probado en Node sobre
