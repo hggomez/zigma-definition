@@ -101,6 +101,12 @@ driver, ver `TEST_QUEUE.md`).
   * Confirmado de punta a punta con `docker compose down -v` (reset completo) seguido
     de `zig build create-database`: las 11 tablas se crean limpias, con sus fks, pks
     compuestas y `NOT NULL` correctos (verificado con `psql -c "\dt"` y `\d docentes`).
+* Rama `type-translation`: el tipo SQL de cada columna sale del tipo de Zig de su dominio
+  (el generador recibe el `type_defs` del sistema y pasa por `zig_type_map_sql.sqlTypeOf`),
+  reemplaza a la tabla a mano `aida.sql_type_defs`. Un entero más angosto que su entero de
+  Postgres va con un `DOMAIN` (`zig_u8`) que lo restringe al intervalo de Zig; `integer`
+  (`i64`) es `BIGINT`. Los structs (`fecha`) todavía no se mapean: el esquema de aida no
+  compila hasta el tipo compuesto (`test/sql_generator_aida_test.zig` en rojo).
 
 ## Hito 2 (backend): estado y decisiones
 

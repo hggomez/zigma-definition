@@ -40,7 +40,7 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "defined_type_wrong_field_type.zig", .expected = "expected type 'i64', found '*const [1:0]u8'" },
     .{ .file = "validar_cargo_missing_field.zig", .expected = at("validar_cargo_missing_field.zig") },
     .{ .file = "defined_type_no_field.zig", .expected = at("defined_type_no_field.zig") },
-    .{ .file = "sql_unknown_type_mapping.zig", .expected = "type 'text' has no SQL mapping" },
+    .{ .file = "sql_type_not_in_type_defs.zig", .expected = "type 'fecha' is not in type_defs" },
     .{ .file = "zig_type_map_ts_float.zig", .expected = "Zig type 'f32' has no TS mapping" },
     .{ .file = "zig_type_map_ts_optional.zig", .expected = "Zig type '?u8' has no TS mapping" },
     .{ .file = "zig_type_map_ts_other_slice.zig", .expected = "Zig type '[]const i32' has no TS mapping" },
@@ -74,19 +74,20 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const zig_type_map_sql_mod = b.addModule("zig_type_map_sql", .{
+        .root_source_file = b.path("src/zig_type_map_sql.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const sql_generator_mod = b.addModule("sql_generator", .{
         .root_source_file = b.path("src/sql_generator.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zigma", .module = zigma_mod },
+            .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
         },
-    });
-
-    const zig_type_map_sql_mod = b.addModule("zig_type_map_sql", .{
-        .root_source_file = b.path("src/zig_type_map_sql.zig"),
-        .target = target,
-        .optimize = optimize,
     });
 
     const zig_type_map_ts_mod = b.addModule("zig_type_map_ts", .{
@@ -131,6 +132,19 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_sql_generator_tests = b.addRunArtifact(sql_generator_tests);
+
+    const sql_generator_aida_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/sql_generator_aida_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "sql_generator", .module = sql_generator_mod },
+            },
+        }),
+    });
+    const run_sql_generator_aida_tests = b.addRunArtifact(sql_generator_aida_tests);
 
     const ts_backend_generator_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -283,6 +297,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_sql_generator_tests.step);
+    test_step.dependOn(&run_sql_generator_aida_tests.step);
     test_step.dependOn(&run_ts_backend_generator_tests.step);
     test_step.dependOn(&run_zig_type_map_ts_tests.step);
     test_step.dependOn(&run_zig_type_map_sql_tests.step);
