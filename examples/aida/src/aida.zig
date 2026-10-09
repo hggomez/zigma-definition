@@ -203,12 +203,12 @@ pub fn validarCargo(cargo_sin_validar: Cargo) error{AyudanteNoPuedeDirigir}!void
 pub const DocenteValidationError = error{TeoricoRequiereCincoAniosExperiencia};
 
 /// La entidad concreta lleva todos los campos; la regla usa cargo y experiencia.
-pub fn validarDocente(value: Docente) DocenteValidationError!void {
-    const cargo_value = value.cargo orelse return;
+pub fn validarDocente(doc: Docente) DocenteValidationError!void {
+    const cargo_value = doc.cargo orelse return;
     const normalized_cargo = std.mem.trim(u8, cargo_value, " \t\r\n");
     if (!std.ascii.eqlIgnoreCase(normalized_cargo, "teorico")) return;
 
-    const experiencia = value.experiencia orelse
+    const experiencia = doc.experiencia orelse
         return error.TeoricoRequiereCincoAniosExperiencia;
     if (experiencia < 5)
         return error.TeoricoRequiereCincoAniosExperiencia;
