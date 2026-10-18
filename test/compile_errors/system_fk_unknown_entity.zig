@@ -1,13 +1,13 @@
-//! expected: unknown target entity 'inexistentes'
-//! (a fk to an entity that is not part of the system is rejected)
+//! Diagnóstico esperado: `unknown target entity 'inexistentes'`.
+//! Se rechaza una FK a una entidad que no pertenece al sistema.
 const zigma = @import("zigma");
 const aida = @import("aida");
 
 comptime {
-    const huerfanos = zigma.defineEntity(.{
+    const huerfanos = .{
         .pk = .{"x"},
         .fks = .{ .rota = .{ .entity = "inexistentes", .fields = .{ .x = "algo" } } },
         .fields = zigma.record(aida.type_defs, .{ .x = .{ .type = "text" } }),
-    });
-    _ = zigma.defineEntities(.{ .huerfanos = huerfanos });
+    };
+    _ = zigma.defineEntities(.{ .huerfanos = .{ .Type = zigma.Entity(aida.type_defs, huerfanos), .definition = huerfanos } });
 }

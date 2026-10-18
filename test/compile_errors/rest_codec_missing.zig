@@ -1,0 +1,16 @@
+const zigma = @import("zigma");
+const rest = @import("zigma_rest");
+
+const type_defs = zigma.defineTypes(zigma.merge(.{
+    zigma.common_type_defs,
+    .{ .fecha = zigma.TypeDef{ .Type = []const u8 } },
+}));
+const fields = zigma.record(type_defs, .{ .when = .{ .type = "fecha" } });
+const entity = .{ .pk = .{"when"}, .fields = fields };
+const entities = zigma.defineEntities(.{ .events = .{ .Type = zigma.Entity(type_defs, entity), .definition = entity } });
+
+comptime {
+    _ = rest.Api(Model, rest.common_codecs, .{});
+}
+
+const Model = zigma.Framework(type_defs, entities);

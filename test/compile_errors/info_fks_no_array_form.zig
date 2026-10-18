@@ -1,11 +1,11 @@
-//! expected: expected type
-//! (after completion the array form is gone: fields is always the
-//! source→target map, it cannot be used as a list)
+//! Diagnóstico esperado: `expected type`.
+//! Después de normalizar desaparece la forma de array: fields siempre es
+//! el mapa origen→destino y no se puede usar como una lista.
 const zigma = @import("zigma");
 const aida = @import("aida");
 
 comptime {
-    const mesas_info = zigma.completeEntity(aida.mesas);
+    const mesas_info = zigma.completeEntity(aida.mesa_def);
     const as_list: []const [:0]const u8 = mesas_info.fks.cursos.fields;
     _ = as_list;
 }

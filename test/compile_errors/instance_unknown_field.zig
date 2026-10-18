@@ -1,5 +1,5 @@
-//! expected: no field named 'inexistente'
-//! (the completed record only has the fields of the definition)
+//! Diagnóstico esperado: `no field named 'inexistente'`.
+//! El record normalizado solo tiene los campos de la definición.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

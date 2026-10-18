@@ -1,4 +1,4 @@
-//! expected: unknown property 'colour'
+//! Diagnóstico esperado: `unknown property 'colour'`.
 const zigma = @import("zigma");
 const aida = @import("aida");
 

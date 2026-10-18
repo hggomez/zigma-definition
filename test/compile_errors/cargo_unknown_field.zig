@@ -1,9 +1,9 @@
-//! expected: an error at the access below (fields outside the def cannot be
-//! accessed)
+//! Se espera un error en el acceso siguiente: no se puede acceder
+//! a campos que no pertenecen a la definición.
 const aida = @import("aida");
 
 comptime {
-    const titular: aida.DefinedType(aida.cargo) = .{
+    const titular: aida.Cargo = .{
         .cargo = "TIT",
         .denominacion = "Titular",
         .orden = 1,

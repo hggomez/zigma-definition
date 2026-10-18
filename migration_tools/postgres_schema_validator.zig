@@ -1,0 +1,174 @@
+//! Comprobación en base de datos de que un schema migrado coincide con la SSOT actual de AIDA.
+//!
+//! Crea un schema esperado temporal a partir del DDL baseline comptime,
+//! compara las estructuras del catálogo PostgreSQL y siempre intenta eliminar
+//! el schema temporal. Nunca modifica objetos del schema real.
+
+const std = @import("std");
+const postgres = @import("aida_postgres");
+const libpq = @import("zigma_postgres_libpq");
+
+// El nombre privado fijo es seguro porque el validador impide usarlo como
+// destino real y siempre intenta limpiar antes de retornar.
+const expected_schema = "_zigma_expected_validation";
+
+pub fn main(init: std.process.Init) !void {
+    // La configuración se recibe por ambiente; este ejecutable no admite argumentos.
+    var args = try std.process.Args.Iterator.initAllocator(init.minimal.args, init.gpa);
+    defer args.deinit();
+    _ = args.next();
+    if (args.next() != null) return error.InvalidArgument;
+
+    const database_url = init.environ_map.get("DATABASE_URL") orelse {
+        std.debug.print("DATABASE_URL is required by postgres-schema-validator\n", .{});
+        return error.MissingDatabaseUrl;
+    };
+    const actual_schema = init.environ_map.get("ZIGMA_ACTUAL_SCHEMA") orelse "public";
+    // El nombre de schema se interpola en SQL confiable del validador: solo se
+    // acepta una gramática acotada de identificadores y el límite PostgreSQL de 63 bytes.
+    if (!validIdentifier(actual_schema) or std.mem.eql(u8, actual_schema, expected_schema))
+        return error.InvalidSchemaName;
+
+    var connection = libpq.Connection.init(init.gpa);
+    defer connection.deinit();
+    connection.connect(database_url) catch |err| {
+        printDatabaseError(&connection, err);
+        return err;
+    };
+
+    // Materializa la SSOT esperada en un schema aislado usando el baseline comptime.
+    // El schema destino real se mantiene de solo lectura durante toda la validación.
+    const setup_sql = try std.fmt.allocPrint(
+        init.gpa,
+        "CREATE SCHEMA \"{s}\"; SET search_path TO \"{s}\", pg_catalog;\n{s}",
+        .{ expected_schema, expected_schema, postgres.baseline_ddl },
+    );
+    defer init.gpa.free(setup_sql);
+    connection.exec(setup_sql) catch |err| {
+        printDatabaseError(&connection, err);
+        return err;
+    };
+    // Se intenta limpiar en cada salida posterior. CASCADE se limita estrictamente
+    // al schema temporal del validador, nunca al destino configurado.
+    defer connection.exec("DROP SCHEMA \"_zigma_expected_validation\" CASCADE") catch {};
+
+    // PostgreSQL compara las relaciones de catálogo y lanza un error ante la primera
+    // diferencia estructural. La herramienta expone así una API simple de éxito o error.
+    const comparison_sql = try catalogComparisonSql(init.gpa, actual_schema);
+    defer init.gpa.free(comparison_sql);
+    connection.exec(comparison_sql) catch |err| {
+        printDatabaseError(&connection, err);
+        return err;
+    };
+    std.debug.print("PostgreSQL schema '{s}' matches the compiled Zigma model\n", .{actual_schema});
+}
+
+fn validIdentifier(value: []const u8) bool {
+    // Este subconjunto conservador evita una segunda implementación de escape de
+    // identificadores SQL en una herramienta administrativa sensible a la seguridad.
+    if (value.len == 0 or value.len > 63) return false;
+    for (value) |byte| if (!std.ascii.isAlphanumeric(byte) and byte != '_') return false;
+    return true;
+}
+
+fn catalogComparisonSql(allocator: std.mem.Allocator, actual: []const u8) ![]u8 {
+    // Cada par de CTEs proyecta el schema real y el esperado a la misma relación
+    // canónica. EXCEPT simétrico detecta agregados y eliminaciones.
+    return std.fmt.allocPrint(allocator,
+        \\DO $$
+        \\BEGIN
+        // Primero compara el conjunto de tablas gestionadas. Las dos tablas de control
+        // de Liquibase quedan fuera del modelo de estado deseado de Zigma.
+        \\  IF EXISTS (
+        \\    WITH actual AS (
+        \\      SELECT c.relname
+        \\      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        \\      WHERE n.nspname = '{s}' AND c.relkind IN ('r','p')
+        \\        AND lower(c.relname) NOT IN ('databasechangelog','databasechangeloglock')
+        \\    ), expected AS (
+        \\      SELECT c.relname
+        \\      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        \\      WHERE n.nspname = '{s}' AND c.relkind IN ('r','p')
+        \\    )
+        \\    (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+        \\    UNION ALL
+        \\    (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+        \\  ) THEN RAISE EXCEPTION 'Zigma schema validation: table set differs'; END IF;
+        \\
+        // attnum conserva el orden físico de columnas; los OIDs y modificadores de tipos
+        // PostgreSQL, la nulabilidad y la collation cubren la estructura de columna modelada.
+        \\  IF EXISTS (
+        \\    WITH actual AS (
+        \\      SELECT c.relname AS table_name, a.attnum, a.attname, a.atttypid, a.atttypmod, a.attnotnull, a.attcollation
+        \\      FROM pg_attribute a
+        \\      JOIN pg_class c ON c.oid = a.attrelid
+        \\      JOIN pg_namespace n ON n.oid = c.relnamespace
+        \\      WHERE n.nspname = '{s}' AND c.relkind IN ('r','p') AND a.attnum > 0 AND NOT a.attisdropped
+        \\        AND lower(c.relname) NOT IN ('databasechangelog','databasechangeloglock')
+        \\    ), expected AS (
+        \\      SELECT c.relname AS table_name, a.attnum, a.attname, a.atttypid, a.atttypmod, a.attnotnull, a.attcollation
+        \\      FROM pg_attribute a
+        \\      JOIN pg_class c ON c.oid = a.attrelid
+        \\      JOIN pg_namespace n ON n.oid = c.relnamespace
+        \\      WHERE n.nspname = '{s}' AND c.relkind IN ('r','p') AND a.attnum > 0 AND NOT a.attisdropped
+        \\    )
+        \\    (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+        \\    UNION ALL
+        \\    (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+        \\  ) THEN RAISE EXCEPTION 'Zigma schema validation: columns, order, type, or nullability differ'; END IF;
+        \\
+        // La comparación de restricciones incluye nombres deterministas, clases,
+        // campos locales ordenados y la secuencia de tabla y campos gestionados referenciados.
+        \\  IF EXISTS (
+        \\    WITH actual AS (
+        \\      SELECT src.relname AS table_name, con.conname, con.contype,
+        \\        ARRAY(SELECT a.attname FROM unnest(con.conkey) WITH ORDINALITY k(attnum, ord)
+        \\              JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum ORDER BY k.ord) AS columns,
+        \\        COALESCE(dst_n.nspname = '{s}', false) AS target_is_managed_schema,
+        \\        COALESCE(dst.relname, '') AS target_table,
+        \\        ARRAY(SELECT a.attname FROM unnest(COALESCE(con.confkey, ARRAY[]::smallint[])) WITH ORDINALITY k(attnum, ord)
+        \\              JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum ORDER BY k.ord) AS target_columns
+        \\      FROM pg_constraint con
+        \\      JOIN pg_class src ON src.oid = con.conrelid
+        \\      JOIN pg_namespace n ON n.oid = src.relnamespace
+        \\      LEFT JOIN pg_class dst ON dst.oid = con.confrelid
+        \\      LEFT JOIN pg_namespace dst_n ON dst_n.oid = dst.relnamespace
+        \\      WHERE n.nspname = '{s}' AND con.contype IN ('p','u','f')
+        \\        AND lower(src.relname) NOT IN ('databasechangelog','databasechangeloglock')
+        \\    ), expected AS (
+        \\      SELECT src.relname AS table_name, con.conname, con.contype,
+        \\        ARRAY(SELECT a.attname FROM unnest(con.conkey) WITH ORDINALITY k(attnum, ord)
+        \\              JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum ORDER BY k.ord) AS columns,
+        \\        COALESCE(dst_n.nspname = '{s}', false) AS target_is_managed_schema,
+        \\        COALESCE(dst.relname, '') AS target_table,
+        \\        ARRAY(SELECT a.attname FROM unnest(COALESCE(con.confkey, ARRAY[]::smallint[])) WITH ORDINALITY k(attnum, ord)
+        \\              JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum ORDER BY k.ord) AS target_columns
+        \\      FROM pg_constraint con
+        \\      JOIN pg_class src ON src.oid = con.conrelid
+        \\      JOIN pg_namespace n ON n.oid = src.relnamespace
+        \\      LEFT JOIN pg_class dst ON dst.oid = con.confrelid
+        \\      LEFT JOIN pg_namespace dst_n ON dst_n.oid = dst.relnamespace
+        \\      WHERE n.nspname = '{s}' AND con.contype IN ('p','u','f')
+        \\    )
+        \\    (SELECT * FROM actual EXCEPT SELECT * FROM expected)
+        \\    UNION ALL
+        \\    (SELECT * FROM expected EXCEPT SELECT * FROM actual)
+        \\  ) THEN RAISE EXCEPTION 'Zigma schema validation: PK, UK, or FK constraints differ'; END IF;
+        \\END
+        \\$$;
+    , .{
+        actual,          expected_schema,
+        actual,          expected_schema,
+        actual,          actual,
+        expected_schema, expected_schema,
+    });
+}
+
+fn printDatabaseError(connection: *const libpq.Connection, err: anyerror) void {
+    // Conserva el error Zig estable y agrega el último diagnóstico de libpq
+    // para quien ejecuta este comando administrativo.
+    if (connection.lastError()) |message|
+        std.debug.print("PostgreSQL {t}: {s}\n", .{ err, message })
+    else
+        std.debug.print("PostgreSQL {t}\n", .{err});
+}
