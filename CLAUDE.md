@@ -30,6 +30,10 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   los compila con `expect_errors` (el paso tiene éxito solo si el error coincide) y los
   cuelga del step `test`. La lista de casos con su mensaje esperado está en `build.zig`.
 * `zig build test` corre todo: tests de runtime y casos de no-compila.
+* `src/rules.zig` (`defineRules`, re-exportado por `zigma`), `src/rules_wasm.zig` (las reglas
+  de un sistema compiladas a un `.wasm`) y `src/ts_rules_generator.zig` (`rules.ts`); sus
+  tests usan `test/test_system.zig`, un sistema propio de prueba. `zig build rules-wasm`
+  prueba el `.wasm` y el `rules.ts` desde Node (fuera de `zig build test`).
 
 ## Decisiones de diseño
 
@@ -52,6 +56,13 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   fks circulares y reflexivas. Chequeo local en `defineEntity` (campos origen, pk, uks);
   chequeo global en `defineEntities` (entidad destino existe, campos destino son su pk
   completa o una de sus uks). Los errores son `@compileError` con mensajes diseñados.
+* Reglas: una regla es siempre una validación, `fn(RecordInstanceType(type_defs, record))
+  error{...}!void`, declarada con `zigma.defineRules(type_defs, .{ .nombre = .{ .record,
+  .rule } })`; el record va explícito (el tipo del parámetro perdió dominios y `nullable`).
+  Se corren desde TS compiladas a WASM (un `.wasm` por sistema, exports por comptime, JSON
+  de entrada, `""` / nombre del error / `"InvalidInput"` de salida); `rules.ts` devuelve
+  `{ ok: true } | { ok: false; error }` y confía en los tipos TS de su argumento. Cuándo se
+  aplica una regla queda para más adelante.
 * En vez del spread de TypeScript: `zigma.merge(.{a, b})` para records y colecciones de
   tipos (dedup por nombre, gana el último, orden de primera aparición) y
   `zigma.mergePk(.{pk1, pk2})` para pks (dedup preservando orden). La concatenación con

@@ -99,6 +99,17 @@ entidad destino exista, y que sus campos destino sean su pk completa o una de su
 la pk (deduplicada), las fks (siempre en la forma de mapa origen→destino, aunque se hayan
 escrito como lista) y las uks (tal cual, o vacías si no se declararon).
 
+### Reglas de dominio: `defineRules`
+
+Una regla es una validación escrita en Zig sobre una instancia de un record: una función que
+toma exactamente `RecordInstanceType(type_defs, record)` y devuelve `error{...}!void` (pasa,
+o devuelve un error de dominio). `zigma.defineRules(type_defs, .{...})` declara las reglas
+de un sistema, cada una como `.{ .record = ..., .rule = ... }` con su nombre como key, y
+chequea en compilación que la función coincida con su record. Declararlas es lo que las hace
+visibles para los generadores: `src/rules_wasm.zig` las compila a un módulo WASM por sistema
+y `src/ts_rules_generator.zig` genera `rules.ts`, que las expone tipadas al backend
+TypeScript.
+
 ## Ejemplo: sistema de alumnos (aida)
 
 `examples/aida.zig` describe un sistema de alumnos con este vocabulario. Incluye entidades
@@ -128,6 +139,10 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
 * `test/aida_test.zig`: los tests positivos.
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
   error esperado listado en `build.zig`.
+* `src/rules.zig`: `defineRules` (re-exportado por `zigma`). `src/rules_wasm.zig` y
+  `src/ts_rules_generator.zig`: las reglas de un sistema compiladas a WASM y su `rules.ts`.
+* `test/test_system.zig`: un sistema propio de prueba con reglas (salas y reservas), para los
+  tests de las reglas. `zig build rules-wasm` lo compila a WASM y lo prueba desde Node.
 
 ## Forma de trabajo
 

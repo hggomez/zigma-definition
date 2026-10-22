@@ -40,7 +40,29 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "defined_type_wrong_field_type.zig", .expected = "expected type 'i64', found '*const [1:0]u8'" },
     .{ .file = "validar_cargo_missing_field.zig", .expected = at("validar_cargo_missing_field.zig") },
     .{ .file = "defined_type_no_field.zig", .expected = at("defined_type_no_field.zig") },
-    .{ .file = "sql_unknown_type_mapping.zig", .expected = "type 'text' has no SQL mapping" },
+    .{ .file = "sql_type_not_in_type_defs.zig", .expected = "type 'fecha' is not in type_defs" },
+    .{ .file = "zig_type_map_ts_float.zig", .expected = "Zig type 'f32' has no TS mapping" },
+    .{ .file = "zig_type_map_ts_optional.zig", .expected = "Zig type '?u8' has no TS mapping" },
+    .{ .file = "zig_type_map_ts_other_slice.zig", .expected = "Zig type '[]const i32' has no TS mapping" },
+    .{ .file = "zig_type_map_ts_struct_field_unsupported.zig", .expected = "Zig type 'f64' has no TS mapping" },
+    .{ .file = "ts_type_not_in_type_defs.zig", .expected = "type 'fecha' is not in type_defs" },
+    .{ .file = "zig_type_map_sql_too_wide.zig", .expected = "Zig type 'u64' does not fit in a Postgres BIGINT" },
+    .{ .file = "zig_type_map_sql_too_wide_signed.zig", .expected = "Zig type 'i65' does not fit in a Postgres BIGINT" },
+    .{ .file = "zig_type_map_sql_float.zig", .expected = "Zig type 'f32' has no SQL mapping" },
+    .{ .file = "zig_type_map_sql_optional.zig", .expected = "Zig type '?u8' has no SQL mapping" },
+    .{ .file = "zig_type_map_sql_other_slice.zig", .expected = "Zig type '[]const i32' has no SQL mapping" },
+    .{ .file = "zig_type_map_sql_nested_struct.zig", .expected = "field 'desde' is a struct: nested structs have no SQL mapping yet" },
+    .{ .file = "zig_type_map_sql_struct_field_unsupported.zig", .expected = "Zig type 'f64' has no SQL mapping" },
+    .{ .file = "rules_not_a_struct.zig", .expected = "a rule collection must be a struct of rule definitions" },
+    .{ .file = "rules_not_a_rule_definition.zig", .expected = "rule 'checkBooking': a rule definition must be a struct like .{ .record = ..., .rule = ... }" },
+    .{ .file = "rules_missing_record.zig", .expected = "rule 'checkBooking': missing 'record'" },
+    .{ .file = "rules_missing_rule.zig", .expected = "rule 'checkBooking': missing 'rule'" },
+    .{ .file = "rules_unknown_property.zig", .expected = "rule 'checkBooking': unknown property 'colour'" },
+    .{ .file = "rules_not_a_function.zig", .expected = "rule 'checkBooking': 'rule' must be a function" },
+    .{ .file = "rules_two_parameters.zig", .expected = "rule 'checkBooking': must take exactly one parameter, an instance of its record" },
+    .{ .file = "rules_parameter_of_other_record.zig", .expected = "rule 'checkBooking': its parameter must be the instance type of its record" },
+    .{ .file = "rules_not_a_validation.zig", .expected = "rule 'checkBooking': must be a validation, returning error{...}!void" },
+    .{ .file = "rules_returns_a_value.zig", .expected = "rule 'checkBooking': must be a validation, returning error{...}!void" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -62,13 +84,26 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const zig_type_map_sql_mod = b.addModule("zig_type_map_sql", .{
+        .root_source_file = b.path("src/zig_type_map_sql.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const sql_generator_mod = b.addModule("sql_generator", .{
         .root_source_file = b.path("src/sql_generator.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zigma", .module = zigma_mod },
+            .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
         },
+    });
+
+    const zig_type_map_ts_mod = b.addModule("zig_type_map_ts", .{
+        .root_source_file = b.path("src/zig_type_map_ts.zig"),
+        .target = target,
+        .optimize = optimize,
     });
 
     const ts_backend_generator_mod = b.addModule("ts_backend_generator", .{
@@ -77,6 +112,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zigma", .module = zigma_mod },
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
         },
     });
 
@@ -107,6 +143,19 @@ pub fn build(b: *std.Build) void {
     });
     const run_sql_generator_tests = b.addRunArtifact(sql_generator_tests);
 
+    const sql_generator_aida_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/sql_generator_aida_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "sql_generator", .module = sql_generator_mod },
+            },
+        }),
+    });
+    const run_sql_generator_aida_tests = b.addRunArtifact(sql_generator_aida_tests);
+
     const ts_backend_generator_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/ts_backend_generator_test.zig"),
@@ -120,6 +169,100 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_ts_backend_generator_tests = b.addRunArtifact(ts_backend_generator_tests);
+
+    const zig_type_map_ts_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/zig_type_map_ts_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+            },
+        }),
+    });
+    const run_zig_type_map_ts_tests = b.addRunArtifact(zig_type_map_ts_tests);
+
+    const zig_type_map_sql_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/zig_type_map_sql_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
+            },
+        }),
+    });
+    const run_zig_type_map_sql_tests = b.addRunArtifact(zig_type_map_sql_tests);
+
+    // A small system of its own with rules (rooms and bookings), for the
+    // tests of defineRules and of the rules WASM module.
+    const test_system_mod = b.createModule(.{
+        .root_source_file = b.path("test/test_system.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_mod },
+        },
+    });
+
+    const rules_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/rules_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "test_system", .module = test_system_mod },
+            },
+        }),
+    });
+    const run_rules_tests = b.addRunArtifact(rules_tests);
+
+    // The rules WASM module is generic: it exports the rules of whatever
+    // module it is given as "system". Here, the test system.
+    const rules_wasm_test_system_mod = b.createModule(.{
+        .root_source_file = b.path("src/rules_wasm.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "system", .module = test_system_mod },
+        },
+    });
+    const rules_wasm_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/rules_wasm_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "rules_wasm", .module = rules_wasm_test_system_mod },
+            },
+        }),
+    });
+    const run_rules_wasm_tests = b.addRunArtifact(rules_wasm_tests);
+
+    const ts_rules_generator_mod = b.addModule("ts_rules_generator", .{
+        .root_source_file = b.path("src/ts_rules_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+            .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
+        },
+    });
+    const ts_rules_generator_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/ts_rules_generator_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "test_system", .module = test_system_mod },
+                .{ .name = "ts_rules_generator", .module = ts_rules_generator_mod },
+            },
+        }),
+    });
+    const run_ts_rules_generator_tests = b.addRunArtifact(ts_rules_generator_tests);
 
     const print_schema_exe = b.addExecutable(.{
         .name = "print_schema",
@@ -230,10 +373,106 @@ pub fn build(b: *std.Build) void {
     const ts_backend_db_step = b.step("ts-backend-db", "Generate, then run the DML integration test against the docker-compose Postgres");
     ts_backend_db_step.dependOn(&run_db_backend_integration_tests.step);
 
+    // `zig build rules-wasm`: compile the rules of the test system to one
+    // wasm32 module (src/rules_wasm.zig with test/test_system.zig as its
+    // "system") and run test/rules_wasm_node_test.zig, a Zig test that loads
+    // it with Node's built-in WebAssembly and calls the rules under the
+    // contract. Not on `test_step` (needs Node). The modules are created again
+    // for wasm32: every module of a compilation shares its target.
+    const wasm_target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
+    const zigma_wasm_mod = b.createModule(.{
+        .root_source_file = b.path("src/zigma.zig"),
+        .target = wasm_target,
+        .optimize = .ReleaseSmall,
+    });
+    const test_system_wasm_mod = b.createModule(.{
+        .root_source_file = b.path("test/test_system.zig"),
+        .target = wasm_target,
+        .optimize = .ReleaseSmall,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_wasm_mod },
+        },
+    });
+    const test_system_rules_wasm = b.addExecutable(.{
+        .name = "test_system_rules",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/rules_wasm.zig"),
+            .target = wasm_target,
+            .optimize = .ReleaseSmall,
+            .imports = &.{
+                .{ .name = "system", .module = test_system_wasm_mod },
+            },
+        }),
+    });
+    // a library of exports: no entry point, and the `export`s kept. rdynamic
+    // also exports `__stack_pointer` (accepted, not contract); the exact list
+    // (`export_symbol_names`) would repeat the rule names here.
+    test_system_rules_wasm.entry = .disabled;
+    test_system_rules_wasm.rdynamic = true;
+
+    const rules_wasm_options = b.addOptions();
+    rules_wasm_options.addOptionPath("wasm_path", test_system_rules_wasm.getEmittedBin());
+    const rules_wasm_node_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/rules_wasm_node_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "build_options", .module = rules_wasm_options.createModule() },
+            },
+        }),
+    });
+    const run_rules_wasm_node_tests = b.addRunArtifact(rules_wasm_node_tests);
+
+    // Then the generated rules.ts of the test system, next to its compiled
+    // rules as rules.wasm (rules.ts loads ./rules.wasm), in a generated
+    // directory: test/rules_ts_node_test.zig imports it from Node.
+    const print_test_system_rules_ts_exe = b.addExecutable(.{
+        .name = "print_test_system_rules_ts",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/print_test_system_rules_ts.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "test_system", .module = test_system_mod },
+                .{ .name = "ts_rules_generator", .module = ts_rules_generator_mod },
+            },
+        }),
+    });
+    const test_system_rules_ts = b.addRunArtifact(print_test_system_rules_ts_exe).captureStdOut(.{});
+    const test_system_rules_dir = b.addWriteFiles();
+    const test_system_rules_ts_path = test_system_rules_dir.addCopyFile(test_system_rules_ts, "rules.ts");
+    _ = test_system_rules_dir.addCopyFile(test_system_rules_wasm.getEmittedBin(), "rules.wasm");
+
+    const rules_ts_options = b.addOptions();
+    // the path of rules.ts (an option path must be a file); rules.wasm is next to it
+    rules_ts_options.addOptionPath("rules_ts_path", test_system_rules_ts_path);
+    const rules_ts_node_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/rules_ts_node_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "build_options", .module = rules_ts_options.createModule() },
+            },
+        }),
+    });
+    const run_rules_ts_node_tests = b.addRunArtifact(rules_ts_node_tests);
+
+    const rules_wasm_step = b.step("rules-wasm", "Compile the test system's rules to wasm32, generate its rules.ts, and test both from Node");
+    rules_wasm_step.dependOn(&run_rules_wasm_node_tests.step);
+    rules_wasm_step.dependOn(&run_rules_ts_node_tests.step);
+
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_sql_generator_tests.step);
+    test_step.dependOn(&run_sql_generator_aida_tests.step);
     test_step.dependOn(&run_ts_backend_generator_tests.step);
+    test_step.dependOn(&run_zig_type_map_ts_tests.step);
+    test_step.dependOn(&run_zig_type_map_sql_tests.step);
+    test_step.dependOn(&run_rules_tests.step);
+    test_step.dependOn(&run_rules_wasm_tests.step);
+    test_step.dependOn(&run_ts_rules_generator_tests.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{
@@ -246,6 +485,9 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "zigma", .module = zigma_mod },
                     .{ .name = "aida", .module = aida_mod },
                     .{ .name = "sql_generator", .module = sql_generator_mod },
+                    .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+                    .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
+                    .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
                 },
             }),
         });

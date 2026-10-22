@@ -533,3 +533,6 @@ pub fn defineEntities(comptime entity_defs: anytype) @TypeOf(entity_defs) {
     comptime checkEntities(entity_defs);
     return entity_defs;
 }
+
+/// The rules of a system (domain validations over a record), see rules.zig.
+pub const defineRules = @import("rules.zig").defineRules;

@@ -35,12 +35,13 @@ completa, etc.), se consulta puntualmente, no se hereda el código.
 
 ## Progreso
 
-Hito 1 (base de datos) en curso. Se eligió generar el esquema como DDL en comptime
-(strings), apuntando a SQLite, porque encaja con TDD (los tests son asserts sobre el
-string generado, sin conexión viva) y no acopla el framework a ningún driver todavía.
-El "ver corriendo" de este hito, por ahora, es imprimir el DDL generado para `aida` (no
-ejecutarlo todavía contra un SQLite real — eso queda para cuando haya que elegir un
-driver, ver `TEST_QUEUE.md`).
+Hito 1 (base de datos) completo. Se eligió generar el esquema como DDL en comptime
+(strings), porque encaja con TDD (los tests son asserts sobre el string generado, sin
+conexión viva) y no acopla el framework a ningún driver. Al principio apuntaba a SQLite y
+el "ver corriendo" era solo imprimir el DDL; el destino terminó siendo **Postgres vía
+Docker** (ver "Hito 1 completo" más abajo). Los puntos que siguen están en orden
+cronológico: los primeros describen el mapeo de tipos a mano, reemplazado después en la
+rama `type-translation` (último punto).
 
 * `build.zig.zon`: `minimum_zig_version` actualizado a `0.17.0-dev.1778+767d25269` (la
   build que estaba cacheada localmente; el pin anterior, `0.17.0-dev.1282+c0f9b51d8`, ya
@@ -61,6 +62,10 @@ driver, ver `TEST_QUEUE.md`).
   * Todos los tests en verde, incluido un caso "no compila"
     (`test/compile_errors/sql_unknown_type_mapping.zig`): un tipo de dominio sin
     entrada en `sql_types` da `@compileError` con mensaje propio.
+  * **Reemplazado** en la rama `type-translation`: las firmas son ahora
+    `createTableSql(type_defs, name, entity)` y `schemaSql(type_defs, entity_defs)`,
+    `aida.sql_type_defs` y `sql_unknown_type_mapping.zig` ya no existen, y `fecha` es un
+    tipo compuesto (ver el último punto).
 * Corregido: las columnas de la pk fuerzan `NOT NULL` sin importar el `nullable` del
   campo (`isPkField` en `columnClause`, `src/sql_generator.zig`). SQL estándar lo
   implica para la pk; SQLite es la excepción y no lo fuerza salvo declaración
@@ -101,6 +106,23 @@ driver, ver `TEST_QUEUE.md`).
   * Confirmado de punta a punta con `docker compose down -v` (reset completo) seguido
     de `zig build create-database`: las 11 tablas se crean limpias, con sus fks, pks
     compuestas y `NOT NULL` correctos (verificado con `psql -c "\dt"` y `\d docentes`).
+* Rama `type-translation`: el tipo SQL de cada columna sale del tipo de Zig de su dominio
+  (el generador recibe el `type_defs` del sistema y pasa por `zig_type_map_sql.sqlTypeOf`),
+  reemplaza a la tabla a mano `aida.sql_type_defs`. Un entero más angosto que su entero de
+  Postgres va con un `DOMAIN` (`zig_u8`) que lo restringe al intervalo de Zig; `integer`
+  (`i64`) es `BIGINT`. Un dominio respaldado por un struct (`fecha`) es un tipo compuesto
+  con el nombre del dominio (`CREATE TYPE fecha AS (año zig_u16, mes zig_u8, día zig_u8)`),
+  y cada columna struct lleva un `CHECK` `<entidad>_<columna>_complete` (el struct entero o
+  `NULL`: los atributos de un compuesto no pueden ser `NOT NULL`). Un struct dentro de un
+  struct todavía no compila (el interno no tiene dominio ni nombre). Aplicado a mano contra
+  Postgres: el esquema entra entero, y una `fecha` incompleta, `mes = 300` o `año = -1` se
+  rechazan. Falta el lado TS ↔ Postgres (cómo `dml.ts` manda y lee un `fecha`).
+  * El "no compila" de un dominio que no está en `type_defs` es ahora
+    `sql_type_not_in_type_defs.zig` (`"type 'fecha' is not in type_defs"`). El test del
+    esquema completo de aida vive en `test/sql_generator_aida_test.zig`.
+  * Confirmado de punta a punta (2026-10-22) con `docker compose down -v` seguido de
+    `zig build ts-backend-db`: sobre una base vacía el esquema entra sin errores
+    (2 `CREATE DOMAIN`, 1 `CREATE TYPE`, 11 `CREATE TABLE`) y el test de integración pasa.
 
 ## Hito 2 (backend): estado y decisiones
 
@@ -119,9 +141,9 @@ igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` 
   * `update` es de fila completa (todas las columnas no-pk en el `SET`), no un patch
     parcial: así sigue siendo un template estático como los demás. El patch parcial, si se
     quiere, es otro builder aparte más adelante.
-  * `examples/aida.zig` tiene ahora `ts_type_defs` (dominio → tipo TS; `fecha` es el struct
-    inline `{ año; mes; día }`) y `ts_sample_defs` (dominio → literal de ejemplo para los
-    tests generados), ambos paralelos a `sql_type_defs`.
+  * El tipo TS de cada campo sale del tipo de Zig de su dominio: el generador recibe el
+    `type_defs` del sistema y pasa por `zig_type_map_ts.tsTypeOf` (rama `type-translation`,
+    reemplaza a las tablas a mano `ts_type_defs` / `ts_sample_defs` que tenía aida).
 * El generador **también genera los tests TS** (`generateTsBackendTests`): por cada builder,
   el test #1 (arma un argumento de ejemplo tipado, llama al builder, chequea que no tira y
   devuelve `{ text, values }`). Correrlos en Node es lo que prueba que el TS emitido
@@ -147,10 +169,13 @@ igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` 
 
 **Falta** para completar la interfaz de DML: más casos de integración (update toca solo lo
 nombrado, delete→selectByPk vacío, violación de uk/fk como error de dominio, entidad de pk
-compuesta), y el codec de `fecha` (hoy `insertClases` pasa el objeto `{ año, mes, día }`
-crudo a una columna `TEXT` — `pg` lo stringify a `"[object Object]"`; hay que serializar).
-Después: el resto del backend (endpoints HTTP) y el interop TS → Zig para las reglas de
-dominio.
+compuesta), y la traducción de valores TS ↔ Postgres: hoy `insertClases` pasa el objeto
+`{ año, mes, día }` crudo a la columna de tipo compuesto `fecha` (`pg` lo stringify a
+`"[object Object]"`; hay que serializarlo al literal del compuesto y parsearlo al leer), y
+los campos `bigint` (`i64`) y los enteros con `DOMAIN` todavía no pasan por ningún test de
+integración (el único hoy es `periodos`, una sola columna de texto).
+Después: el resto del backend (endpoints HTTP). El interop TS → Zig para las reglas de
+dominio ya está hecho (ver "Reglas de dominio: interop TS → Zig (WASM)" más abajo).
 
 ### Decisiones previas
 
@@ -164,15 +189,16 @@ lo que ya existe maduro en el ecosistema Node para HTTP/Postgres.
 El backend en TypeScript necesita poder invocar funciones de dominio escritas en Zig (por
 ejemplo `validarCargo`) sin reescribirlas: esas reglas viven en la única fuente de verdad
 (las definiciones `zigma`/`aida` en Zig), así que hace falta un mecanismo de interop
-TS → Zig. **Sin decidir todavía cuál**, para la próxima sesión:
+TS → Zig. **Decidido: WASM** (ver "Reglas de dominio: interop TS → Zig (WASM)" más
+abajo). Las opciones que se evaluaron:
 
 * **C ABI**: Zig exporta funciones (`export fn ... callconv(.c)`) a una lib compartida
   (`.so`/`.dll`), invocada desde Node con una librería tipo `koffi` (FFI sin escribir un
   addon nativo). Más directo, pero la lib queda atada a la plataforma/arquitectura donde
   se compiló — no es problema si el contenedor del backend siempre la compila en su
   propio build Linux.
-* **WASM**: Zig compila a `wasm32`, corrido con un runtime WASM embebido en Node
-  (bindings de `wasmtime`/`wasmer`). Más portable (no atado a la plataforma del
+* **WASM**: Zig compila a `wasm32`, corrido por el `WebAssembly` que Node ya trae (no
+  hacen falta bindings de `wasmtime`/`wasmer`). Más portable (no atado a la plataforma del
   contenedor), pero pasar datos complejos (structs, strings) es más manual — hay que
   serializar contra la memoria lineal del módulo.
 * En cualquiera de los dos casos: las funciones de `zigma` son comptime/genéricas, y no
@@ -242,17 +268,69 @@ enteramente en Zig:
     el original, más `error.Timeout` en `acquire()`.
   * Ninguno de los dos fija `minimum_zig_version` en su `build.zig.zon`.
 
+## Reglas de dominio: interop TS → Zig (WASM)
+
+Las reglas de dominio se escriben una vez en Zig y el backend TS las corre compiladas a
+WASM. Hecho en la rama `type-translation`, probado con un sistema propio de prueba
+(`test/test_system.zig`: salas y reservas, sin aida, que no se tocó).
+
+**Declaración (`zigma.defineRules`, `src/rules.zig`).** Las reglas de un sistema se
+declaran con `zigma.defineRules(type_defs, .{ .checkBooking = .{ .record = booking, .rule
+= checkBooking } })`: la key es el nombre de la regla. Una regla es **siempre una
+validación**: toma exactamente `RecordInstanceType(type_defs, record)` y devuelve
+`error{...}!void`. El record va explícito porque el tipo del parámetro (el struct
+derivado) perdió lo que necesita un generador (los tipos de dominio, `nullable`, de qué
+record viene); `defineRules` chequea que los dos coincidan. Rechazos: 10 casos "no
+compila" (`test/compile_errors/rules_*`).
+
+**El módulo WASM (`src/rules_wasm.zig`).** Genérico: exporta las reglas del módulo que
+`build.zig` le da como `"system"`, con `@export` en un loop comptime (sin generar texto
+Zig). **Un `.wasm` por sistema**, con un export por regla, con el nombre de la regla, más
+`alloc`. Contrato con el que llama:
+* entrada: la instancia del record como JSON UTF-8, escrita en memoria pedida con `alloc`;
+  el export recibe puntero y largo, y la libera;
+* salida: un string empaquetado `ptr << 32 | len`: `""` si pasa, el nombre del error de Zig
+  si la regla la rechaza, `"InvalidInput"` si el JSON no es una instancia del record
+  (`std.json` parsea al tipo exacto: campo faltante o de más, tipo incorrecto, fuera de
+  rango, `null` → `"InvalidInput"`). Los strings de resultado son constantes: no se liberan.
+* Hallazgos: `alloc(0)` daba la dirección `0xFFFFFFFF`, que no es memoria, así que una
+  entrada vacía rompía del lado que llama; ahora devuelve un byte estático y el export
+  libera solo entradas no vacías. `rdynamic` (que conserva los exports) también exporta
+  `__stack_pointer`: se acepta como artefacto del build, porque la lista exacta
+  (`export_symbol_names`) obligaría a repetir los nombres de las reglas en `build.zig`.
+
+**`rules.ts`, generado (`src/ts_rules_generator.zig`).** La mitad TS del contrato. Carga
+`./rules.wasm` (al lado suyo) una vez, al importarse, y expone cada regla tipada:
+* parámetro: el tipo TS del parámetro de la regla (`tsTypeOf`), el mismo tipo que parsea
+  WASM;
+* resultado: `RuleResult<E> = { ok: true } | { ok: false; error: E }`, con `E` los nombres de
+  error de Zig (ordenados: el orden que da el compilador no es estable) más
+  `"InvalidInput"`;
+* serializador campo por campo: solo los campos del parámetro van al JSON (TS deja pasar
+  objetos con propiedades de más, como una fila entera, que WASM rechazaría), y un `bigint`
+  como número JSON exacto (`JSON.rawJSON`; `JSON.stringify` tira con un `bigint`).
+* `rules.ts` **confía en los tipos TS** de su argumento: datos sin tipar en runtime (un
+  `bigint` faltante o con un string) pueden hacer tirar al serializador antes de llegar a
+  WASM. Validar datos de afuera es trabajo del que llama.
+
+**Tests.** Nativos en `zig build test` (`run` del módulo WASM con el testing allocator, y el
+texto exacto de `rules.ts`); contra el `.wasm` real desde Node en `zig build rules-wasm`
+(necesita Node, fuera de `zig build test`): el contrato escrito a mano
+(`test/rules_wasm_node_test.zig`: exports, `alloc`, empaquetado, rango de `i64`, 10.000
+llamadas sin crecer la memoria) y el `rules.ts` generado al lado del `.wasm`
+(`test/rules_ts_node_test.zig`: `RuleResult`, propiedades de más, `bigint` exacto incluido
+2^53 + 1).
+
+**Falta:** cuándo se aplica una regla (qué la dispara: tarea para más adelante); declarar
+las reglas de aida (`validarCargo` es todavía una función suelta, y `cargo` no tiene
+entidad); el `.wasm` y `rules.ts` de aida en el backend.
+
 ## Próximos pasos
 
-1. Elegir mecanismo de interop TypeScript → Zig (C ABI vía `koffi` vs WASM) —
-   investigación, no implementación todavía.
-2. Definir cómo se generan los exports concretos: el paso de build que monomorfice, para
-   el sistema aida, las funciones de validación/reglas de negocio escritas en Zig hacia
-   el ABI/WASM elegido.
-3. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`):
+1. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`):
    Dockerfile de Node, sin acoplar el desarrollo al host Windows.
-4. Elegir cliente de Postgres para TypeScript y, si hace falta, framework HTTP (o arrancar
+2. Elegir cliente de Postgres para TypeScript y, si hace falta, framework HTTP (o arrancar
    con Node puro).
-5. Primer paso chico, TDD, a acordar con el programador: probablemente el primer llamado
-   real desde TypeScript a una función de Zig ya compilada (el `validarCargo` de ejemplo),
-   antes de sumarle HTTP o DB.
+3. Reglas: definir cuándo se aplica una regla y llevar las de aida (`validarCargo`) al
+   backend con `rules.ts` / `rules.wasm`.
+4. Traducción de valores TS ↔ Postgres (`fecha`, `bigint`), ver "Falta" en el hito 2.

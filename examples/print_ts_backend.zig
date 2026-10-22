@@ -9,7 +9,7 @@ const ts_backend_generator = @import("ts_backend_generator");
 // generateTsBackend from inside main (runtime scope) only yields a runtime
 // copy of the result, not comptime-known enough for its internal @field
 // lookups (same reason as print_schema.zig).
-const dml_module = ts_backend_generator.generateTsBackend(aida.ts_type_defs, aida.entity_defs);
+const dml_module = ts_backend_generator.generateTsBackend(aida.type_defs, aida.entity_defs);
 
 // Writes to stdout, not std.debug.print (which always goes to stderr): the
 // `ts-backend` build step captures this output to a file.
