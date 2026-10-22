@@ -25,6 +25,13 @@
 //! nothing else, or it is a 400. A delete that Postgres rejects (a referenced
 //! row) is, for now, the generic 500: pk/uk/fk violations are handled
 //! together later.
+//!
+//! Create (POST /api/<entity>, the row as a JSON body: 201 without a body)
+//! for the entities whose fields are all text (a bigint or a fecha in a body
+//! would need the TS -> Postgres translation: not yet). The body must be a
+//! JSON object with only the entity's fields, each a string; a nullable field
+//! may be null or absent (taken as null), the others are required; anything
+//! else is a 400. A duplicate pk is, for now, the generic 500.
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -32,12 +39,12 @@ const aida = @import("aida");
 const ts = @import("ts_server_generator");
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-test "generateTsServer: the list without a query string, one row and delete with the full pk, anything else a JSON 404" {
+test "generateTsServer: the list, one row and delete with the full pk, create with a JSON body, anything else a JSON 404" {
     try expectEqualStrings(
-        \\import { createServer, type ServerResponse } from "node:http";
+        \\import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
         \\import pg from "pg";
         \\
-        \\import { selectAllPeriodos, selectPeriodosByPk, deletePeriodos } from "./dml.ts";
+        \\import { selectAllPeriodos, selectPeriodosByPk, deletePeriodos, insertPeriodos } from "./dml.ts";
         \\
         \\const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
         \\
@@ -57,6 +64,34 @@ test "generateTsServer: the list without a query string, one row and delete with
         \\  }
         \\  for (const name of pk) {
         \\    if (!(name in values)) return { error: `missing pk field '${name}'` };
+        \\  }
+        \\  return { values };
+        \\}
+        \\
+        \\// The body of a request as a row of an entity whose fields are all text: a
+        \\// JSON object with only its fields, each a string; a nullable field may be
+        \\// null or absent (taken as null), the others are required.
+        \\async function readBody(req: IncomingMessage, fields: Record<string, boolean>): Promise<{ values: Record<string, string | null> } | { error: string }> {
+        \\  const chunks: Buffer[] = [];
+        \\  for await (const chunk of req) chunks.push(chunk);
+        \\  let body: unknown;
+        \\  try {
+        \\    body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        \\  } catch {
+        \\    return { error: "body is not valid JSON" };
+        \\  }
+        \\  if (typeof body !== "object" || body === null || Array.isArray(body)) return { error: "body must be a JSON object" };
+        \\  const object = body as Record<string, unknown>;
+        \\  for (const name of Object.keys(object)) {
+        \\    if (!(name in fields)) return { error: `unknown field '${name}'` };
+        \\  }
+        \\  const values: Record<string, string | null> = {};
+        \\  for (const [name, nullable] of Object.entries(fields)) {
+        \\    const value = object[name];
+        \\    if (value === undefined && !nullable) return { error: `missing field '${name}'` };
+        \\    if (value === null && !nullable) return { error: `field '${name}' must not be null` };
+        \\    if (value !== undefined && value !== null && typeof value !== "string") return { error: `field '${name}' must be a string` };
+        \\    values[name] = (value ?? null) as string | null;
         \\  }
         \\  return { values };
         \\}
@@ -90,6 +125,14 @@ test "generateTsServer: the list without a query string, one row and delete with
         \\      res.writeHead(204);
         \\      return res.end();
         \\    }
+        \\    if (req.method === "POST" && url.pathname === "/api/periodos") {
+        \\      const body = await readBody(req, { periodo: false });
+        \\      if ("error" in body) return json(res, 400, { error: body.error });
+        \\      const q = insertPeriodos({ periodo: body.values.periodo });
+        \\      await pool.query(q.text, q.values);
+        \\      res.writeHead(201);
+        \\      return res.end();
+        \\    }
         \\    return json(res, 404, { error: "not found" });
         \\  } catch (err) {
         \\    console.error(err);
@@ -117,10 +160,21 @@ test "generateTsServer: one row and delete with a composite text pk, every pk fi
     ) != null);
 }
 
+test "generateTsServer: create reads every field of the entity, the nullable ones may be absent" {
+    const server = ts.generateTsServer(aida.type_defs, .{ .docentes = aida.docentes });
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\    if (req.method === "POST" && url.pathname === "/api/docentes") {
+        \\      const body = await readBody(req, { docente: false, apellido: false, nombres: false, cargo: true, email: true, email_alternativo: true, jefe: true });
+        \\      if ("error" in body) return json(res, 400, { error: body.error });
+        \\      const q = insertDocentes({ docente: body.values.docente, apellido: body.values.apellido, nombres: body.values.nombres, cargo: body.values.cargo, email: body.values.email, email_alternativo: body.values.email_alternativo, jefe: body.values.jefe });
+    ) != null);
+}
+
 test "generateTsServer: no one-row nor delete route (yet) for an entity whose pk is not text only" {
     const server = ts.generateTsServer(aida.type_defs, .{ .clases = aida.clases });
     try std.testing.expect(std.mem.indexOf(u8, server, "selectClasesByPk") == null);
     try std.testing.expect(std.mem.indexOf(u8, server, "deleteClases") == null);
+    try std.testing.expect(std.mem.indexOf(u8, server, "insertClases") == null);
     try std.testing.expect(std.mem.indexOf(u8, server,
         \\    if (req.method === "GET" && url.pathname === "/api/clases") {
         \\      const q = selectAllClases();
@@ -184,7 +238,7 @@ test "generateTsServer: aida's clases, with its bigint orden (pk) and nullable f
 test "generateTsServer: one route and one encoder per entity, in declaration order; each struct decoder once" {
     const server = ts.generateTsServer(aida.type_defs, .{ .periodos = aida.periodos, .clases = aida.clases, .mesas = aida.mesas });
     try std.testing.expect(std.mem.indexOf(u8, server,
-        \\import { selectAllPeriodos, selectPeriodosByPk, deletePeriodos, selectAllClases, selectAllMesas } from "./dml.ts";
+        \\import { selectAllPeriodos, selectPeriodosByPk, deletePeriodos, insertPeriodos, selectAllClases, selectAllMesas } from "./dml.ts";
     ) != null);
     const periodos_route = std.mem.indexOf(u8, server, "url.pathname === \"/api/periodos\"").?;
     const clases_route = std.mem.indexOf(u8, server, "url.pathname === \"/api/clases\"").?;

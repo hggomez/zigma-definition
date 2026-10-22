@@ -343,12 +343,24 @@ El hito 3 arranca por la capa HTTP del backend, que el frontend va a necesitar.
   otras (un `periodo` con `cursos`) lo rechaza Postgres y es, por ahora, el 500 genérico:
   decidido manejar todas las violaciones de pk/uk/fk juntas, más adelante (se evaluó un 500
   con mensaje `referenced by <tabla>` o un 409, y se descartó por ahora).
+* `POST /api/<entidad>` (alta), la fila como cuerpo JSON: 201 **sin cuerpo**. Para las
+  entidades cuyos campos son todos texto (en aida, las mismas 6; el generador lo decide
+  desde el SSOT): un `bigint` o una `fecha` en un cuerpo necesitan la traducción
+  TS → Postgres, pendiente. El cuerpo tiene que ser un objeto JSON con solo los campos de la
+  entidad, cada uno string; un campo nullable (y fuera de la pk) puede venir `null` o
+  faltar (se toma como `null`), los demás son obligatorios; si no, 400 JSON
+  (`body is not valid JSON`, `body must be a JSON object`, `unknown field`,
+  `missing field`, `must not be null`, `must be a string`). Una pk duplicada es, por ahora,
+  el 500 genérico. Un query string en un `POST` se ignora (no se decidió otra cosa).
+  * Los tipos de `dml.ts` no reflejan `nullable` (`insertDocentes` declara `cargo: string`):
+    `server.ts` le pasa `string | null`, que en runtime funciona (`pg` manda `NULL`) pero un
+    `tsc` rechazaría. Misma limitación de `zigma` que en `TEST_QUEUE.md`.
 
 **Plan: las operaciones que faltan, empezando por `periodos`.** En este orden:
 1. ~~**Una fila:** `GET /api/periodos?periodo=…`.~~ Hecho. Trae la lectura del query string (la pk
    completa, convertida al tipo de cada campo) y los errores de entrada.
 2. ~~**Baja:** `DELETE /api/periodos?periodo=…`.~~ Hecho. Reusa la lectura de la pk del paso 1.
-3. **Alta:** `POST /api/periodos`, cuerpo JSON. Trae la lectura del cuerpo y la pregunta de
+3. ~~**Alta:** `POST /api/periodos`, cuerpo JSON.~~ Hecho. Trae la lectura del cuerpo y la pregunta de
    qué pasa con una pk duplicada (ligada a los errores de dominio de pk/uk/fk, pendientes).
 
 `periodos` no tiene modificación (su único campo es la pk: no hay nada que `SET`); el `PUT`

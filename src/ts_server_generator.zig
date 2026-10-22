@@ -20,6 +20,9 @@
 //! entities whose pk is text only; a query string that is not exactly the pk
 //! (`readPk`) is a JSON 400. A delete Postgres rejects (a referenced row) is,
 //! for now, the generic 500: pk/uk/fk violations are handled together later.
+//! Create (POST /api/<entity>, the row as a JSON body: 201 without a body) for
+//! the entities whose fields are all text; a body that is not a row of the
+//! entity (`readBody`) is a JSON 400, a duplicate pk the generic 500.
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -32,7 +35,7 @@ const PascalHolder = ts_backend_generator.PascalHolder;
 // The space after `{` is a separate string: a multiline literal would lose it
 // as trailing whitespace.
 const header_before_imports =
-    \\import { createServer, type ServerResponse } from "node:http";
+    \\import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
     \\import pg from "pg";
     \\
     \\
@@ -59,6 +62,34 @@ const header_after_imports =
     \\  }
     \\  for (const name of pk) {
     \\    if (!(name in values)) return { error: `missing pk field '${name}'` };
+    \\  }
+    \\  return { values };
+    \\}
+    \\
+    \\// The body of a request as a row of an entity whose fields are all text: a
+    \\// JSON object with only its fields, each a string; a nullable field may be
+    \\// null or absent (taken as null), the others are required.
+    \\async function readBody(req: IncomingMessage, fields: Record<string, boolean>): Promise<{ values: Record<string, string | null> } | { error: string }> {
+    \\  const chunks: Buffer[] = [];
+    \\  for await (const chunk of req) chunks.push(chunk);
+    \\  let body: unknown;
+    \\  try {
+    \\    body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    \\  } catch {
+    \\    return { error: "body is not valid JSON" };
+    \\  }
+    \\  if (typeof body !== "object" || body === null || Array.isArray(body)) return { error: "body must be a JSON object" };
+    \\  const object = body as Record<string, unknown>;
+    \\  for (const name of Object.keys(object)) {
+    \\    if (!(name in fields)) return { error: `unknown field '${name}'` };
+    \\  }
+    \\  const values: Record<string, string | null> = {};
+    \\  for (const [name, nullable] of Object.entries(fields)) {
+    \\    const value = object[name];
+    \\    if (value === undefined && !nullable) return { error: `missing field '${name}'` };
+    \\    if (value === null && !nullable) return { error: `field '${name}' must not be null` };
+    \\    if (value !== undefined && value !== null && typeof value !== "string") return { error: `field '${name}' must be a string` };
+    \\    values[name] = (value ?? null) as string | null;
     \\  }
     \\  return { values };
     \\}
@@ -202,6 +233,40 @@ fn listAndRowRoute(comptime entity_name: []const u8, comptime entity: anytype) [
         "    }\n";
 }
 
+/// Whether every field of the entity is text: a body of strings is then the
+/// row as is (a bigint or a fecha in a body would need the TS -> Postgres
+/// translation: not yet).
+fn hasTextFields(comptime type_defs: anytype, comptime entity: anytype) bool {
+    for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
+        const domain = @field(entity.fields, field_name).type;
+        if (tsTypeOf(@field(type_defs, domain).Type) != .string) return false;
+    }
+    return true;
+}
+
+/// The create route of an entity whose fields are all text: POST
+/// /api/<entity> with the row as a JSON body (`readBody`, told which fields
+/// are nullable: nullable and not in the pk) -> 201 without a body; a body
+/// that is not a row of the entity is a JSON 400.
+fn createRoute(comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
+    var fields: []const u8 = "{ ";
+    var row: []const u8 = "{ ";
+    for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names, 0..) |field_name, i| {
+        const nullable = @field(entity.fields, field_name).nullable and !isPkField(entity, field_name);
+        const sep = if (i > 0) ", " else "";
+        fields = fields ++ sep ++ field_name ++ ": " ++ (if (nullable) "true" else "false");
+        row = row ++ sep ++ field_name ++ ": body.values." ++ field_name;
+    }
+    return "    if (req.method === \"POST\" && url.pathname === \"/api/" ++ entity_name ++ "\") {\n" ++
+        "      const body = await readBody(req, " ++ fields ++ " });\n" ++
+        "      if (\"error\" in body) return json(res, 400, { error: body.error });\n" ++
+        "      const q = insert" ++ pascal(entity_name) ++ "(" ++ row ++ " });\n" ++
+        "      await pool.query(q.text, q.values);\n" ++
+        "      res.writeHead(201);\n" ++
+        "      return res.end();\n" ++
+        "    }\n";
+}
+
 /// The delete route of an entity with a text pk: DELETE /api/<entity>?<pk>
 /// -> 204 without a body, or a JSON 404 when no row had that pk; a query
 /// string that is not exactly the pk (none included) is a JSON 400, so it
@@ -251,6 +316,8 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
                 const text_pk = hasTextPk(type_defs, entity);
                 imports = imports ++ (if (i > 0) ", " else "") ++ "selectAll" ++ pascal(entity_name);
                 if (text_pk) imports = imports ++ ", select" ++ pascal(entity_name) ++ "ByPk, delete" ++ pascal(entity_name);
+                const text_fields = hasTextFields(type_defs, entity);
+                if (text_fields) imports = imports ++ ", insert" ++ pascal(entity_name);
                 // one decoder per struct domain, the first time it appears
                 for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
                     const domain = @field(entity.fields, field_name).type;
@@ -265,6 +332,7 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
                     listAndRowRoute(entity_name, entity) ++ deleteRoute(entity_name, entity)
                 else
                     listRoute(entity_name);
+                if (text_fields) routes = routes ++ createRoute(entity_name, entity);
             }
             break :blk header_before_imports ++ imports ++ header_after_imports ++
                 decoders ++ encoders ++ server_start ++ routes ++ footer;
@@ -274,8 +342,8 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
 
 /// The HTTP server of the given entities (`.{ .periodos = aida.periodos }`),
 /// over the system's `type_defs`: one GET /api/<entity> route per entity (the
-/// list, and one row and delete when its pk is text only), in declaration
-/// order.
+/// list, and one row and delete when its pk is text only) and a POST route
+/// when every field is text, in declaration order.
 pub fn generateTsServer(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     return ServerHolder(type_defs, entity_defs).text;
 }

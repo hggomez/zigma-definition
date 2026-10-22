@@ -5,7 +5,9 @@
 //! the query string it returns that row (or a JSON 404), for the entities whose
 //! pk is text only, and DELETE with the full pk removes it (204, or a JSON 404
 //! when it was not there); a query string that is not exactly the pk is a JSON
-//! 400; an unknown path is a JSON 404.
+//! 400; POST with the row as a JSON body creates it (201), for the entities
+//! whose fields are all text, and a body that is not a row of the entity is a
+//! JSON 400; an unknown path is a JSON 404.
 //!
 //! Each field keeps its SSOT type in the JSON: a bigint (aida's `integer`,
 //! i64, BIGINT in Postgres) is an exact JSON number, never rounded through a JS
@@ -43,7 +45,8 @@ const cleanup =
     \\DELETE FROM clases WHERE periodo = 'http-docker-test';
     \\DELETE FROM cursos WHERE periodo = 'http-docker-test';
     \\DELETE FROM materias WHERE materia = 'http-docker-test';
-    \\DELETE FROM periodos WHERE periodo IN ('http-docker-test', 'http-docker-test-delete');
+    \\DELETE FROM docentes WHERE docente = 'http-docker-test';
+    \\DELETE FROM periodos WHERE periodo IN ('http-docker-test', 'http-docker-test-delete', 'http-docker-test-create');
 ;
 
 const seed =
@@ -137,6 +140,39 @@ const script =
     \\res = await fetch(base + '/api/periodos?periodo=http-docker-test');
     \\assert.equal(res.status, 200, 'the referenced row is still there');
     \\
+    \\// create: 201 without a body, then the row is there; a nullable field the
+    \\// body leaves out is null
+    \\res = await fetch(base + '/api/periodos', { method: 'POST', body: JSON.stringify({ periodo: 'http-docker-test-create' }) });
+    \\assert.equal(res.status, 201);
+    \\assert.equal(await res.text(), '');
+    \\res = await fetch(base + '/api/periodos?periodo=http-docker-test-create');
+    \\assert.deepEqual(await res.json(), { periodo: 'http-docker-test-create' });
+    \\res = await fetch(base + '/api/docentes', { method: 'POST', body: JSON.stringify({ docente: 'http-docker-test', apellido: 'Apellido', nombres: 'Nombres', email: 'a@b.c' }) });
+    \\assert.equal(res.status, 201);
+    \\res = await fetch(base + '/api/docentes?docente=http-docker-test');
+    \\assert.deepEqual(await res.json(), { docente: 'http-docker-test', apellido: 'Apellido', nombres: 'Nombres', cargo: null, email: 'a@b.c', email_alternativo: null, jefe: null });
+    \\
+    \\// a body that is not a row of the entity: 400 with a JSON error
+    \\for (const [body, error] of [
+    \\  ['not json', 'body is not valid JSON'],
+    \\  ['[1]', 'body must be a JSON object'],
+    \\  [JSON.stringify({ periodo: 'x', foo: 1 }), "unknown field 'foo'"],
+    \\  [JSON.stringify({}), "missing field 'periodo'"],
+    \\  [JSON.stringify({ periodo: null }), "field 'periodo' must not be null"],
+    \\  [JSON.stringify({ periodo: 1 }), "field 'periodo' must be a string"],
+    \\]) {
+    \\  res = await fetch(base + '/api/periodos', { method: 'POST', body });
+    \\  assert.equal(res.status, 400, body);
+    \\  assert.deepEqual(await res.json(), { error }, body);
+    \\}
+    \\// a duplicate pk: Postgres rejects it; for now the generic 500
+    \\res = await fetch(base + '/api/periodos', { method: 'POST', body: JSON.stringify({ periodo: 'http-docker-test' }) });
+    \\assert.equal(res.status, 500);
+    \\assert.deepEqual(await res.json(), { error: 'internal error' });
+    \\// an entity with a field that is not text has no create route (yet)
+    \\res = await fetch(base + '/api/clases', { method: 'POST', body: '{}' });
+    \\assert.equal(res.status, 404);
+    \\
     \\// an unknown path: 404 with a JSON error
     \\res = await fetch(base + '/api/inexistentes');
     \\assert.equal(res.status, 404);
@@ -146,7 +182,7 @@ const script =
     \\console.log('HTTP_OK');
 ;
 
-test "the backend container lists every entity, reads and deletes one row by its pk, each field with its SSOT type" {
+test "the backend container lists every entity, reads, deletes and creates one row, each field with its SSOT type" {
     try psql(cleanup);
     try psql(seed);
     defer psql(cleanup) catch {};
