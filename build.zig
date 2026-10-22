@@ -195,6 +195,17 @@ pub fn build(b: *std.Build) void {
     });
     const run_zig_type_map_sql_tests = b.addRunArtifact(zig_type_map_sql_tests);
 
+    // A small system of its own with rules (rooms and bookings), for the
+    // tests of defineRules and of the rules WASM module.
+    const test_system_mod = b.createModule(.{
+        .root_source_file = b.path("test/test_system.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_mod },
+        },
+    });
+
     const rules_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/rules_test.zig"),
@@ -202,10 +213,33 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "test_system", .module = test_system_mod },
             },
         }),
     });
     const run_rules_tests = b.addRunArtifact(rules_tests);
+
+    // The rules WASM module is generic: it exports the rules of whatever
+    // module it is given as "system". Here, the test system.
+    const rules_wasm_test_system_mod = b.createModule(.{
+        .root_source_file = b.path("src/rules_wasm.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "system", .module = test_system_mod },
+        },
+    });
+    const rules_wasm_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/rules_wasm_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "rules_wasm", .module = rules_wasm_test_system_mod },
+            },
+        }),
+    });
+    const run_rules_wasm_tests = b.addRunArtifact(rules_wasm_tests);
 
     const print_schema_exe = b.addExecutable(.{
         .name = "print_schema",
@@ -324,6 +358,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_zig_type_map_ts_tests.step);
     test_step.dependOn(&run_zig_type_map_sql_tests.step);
     test_step.dependOn(&run_rules_tests.step);
+    test_step.dependOn(&run_rules_wasm_tests.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{

@@ -4,43 +4,20 @@
 //! test/compile_errors/rules_*.zig, driven by build.zig.
 //!
 //! The system here is a small one of its own, built only from zigma (no
-//! aida): rooms and their bookings.
+//! aida): rooms and their bookings, test/test_system.zig.
 
 const std = @import("std");
 const zigma = @import("zigma");
+const test_system = @import("test_system");
 
-const expect = std.testing.expect;
 const expectError = std.testing.expectError;
 
-const type_defs = zigma.common_type_defs;
-
-const room = zigma.record(type_defs, .{
-    .room = .{ .type = "text" },
-    .capacity = .{ .type = "integer" },
-});
-
-const booking = zigma.record(type_defs, .{
-    .room = .{ .type = "text" },
-    .start = .{ .type = "integer" },
-    .end = .{ .type = "integer" },
-});
-
-const Room = zigma.RecordInstanceType(type_defs, room);
-const Booking = zigma.RecordInstanceType(type_defs, booking);
-
-fn checkRoom(r: Room) error{NoCapacity}!void {
-    if (r.capacity <= 0) return error.NoCapacity;
-}
-
-fn checkBooking(b: Booking) error{ EndBeforeStart, Empty }!void {
-    if (b.end < b.start) return error.EndBeforeStart;
-    if (b.end == b.start) return error.Empty;
-}
-
-const rule_defs = zigma.defineRules(type_defs, .{
-    .checkRoom = .{ .record = room, .rule = checkRoom },
-    .checkBooking = .{ .record = booking, .rule = checkBooking },
-});
+const type_defs = test_system.type_defs;
+const room = test_system.room;
+const booking = test_system.booking;
+const checkRoom = test_system.checkRoom;
+const checkBooking = test_system.checkBooking;
+const rule_defs = test_system.rule_defs;
 
 test "defineRules returns the rules unchanged" {
     comptime {
