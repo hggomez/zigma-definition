@@ -264,6 +264,28 @@ pub fn build(b: *std.Build) void {
     });
     const run_ts_rules_generator_tests = b.addRunArtifact(ts_rules_generator_tests);
 
+    const ts_server_generator_mod = b.addModule("ts_server_generator", .{
+        .root_source_file = b.path("src/ts_server_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_mod },
+            .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
+        },
+    });
+    const ts_server_generator_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/ts_server_generator_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "ts_server_generator", .module = ts_server_generator_mod },
+            },
+        }),
+    });
+    const run_ts_server_generator_tests = b.addRunArtifact(ts_server_generator_tests);
+
     const print_schema_exe = b.addExecutable(.{
         .name = "print_schema",
         .root_module = b.createModule(.{
@@ -285,8 +307,8 @@ pub fn build(b: *std.Build) void {
     // container's healthcheck, so this is race-free even on first-time init), and
     // pipes the generated aida schema into psql running inside that container. No
     // Postgres driver needed: psql runs inside the container, so the only host
-    // dependency is Docker. Only the `postgres` service: the `backend` one has
-    // no long-running process yet, so `--wait` would take its exit as a failure.
+    // dependency is Docker. Only the `postgres` service: the `backend` one is
+    // brought up by `http-docker`, once its server.ts is generated.
     const docker_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "postgres" });
 
     const run_print_schema_for_db = b.addRunArtifact(print_schema_exe);
@@ -398,6 +420,49 @@ pub fn build(b: *std.Build) void {
     const backend_docker_step = b.step("backend-docker", "Build the backend image and run the generated DML inside it against the docker-compose Postgres");
     backend_docker_step.dependOn(&run_backend_docker_tests.step);
 
+    // `zig build http-docker`: the generated HTTP server as the backend's
+    // long-running process. Regenerate dml.ts + server.ts into backend/, apply
+    // the aida schema, build the image, bring the backend up (waiting for its
+    // healthcheck), then run test/http_docker_test.zig - a Zig test that
+    // requests the API from the host. Not on `test_step` (needs Docker + Node).
+    const print_ts_server_exe = b.addExecutable(.{
+        .name = "print_ts_server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/print_ts_server.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "ts_server_generator", .module = ts_server_generator_mod },
+            },
+        }),
+    });
+    const server_ts = b.addRunArtifact(print_ts_server_exe).captureStdOut(.{});
+    const write_ts_server = b.addUpdateSourceFiles();
+    write_ts_server.addCopyFileToSource(server_ts, "backend/src/server.ts");
+
+    const build_backend_image_with_server = b.addSystemCommand(&.{ "docker", "compose", "build", "backend" });
+    build_backend_image_with_server.step.dependOn(&write_ts_backend.step);
+    build_backend_image_with_server.step.dependOn(&write_ts_server.step);
+
+    const backend_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "backend" });
+    backend_up.step.dependOn(&build_backend_image_with_server.step);
+    backend_up.step.dependOn(&apply_aida_schema.step);
+
+    const http_docker_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/http_docker_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_http_docker_tests = b.addRunArtifact(http_docker_tests);
+    run_http_docker_tests.has_side_effects = true;
+    run_http_docker_tests.step.dependOn(&backend_up.step);
+
+    const http_docker_step = b.step("http-docker", "Generate the HTTP server, run it in the backend container and request it from the host");
+    http_docker_step.dependOn(&run_http_docker_tests.step);
+
     // `zig build rules-wasm`: compile the rules of the test system to one
     // wasm32 module (src/rules_wasm.zig with test/test_system.zig as its
     // "system") and run test/rules_wasm_node_test.zig, a Zig test that loads
@@ -498,6 +563,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_rules_tests.step);
     test_step.dependOn(&run_rules_wasm_tests.step);
     test_step.dependOn(&run_ts_rules_generator_tests.step);
+    test_step.dependOn(&run_ts_server_generator_tests.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{

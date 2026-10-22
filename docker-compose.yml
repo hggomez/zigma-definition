@@ -17,17 +17,28 @@ services:
       retries: 15
 
   # The backend: Node + pg + the generated code (built on the host into
-  # backend/, see backend/Dockerfile). No long-running process yet (there is
-  # no HTTP layer): backend code runs on demand with
-  # `docker compose run --rm backend node ...`, reaching Postgres by its
-  # service name.
+  # backend/, see backend/Dockerfile). Its long-running process is the
+  # generated HTTP server (src/server.ts), published on port 3000; it reaches
+  # Postgres by its service name. Other backend code can still run on demand
+  # with `docker compose run --rm backend node ...` (run replaces the command).
   backend:
     build: ./backend
+    command: ["node", "src/server.ts"]
     environment:
       DATABASE_URL: postgres://aida:aida@postgres:5432/aida
+      PORT: "3000"
+    ports:
+      - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
+    # healthy once the server answers anything (a 404 too): it does not depend
+    # on any entity of the system
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(() => process.exit(0), () => process.exit(1))"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
 
 volumes:
   zigma_aida_pgdata:
