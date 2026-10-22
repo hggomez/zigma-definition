@@ -53,6 +53,16 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "zig_type_map_sql_other_slice.zig", .expected = "Zig type '[]const i32' has no SQL mapping" },
     .{ .file = "zig_type_map_sql_nested_struct.zig", .expected = "field 'desde' is a struct: nested structs have no SQL mapping yet" },
     .{ .file = "zig_type_map_sql_struct_field_unsupported.zig", .expected = "Zig type 'f64' has no SQL mapping" },
+    .{ .file = "rules_not_a_struct.zig", .expected = "a rule collection must be a struct of rule definitions" },
+    .{ .file = "rules_not_a_rule_definition.zig", .expected = "rule 'checkBooking': a rule definition must be a struct like .{ .record = ..., .rule = ... }" },
+    .{ .file = "rules_missing_record.zig", .expected = "rule 'checkBooking': missing 'record'" },
+    .{ .file = "rules_missing_rule.zig", .expected = "rule 'checkBooking': missing 'rule'" },
+    .{ .file = "rules_unknown_property.zig", .expected = "rule 'checkBooking': unknown property 'colour'" },
+    .{ .file = "rules_not_a_function.zig", .expected = "rule 'checkBooking': 'rule' must be a function" },
+    .{ .file = "rules_two_parameters.zig", .expected = "rule 'checkBooking': must take exactly one parameter, an instance of its record" },
+    .{ .file = "rules_parameter_of_other_record.zig", .expected = "rule 'checkBooking': its parameter must be the instance type of its record" },
+    .{ .file = "rules_not_a_validation.zig", .expected = "rule 'checkBooking': must be a validation, returning error{...}!void" },
+    .{ .file = "rules_returns_a_value.zig", .expected = "rule 'checkBooking': must be a validation, returning error{...}!void" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -185,6 +195,18 @@ pub fn build(b: *std.Build) void {
     });
     const run_zig_type_map_sql_tests = b.addRunArtifact(zig_type_map_sql_tests);
 
+    const rules_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/rules_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+            },
+        }),
+    });
+    const run_rules_tests = b.addRunArtifact(rules_tests);
+
     const print_schema_exe = b.addExecutable(.{
         .name = "print_schema",
         .root_module = b.createModule(.{
@@ -301,6 +323,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_ts_backend_generator_tests.step);
     test_step.dependOn(&run_zig_type_map_ts_tests.step);
     test_step.dependOn(&run_zig_type_map_sql_tests.step);
+    test_step.dependOn(&run_rules_tests.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{
