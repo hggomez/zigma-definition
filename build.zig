@@ -63,6 +63,7 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "rules_parameter_of_other_record.zig", .expected = "rule 'checkBooking': its parameter must be the instance type of its record" },
     .{ .file = "rules_not_a_validation.zig", .expected = "rule 'checkBooking': must be a validation, returning error{...}!void" },
     .{ .file = "rules_returns_a_value.zig", .expected = "rule 'checkBooking': must be a validation, returning error{...}!void" },
+    .{ .file = "ts_server_struct_text_field.zig", .expected = "field 'nombre' of type 'lugar': text inside a composite type is not read yet" },
 };
 
 pub fn build(b: *std.Build) void {
@@ -270,6 +271,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .imports = &.{
             .{ .name = "zigma", .module = zigma_mod },
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
             .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
         },
     });
@@ -279,6 +281,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
                 .{ .name = "aida", .module = aida_mod },
                 .{ .name = "ts_server_generator", .module = ts_server_generator_mod },
             },
@@ -579,6 +582,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
                     .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
                     .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
+                    .{ .name = "ts_server_generator", .module = ts_server_generator_mod },
                 },
             }),
         });
