@@ -166,6 +166,23 @@ igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` 
   en `zig build test` (necesita Docker + Node). Los builders todavía devuelven
   `{ text, values }` y el script los corre con `pool.query(text, values)` directo; no hay
   capa de ejecución todavía (aparece cuando un segundo test la necesite).
+* **El backend en su propio contenedor** (2026-10-22): servicio `backend` en
+  `docker-compose.yml`, junto a `postgres`. `backend/Dockerfile` es `FROM node:22.19.0-alpine`
+  (fijado) + `npm ci` con el `package-lock.json` versionado + copia de `src/`: el código
+  generado (`dml.ts`) lo escribe `zig build` en el host, **no hay Zig en la imagen** (sin
+  riesgo de que desaparezca de las descargas la versión dev fijada). El servicio no tiene
+  proceso de larga duración (todavía no hay capa HTTP): el código del backend corre a
+  demanda con `docker compose run --rm backend node ...`, y llega a Postgres por el nombre
+  del servicio (`DATABASE_URL=postgres://aida:aida@postgres:5432/aida`, `depends_on`
+  postgres sano). Por eso el `docker compose up -d --wait` del build levanta solo
+  `postgres` (el `backend` terminaría enseguida y `--wait` lo tomaría como falla).
+  * Test: `zig build backend-docker` regenera `dml.ts`, aplica el esquema, construye la
+    imagen y corre `test/backend_docker_test.zig`, un test de Zig que ejecuta dentro del
+    contenedor insert → selectByPk → delete de `periodos` y chequea que `DATABASE_URL`
+    nombre al servicio `postgres` (no `localhost`): en el host solo corre Docker. Fuera de
+    `zig build test` (necesita Docker).
+  * La primera corrida tardó más de 10 minutos (probablemente la descarga de la imagen de
+    Node y el primer build; no se confirmó); las siguientes, segundos.
 
 **Falta** para completar la interfaz de DML: más casos de integración (update toca solo lo
 nombrado, delete→selectByPk vacío, violación de uk/fk como error de dominio, entidad de pk
@@ -206,10 +223,20 @@ abajo). Las opciones que se evaluaron:
   exports concretos para el sistema específico (aida) — un export por función de
   validación/regla de negocio, no una función genérica reusable entre sistemas.
 
+**Decisión (2026-10-22): el cliente de Postgres del backend TS es `pg`** (node-postgres).
+Ya estaba en `backend/package.json` para el test de integración, y el código generado está
+armado alrededor de su API: cada builder de `dml.ts` devuelve `{ text, values }`, que es lo
+que recibe `pool.query(text, values)`. Consecuencias a tener en cuenta en la traducción de
+valores TS ↔ Postgres: `pg` devuelve `BIGINT` como string por defecto (no `bigint`) y un
+tipo compuesto como su forma de texto (`"(2026,3,14)"`); las conversiones se registran por
+tipo. Se descartó cambiar a otro cliente (`postgres.js`, con otra API: templates
+`` sql`...` `` en vez de `{ text, values }`), que obligaría a cambiar lo que genera el
+generador.
+
 **Ya no aplica** (era para un backend en Zig, descartado por la decisión de arriba):
 
 * La investigación de `libpq` (driver de Postgres para Zig) — el cliente de Postgres pasa
-  a ser responsabilidad de TypeScript (a elegir: `pg`, `postgres.js`, etc.).
+  a ser responsabilidad de TypeScript (decidido: `pg`, ver arriba).
 * La decisión de `std.http.Server` — el servidor HTTP pasa a ser Node/TypeScript
   (framework a elegir, o ninguno si se arranca con Node puro).
 
@@ -327,10 +354,11 @@ entidad); el `.wasm` y `rules.ts` de aida en el backend.
 
 ## Próximos pasos
 
-1. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`):
-   Dockerfile de Node, sin acoplar el desarrollo al host Windows.
-2. Elegir cliente de Postgres para TypeScript y, si hace falta, framework HTTP (o arrancar
-   con Node puro).
-3. Reglas: definir cuándo se aplica una regla y llevar las de aida (`validarCargo`) al
-   backend con `rules.ts` / `rules.wasm`.
-4. Traducción de valores TS ↔ Postgres (`fecha`, `bigint`), ver "Falta" en el hito 2.
+Hecho: el `backend` como servicio propio en `docker-compose.yml` (ver el progreso del
+hito 2) y el cliente de Postgres (`pg`, ver "Decisiones previas").
+
+1. Elegir framework HTTP, si hace falta (o arrancar con Node puro), y la capa HTTP: con ella
+   el servicio `backend` pasa a tener un proceso de larga duración.
+2. Reglas: definir cuándo se aplica una regla y llevar las de aida (`validarCargo`) al
+   backend con `rules.ts` / `rules.wasm` (en la imagen, generados en el host como `dml.ts`).
+3. Traducción de valores TS ↔ Postgres (`fecha`, `bigint`), ver "Falta" en el hito 2.

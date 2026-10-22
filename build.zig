@@ -285,8 +285,9 @@ pub fn build(b: *std.Build) void {
     // container's healthcheck, so this is race-free even on first-time init), and
     // pipes the generated aida schema into psql running inside that container. No
     // Postgres driver needed: psql runs inside the container, so the only host
-    // dependency is Docker.
-    const docker_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait" });
+    // dependency is Docker. Only the `postgres` service: the `backend` one has
+    // no long-running process yet, so `--wait` would take its exit as a failure.
+    const docker_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "postgres" });
 
     const run_print_schema_for_db = b.addRunArtifact(print_schema_exe);
     const aida_schema_sql = run_print_schema_for_db.captureStdOut(.{});
@@ -372,6 +373,30 @@ pub fn build(b: *std.Build) void {
 
     const ts_backend_db_step = b.step("ts-backend-db", "Generate, then run the DML integration test against the docker-compose Postgres");
     ts_backend_db_step.dependOn(&run_db_backend_integration_tests.step);
+
+    // `zig build backend-docker`: the backend in its own container. Regenerate
+    // dml.ts into backend/ (generated on the host: no Zig in the image), apply
+    // the aida schema, build the `backend` image, then run
+    // test/backend_docker_test.zig - a Zig test that runs the generated
+    // builders inside that container against the `postgres` service. Not on
+    // `test_step` (needs Docker).
+    const build_backend_image = b.addSystemCommand(&.{ "docker", "compose", "build", "backend" });
+    build_backend_image.step.dependOn(&write_ts_backend.step);
+
+    const backend_docker_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/backend_docker_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_backend_docker_tests = b.addRunArtifact(backend_docker_tests);
+    run_backend_docker_tests.has_side_effects = true;
+    run_backend_docker_tests.step.dependOn(&build_backend_image.step);
+    run_backend_docker_tests.step.dependOn(&apply_aida_schema.step);
+
+    const backend_docker_step = b.step("backend-docker", "Build the backend image and run the generated DML inside it against the docker-compose Postgres");
+    backend_docker_step.dependOn(&run_backend_docker_tests.step);
 
     // `zig build rules-wasm`: compile the rules of the test system to one
     // wasm32 module (src/rules_wasm.zig with test/test_system.zig as its

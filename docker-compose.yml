@@ -16,5 +16,18 @@ services:
       timeout: 2s
       retries: 15
 
+  # The backend: Node + pg + the generated code (built on the host into
+  # backend/, see backend/Dockerfile). No long-running process yet (there is
+  # no HTTP layer): backend code runs on demand with
+  # `docker compose run --rm backend node ...`, reaching Postgres by its
+  # service name.
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://aida:aida@postgres:5432/aida
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   zigma_aida_pgdata:
