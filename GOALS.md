@@ -35,12 +35,13 @@ completa, etc.), se consulta puntualmente, no se hereda el código.
 
 ## Progreso
 
-Hito 1 (base de datos) en curso. Se eligió generar el esquema como DDL en comptime
-(strings), apuntando a SQLite, porque encaja con TDD (los tests son asserts sobre el
-string generado, sin conexión viva) y no acopla el framework a ningún driver todavía.
-El "ver corriendo" de este hito, por ahora, es imprimir el DDL generado para `aida` (no
-ejecutarlo todavía contra un SQLite real — eso queda para cuando haya que elegir un
-driver, ver `TEST_QUEUE.md`).
+Hito 1 (base de datos) completo. Se eligió generar el esquema como DDL en comptime
+(strings), porque encaja con TDD (los tests son asserts sobre el string generado, sin
+conexión viva) y no acopla el framework a ningún driver. Al principio apuntaba a SQLite y
+el "ver corriendo" era solo imprimir el DDL; el destino terminó siendo **Postgres vía
+Docker** (ver "Hito 1 completo" más abajo). Los puntos que siguen están en orden
+cronológico: los primeros describen el mapeo de tipos a mano, reemplazado después en la
+rama `type-translation` (último punto).
 
 * `build.zig.zon`: `minimum_zig_version` actualizado a `0.17.0-dev.1778+767d25269` (la
   build que estaba cacheada localmente; el pin anterior, `0.17.0-dev.1282+c0f9b51d8`, ya
@@ -61,6 +62,10 @@ driver, ver `TEST_QUEUE.md`).
   * Todos los tests en verde, incluido un caso "no compila"
     (`test/compile_errors/sql_unknown_type_mapping.zig`): un tipo de dominio sin
     entrada en `sql_types` da `@compileError` con mensaje propio.
+  * **Reemplazado** en la rama `type-translation`: las firmas son ahora
+    `createTableSql(type_defs, name, entity)` y `schemaSql(type_defs, entity_defs)`,
+    `aida.sql_type_defs` y `sql_unknown_type_mapping.zig` ya no existen, y `fecha` es un
+    tipo compuesto (ver el último punto).
 * Corregido: las columnas de la pk fuerzan `NOT NULL` sin importar el `nullable` del
   campo (`isPkField` en `columnClause`, `src/sql_generator.zig`). SQL estándar lo
   implica para la pk; SQLite es la excepción y no lo fuerza salvo declaración
@@ -112,6 +117,12 @@ driver, ver `TEST_QUEUE.md`).
   struct todavía no compila (el interno no tiene dominio ni nombre). Aplicado a mano contra
   Postgres: el esquema entra entero, y una `fecha` incompleta, `mes = 300` o `año = -1` se
   rechazan. Falta el lado TS ↔ Postgres (cómo `dml.ts` manda y lee un `fecha`).
+  * El "no compila" de un dominio que no está en `type_defs` es ahora
+    `sql_type_not_in_type_defs.zig` (`"type 'fecha' is not in type_defs"`). El test del
+    esquema completo de aida vive en `test/sql_generator_aida_test.zig`.
+  * Confirmado de punta a punta (2026-10-22) con `docker compose down -v` seguido de
+    `zig build ts-backend-db`: sobre una base vacía el esquema entra sin errores
+    (2 `CREATE DOMAIN`, 1 `CREATE TYPE`, 11 `CREATE TABLE`) y el test de integración pasa.
 
 ## Hito 2 (backend): estado y decisiones
 
@@ -158,8 +169,11 @@ igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` 
 
 **Falta** para completar la interfaz de DML: más casos de integración (update toca solo lo
 nombrado, delete→selectByPk vacío, violación de uk/fk como error de dominio, entidad de pk
-compuesta), y el codec de `fecha` (hoy `insertClases` pasa el objeto `{ año, mes, día }`
-crudo a una columna `TEXT` — `pg` lo stringify a `"[object Object]"`; hay que serializar).
+compuesta), y la traducción de valores TS ↔ Postgres: hoy `insertClases` pasa el objeto
+`{ año, mes, día }` crudo a la columna de tipo compuesto `fecha` (`pg` lo stringify a
+`"[object Object]"`; hay que serializarlo al literal del compuesto y parsearlo al leer), y
+los campos `bigint` (`i64`) y los enteros con `DOMAIN` todavía no pasan por ningún test de
+integración (el único hoy es `periodos`, una sola columna de texto).
 Después: el resto del backend (endpoints HTTP) y el interop TS → Zig para las reglas de
 dominio.
 

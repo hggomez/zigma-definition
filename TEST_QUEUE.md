@@ -8,7 +8,10 @@ revisión antes de implementar.
 
 ## Pendientes (módulo `sql_generator` — esquema de la base de datos)
 
-Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
+Hito 1 (base de datos) completo, ver `GOALS.md`. Queda una limitación conocida:
+
+* Struct dentro de un struct: hoy no compila (`zig_type_map_sql_nested_struct.zig`), el
+  struct interno no tiene dominio que le dé nombre al compuesto.
 
 ## Pendientes (módulo `ts_backend_generator` — interfaz de DML en TS)
 
@@ -18,13 +21,17 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
 * Contra Postgres real (la base es el oráculo, ya no string-assert). Hecho: insert→
   selectByPk ida y vuelta (`periodos`). Falta: `update` toca solo las columnas nombradas,
   `delete` y después selectByPk → vacío, violación de uk (`materias.denominacion`) y de fk
-  mapeadas a error de dominio, `fecha` por una columna `TEXT` (hoy se rompe: `pg` recibe el
-  objeto crudo), entidad de pk compuesta (`inscripciones`, necesita `cursos`+`alumnos`
-  antes por las fks).
+  mapeadas a error de dominio, `fecha` ida y vuelta por su columna de tipo compuesto (hoy
+  se rompe: `pg` recibe el objeto crudo), un campo `bigint` (`i64`, p. ej. `clases.orden`)
+  y uno con `DOMAIN` (rechazo de un valor fuera del intervalo de Zig), entidad de pk
+  compuesta (`inscripciones`, necesita `cursos`+`alumnos` antes por las fks).
 * `apply_aida_schema` (usado por `create-database` y `ts-backend-db`) no es idempotente:
-  el DDL es `CREATE TABLE`, no `CREATE TABLE IF NOT EXISTS`, así que re-correrlo sobre una
-  base ya creada tira `relation "x" already exists` (psql sigue igual, exit 0, pero
-  ensucia la salida). Ver si conviene `IF NOT EXISTS` o un `DROP ... CASCADE` previo.
+  el DDL es `CREATE DOMAIN` / `CREATE TYPE` / `CREATE TABLE` sin `IF NOT EXISTS`, así que
+  re-correrlo sobre una base ya creada tira `type "x" already exists` / `relation "x"
+  already exists` (psql sigue igual, exit 0, pero ensucia la salida, y el test corre contra
+  el esquema viejo sin avisar). `CREATE DOMAIN` / `CREATE TYPE` no tienen `IF NOT EXISTS`
+  en Postgres, así que probablemente convenga un reset previo (`DROP SCHEMA public
+  CASCADE`, ver el último punto).
 * `type` del `row`/`pk`: usa `,` como separador; TS idiomático es `;` dentro de un type
   literal (ambos válidos).
 * Pendiente, rehacer en su momento (no es de tipos): violaciones de pk/uk/fk como errores
@@ -52,10 +59,19 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
 * Varios campos, cada uno con el tipo SQL que le corresponde.
 * Más de una entidad en un mismo esquema (`schemaSql`, entidades
   independientes, sin fk).
-* Mapeo de todos los tipos de dominio del sistema a SQL, incluyendo uno
-  respaldado por un struct anidado (`fecha`) — mapea a una sola columna
-  opaca, sin necesitar que `sql_generator.zig` mire el `Type` de Zig
-  subyacente.
+* Tipo SQL de cada columna derivado del tipo de Zig de su dominio
+  (`sqlTypeOf` vía `type_defs`, rama `type-translation`; reemplaza a
+  `aida.sql_type_defs`): `bool` → `BOOLEAN`, `[]const u8` → `TEXT`, entero
+  → el entero de Postgres más chico que lo contiene, con un `DOMAIN`
+  (`zig_u8`) cuando es más ancho que el de Zig; `i64` → `BIGINT`.
+  `schemaSql` emite cada dominio una vez, antes de las tablas.
+* Struct (`fecha`) → tipo compuesto con el nombre del dominio, más un `CHECK`
+  `<entidad>_<columna>_complete` por columna (el struct entero o `NULL`).
+  Orden en `schemaSql`: dominios, compuestos, tablas.
+* No compilan (`test/compile_errors/`): dominio que no está en `type_defs`
+  (`sql_type_not_in_type_defs.zig`); `zig_type_map_sql_*`: float, opcional,
+  otro slice, entero más ancho que `BIGINT` (con y sin signo), struct dentro
+  de struct, struct con un campo sin mapeo.
 * `NOT NULL` para `nullable: false`, omitido en el default (`aida.alumnos`).
 * `PRIMARY KEY` compuesta, todos los campos en orden (fixture ad-hoc
   `combinacion`; ya funcionaba de antes gracias al `pkClause` genérico).
@@ -70,10 +86,9 @@ Ninguna por ahora: hito 1 (base de datos) completo, ver `GOALS.md`.
   la tabla referenciada ya exista (fixture ad-hoc `nodo_a` ↔ `nodo_b`);
   de paso confirma que `zigma.defineEntities` acepta el ciclo a nivel
   framework.
-* Tipo sin mapeo SQL no compila (`test/compile_errors/
-  sql_unknown_type_mapping.zig`, mensaje `"type 'x' has no SQL mapping"`).
 * Pk siempre `NOT NULL`, sin importar el `nullable` del campo (fixture
   `combinacion`, pk `a`,`b`, ninguno con `nullable: false` explícito).
 * Esquema completo de aida (`schemaSql` sobre las 11 entidades de
-  `aida.entity_defs`, en orden de declaración) — sostiene el "ver
-  corriendo" de este hito (`zig build print-schema`).
+  `aida.entity_defs`, en orden de declaración, en
+  `test/sql_generator_aida_test.zig`) — sostiene el "ver corriendo" de este
+  hito (`zig build print-schema`).
