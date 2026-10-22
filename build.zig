@@ -424,8 +424,44 @@ pub fn build(b: *std.Build) void {
     });
     const run_rules_wasm_node_tests = b.addRunArtifact(rules_wasm_node_tests);
 
-    const rules_wasm_step = b.step("rules-wasm", "Compile the test system's rules to wasm32 and test them from Node");
+    // Then the generated rules.ts of the test system, next to its compiled
+    // rules as rules.wasm (rules.ts loads ./rules.wasm), in a generated
+    // directory: test/rules_ts_node_test.zig imports it from Node.
+    const print_test_system_rules_ts_exe = b.addExecutable(.{
+        .name = "print_test_system_rules_ts",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/print_test_system_rules_ts.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "test_system", .module = test_system_mod },
+                .{ .name = "ts_rules_generator", .module = ts_rules_generator_mod },
+            },
+        }),
+    });
+    const test_system_rules_ts = b.addRunArtifact(print_test_system_rules_ts_exe).captureStdOut(.{});
+    const test_system_rules_dir = b.addWriteFiles();
+    const test_system_rules_ts_path = test_system_rules_dir.addCopyFile(test_system_rules_ts, "rules.ts");
+    _ = test_system_rules_dir.addCopyFile(test_system_rules_wasm.getEmittedBin(), "rules.wasm");
+
+    const rules_ts_options = b.addOptions();
+    // the path of rules.ts (an option path must be a file); rules.wasm is next to it
+    rules_ts_options.addOptionPath("rules_ts_path", test_system_rules_ts_path);
+    const rules_ts_node_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/rules_ts_node_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "build_options", .module = rules_ts_options.createModule() },
+            },
+        }),
+    });
+    const run_rules_ts_node_tests = b.addRunArtifact(rules_ts_node_tests);
+
+    const rules_wasm_step = b.step("rules-wasm", "Compile the test system's rules to wasm32, generate its rules.ts, and test both from Node");
     rules_wasm_step.dependOn(&run_rules_wasm_node_tests.step);
+    rules_wasm_step.dependOn(&run_rules_ts_node_tests.step);
 
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
