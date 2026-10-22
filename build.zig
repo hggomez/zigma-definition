@@ -289,6 +289,29 @@ pub fn build(b: *std.Build) void {
     });
     const run_ts_server_generator_tests = b.addRunArtifact(ts_server_generator_tests);
 
+    const frontend_generator_mod = b.addModule("frontend_generator", .{
+        .root_source_file = b.path("src/frontend_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_mod },
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+            .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
+        },
+    });
+    const frontend_generator_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/frontend_generator_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "frontend_generator", .module = frontend_generator_mod },
+            },
+        }),
+    });
+    const run_frontend_generator_tests = b.addRunArtifact(frontend_generator_tests);
+
     const print_schema_exe = b.addExecutable(.{
         .name = "print_schema",
         .root_module = b.createModule(.{
@@ -466,6 +489,52 @@ pub fn build(b: *std.Build) void {
     const http_docker_step = b.step("http-docker", "Generate the HTTP server, run it in the backend container and request it from the host");
     http_docker_step.dependOn(&run_http_docker_tests.step);
 
+    // `zig build frontend-e2e`: the generated frontend in a headless browser.
+    // Regenerate dml.ts + server.ts into backend/ and the frontend into
+    // frontend/public (gitignored), apply the aida schema, build the images,
+    // bring the frontend up (and the backend with it, waiting for both
+    // healthchecks), then run test/frontend_e2e_test.zig - a Zig test that
+    // seeds rows and runs the Playwright suite in the e2e service. Not on
+    // `test_step` (needs Docker).
+    const print_frontend_exe = b.addExecutable(.{
+        .name = "print_frontend",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/print_frontend.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "aida", .module = aida_mod },
+                .{ .name = "frontend_generator", .module = frontend_generator_mod },
+            },
+        }),
+    });
+    const write_frontend = b.addRunArtifact(print_frontend_exe);
+    write_frontend.addArg("frontend/public");
+    write_frontend.has_side_effects = true;
+
+    const build_frontend_images = b.addSystemCommand(&.{ "docker", "compose", "--profile", "e2e", "build", "backend", "frontend", "e2e" });
+    build_frontend_images.step.dependOn(&write_ts_backend.step);
+    build_frontend_images.step.dependOn(&write_ts_server.step);
+    build_frontend_images.step.dependOn(&write_frontend.step);
+
+    const frontend_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "frontend" });
+    frontend_up.step.dependOn(&build_frontend_images.step);
+    frontend_up.step.dependOn(&apply_aida_schema.step);
+
+    const frontend_e2e_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/frontend_e2e_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_frontend_e2e_tests = b.addRunArtifact(frontend_e2e_tests);
+    run_frontend_e2e_tests.has_side_effects = true;
+    run_frontend_e2e_tests.step.dependOn(&frontend_up.step);
+
+    const frontend_e2e_step = b.step("frontend-e2e", "Generate the frontend, serve it in its container and test it in a headless browser (Playwright, in a container)");
+    frontend_e2e_step.dependOn(&run_frontend_e2e_tests.step);
+
     // `zig build rules-wasm`: compile the rules of the test system to one
     // wasm32 module (src/rules_wasm.zig with test/test_system.zig as its
     // "system") and run test/rules_wasm_node_test.zig, a Zig test that loads
@@ -567,6 +636,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_rules_wasm_tests.step);
     test_step.dependOn(&run_ts_rules_generator_tests.step);
     test_step.dependOn(&run_ts_server_generator_tests.step);
+    test_step.dependOn(&run_frontend_generator_tests.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{

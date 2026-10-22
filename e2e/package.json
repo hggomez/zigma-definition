@@ -1,0 +1,10 @@
+{
+  "name": "zigma-aida-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests of the generated aida frontend, run with Playwright inside the e2e service of docker-compose.yml.",
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}

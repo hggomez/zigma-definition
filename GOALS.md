@@ -382,6 +382,36 @@ El hito 3 arranca por la capa HTTP del backend, que el frontend va a necesitar.
 `periodos` no tiene modificación (su único campo es la pk: no hay nada que `SET`); el `PUT`
 aparece con otra entidad (por ejemplo `materias`), después de estos tres pasos. Hecho.
 
+### Frontend: en curso (próximo paso)
+
+**Decidido (2026-10-22).**
+* Generado desde el SSOT, como `server.ts` (`src/frontend_generator.zig`): HTML + JS planos,
+  sin framework ni paso de build.
+* Contenedor propio: servicio `frontend` (nginx `1.28.0-alpine`, puerto 8080) que sirve las
+  páginas generadas (`frontend/public`, gitignoreado, lo escribe `zig build` en el host) y
+  hace proxy de `/api/` al `backend` (mismo origen: sin CORS).
+* Una página por entidad, su URL espeja la de la API (`/docentes` muestra lo que da
+  `GET /api/docentes`; nginx mapea `/docentes` a `docentes.html`), más un índice.
+* Primer paso: **navegar y listar** (solo lectura). Encabezados = los labels del SSOT; cada
+  número como su texto exacto (un `bigint` nunca pasa por un `number`); `null` = celda vacía;
+  un struct = sus campos unidos con `-` (`fecha` se ve `2026-3-14`: **pendiente** una
+  visualización propia para fechas, ligada al tipo fecha del framework sobre `DATE`).
+* Tests: nativos (texto exacto de lo generado, en `zig build test`) y **end to end con
+  Playwright en un contenedor** (servicio `e2e`, imagen `mcr.microsoft.com/playwright:v1.63.0-noble`
+  y `@playwright/test` 1.63.0, perfil `e2e`), con `zig build frontend-e2e`.
+
+**Hecho:** el generador (`indexHtml`, `entityHtml`, `common_js`) con sus tests nativos en
+verde; `examples/print_frontend.zig` escribe el frontend de aida en `frontend/public` (en
+Windows los argumentos se leen con `iterateAllocator`); `frontend/Dockerfile` +
+`frontend/nginx.conf`; servicios `frontend` y `e2e` en `docker-compose.yml`; la suite de
+Playwright (`e2e/tests/frontend.spec.ts`) y su test de Zig (`test/frontend_e2e_test.zig`).
+
+**Próximo paso:** correr `zig build frontend-e2e` hasta verde. Todavía **no se vio correr**:
+la primera corrida se cortó mientras bajaba la imagen de Playwright (unos 2 GB, más de
+5 minutos; conviene correrla en segundo plano). Después: verlo a mano en el navegador
+(`http://localhost:8080`), y los pasos siguientes del frontend (una fila, baja, alta y
+modificación con formularios).
+
 ## Reglas de dominio: interop TS → Zig (WASM)
 
 Las reglas de dominio se escriben una vez en Zig y el backend TS las corre compiladas a

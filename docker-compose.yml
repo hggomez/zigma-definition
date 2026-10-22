@@ -40,5 +40,30 @@ services:
       timeout: 2s
       retries: 15
 
+  # The frontend: nginx serving the pages generated from the SSOT (built on
+  # the host into frontend/public, see frontend/Dockerfile) on port 8080, and
+  # proxying /api to the backend.
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  # The end-to-end tests of the frontend: Playwright with its browsers (see
+  # e2e/Dockerfile), reaching the frontend by its service name. Not started by
+  # `docker compose up` (profile e2e): run with `docker compose run --rm e2e`.
+  e2e:
+    build: ./e2e
+    environment:
+      BASE_URL: http://frontend
+    profiles: ["e2e"]
+
 volumes:
   zigma_aida_pgdata:
