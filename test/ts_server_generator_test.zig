@@ -16,8 +16,11 @@
 //! - a string, a number or a boolean goes as pg gives it;
 //! - a nullable field (not in the pk) that needs a conversion keeps null.
 //!
-//! First operation: only the list (GET /api/<entity>), for the entities the
-//! generator is given.
+//! Operations: the list (GET /api/<entity>, no query string) for every entity
+//! given, and one row (GET /api/<entity>?<full pk>: the object, or a JSON 404)
+//! for the entities whose pk is text only (a pk of another type would need
+//! its value parsed from the query string: not yet). The query string must
+//! have every field of the pk exactly once and nothing else, or it is a 400.
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -25,18 +28,33 @@ const aida = @import("aida");
 const ts = @import("ts_server_generator");
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-test "generateTsServer: GET /api/<entity> lists the encoded rows as a JSON array, anything else is a JSON 404" {
+test "generateTsServer: the list without a query string, one row with the full pk, anything else a JSON 404" {
     try expectEqualStrings(
         \\import { createServer, type ServerResponse } from "node:http";
         \\import pg from "pg";
         \\
-        \\import { selectAllPeriodos } from "./dml.ts";
+        \\import { selectAllPeriodos, selectPeriodosByPk } from "./dml.ts";
         \\
         \\const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
         \\
         \\function json(res: ServerResponse, status: number, body: unknown): void {
         \\  res.writeHead(status, { "Content-Type": "application/json" });
         \\  res.end(JSON.stringify(body));
+        \\}
+        \\
+        \\// The pk of a row from the query string: every field of the pk exactly once,
+        \\// and nothing else.
+        \\function readPk(params: URLSearchParams, pk: string[]): { values: Record<string, string> } | { error: string } {
+        \\  const values: Record<string, string> = {};
+        \\  for (const [name, value] of params) {
+        \\    if (!pk.includes(name)) return { error: `unknown parameter '${name}'` };
+        \\    if (name in values) return { error: `repeated parameter '${name}'` };
+        \\    values[name] = value;
+        \\  }
+        \\  for (const name of pk) {
+        \\    if (!(name in values)) return { error: `missing pk field '${name}'` };
+        \\  }
+        \\  return { values };
         \\}
         \\
         \\function encodePeriodos(row: any): unknown {
@@ -47,9 +65,17 @@ test "generateTsServer: GET /api/<entity> lists the encoded rows as a JSON array
         \\  const url = new URL(req.url ?? "/", "http://localhost");
         \\  try {
         \\    if (req.method === "GET" && url.pathname === "/api/periodos") {
-        \\      const q = selectAllPeriodos();
+        \\      if (url.search === "") {
+        \\        const q = selectAllPeriodos();
+        \\        const { rows } = await pool.query(q.text, q.values);
+        \\        return json(res, 200, rows.map(encodePeriodos));
+        \\      }
+        \\      const pk = readPk(url.searchParams, ["periodo"]);
+        \\      if ("error" in pk) return json(res, 400, { error: pk.error });
+        \\      const q = selectPeriodosByPk({ periodo: pk.values.periodo });
         \\      const { rows } = await pool.query(q.text, q.values);
-        \\      return json(res, 200, rows.map(encodePeriodos));
+        \\      if (rows.length === 0) return json(res, 404, { error: "not found" });
+        \\      return json(res, 200, encodePeriodos(rows[0]));
         \\    }
         \\    return json(res, 404, { error: "not found" });
         \\  } catch (err) {
@@ -61,6 +87,24 @@ test "generateTsServer: GET /api/<entity> lists the encoded rows as a JSON array
         \\server.listen(Number(process.env.PORT ?? 3000));
         \\
     , ts.generateTsServer(aida.type_defs, .{ .periodos = aida.periodos }));
+}
+
+test "generateTsServer: one row with a composite text pk, every pk field passed to selectByPk in pk order" {
+    const server = ts.generateTsServer(aida.type_defs, .{ .cursos = aida.cursos });
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\      const pk = readPk(url.searchParams, ["periodo", "materia"]);
+        \\      if ("error" in pk) return json(res, 400, { error: pk.error });
+        \\      const q = selectCursosByPk({ periodo: pk.values.periodo, materia: pk.values.materia });
+    ) != null);
+}
+
+test "generateTsServer: no one-row route (yet) for an entity whose pk is not text only" {
+    const server = ts.generateTsServer(aida.type_defs, .{ .clases = aida.clases });
+    try std.testing.expect(std.mem.indexOf(u8, server, "selectClasesByPk") == null);
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\    if (req.method === "GET" && url.pathname === "/api/clases") {
+        \\      const q = selectAllClases();
+    ) != null);
 }
 
 // Every kind of field: a bigint pk, a struct with a bigint, a boolean and a
@@ -120,7 +164,7 @@ test "generateTsServer: aida's clases, with its bigint orden (pk) and nullable f
 test "generateTsServer: one route and one encoder per entity, in declaration order; each struct decoder once" {
     const server = ts.generateTsServer(aida.type_defs, .{ .periodos = aida.periodos, .clases = aida.clases, .mesas = aida.mesas });
     try std.testing.expect(std.mem.indexOf(u8, server,
-        \\import { selectAllPeriodos, selectAllClases, selectAllMesas } from "./dml.ts";
+        \\import { selectAllPeriodos, selectPeriodosByPk, selectAllClases, selectAllMesas } from "./dml.ts";
     ) != null);
     const periodos_route = std.mem.indexOf(u8, server, "url.pathname === \"/api/periodos\"").?;
     const clases_route = std.mem.indexOf(u8, server, "url.pathname === \"/api/clases\"").?;

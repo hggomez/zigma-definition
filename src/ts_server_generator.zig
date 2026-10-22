@@ -14,7 +14,10 @@
 //! and escaped, so it is not read yet). A nullable field (not in the pk) that
 //! needs a conversion keeps null.
 //!
-//! First operation: only the list (GET /api/<entity>), for the entities given.
+//! Operations: the list (GET /api/<entity>, no query string) for every entity
+//! given, and one row (GET /api/<entity>?<full pk>: the object, or a JSON 404)
+//! for the entities whose pk is text only; a query string that is not exactly
+//! the pk (`readPk`) is a JSON 400.
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -41,6 +44,21 @@ const header_after_imports =
     \\function json(res: ServerResponse, status: number, body: unknown): void {
     \\  res.writeHead(status, { "Content-Type": "application/json" });
     \\  res.end(JSON.stringify(body));
+    \\}
+    \\
+    \\// The pk of a row from the query string: every field of the pk exactly once,
+    \\// and nothing else.
+    \\function readPk(params: URLSearchParams, pk: string[]): { values: Record<string, string> } | { error: string } {
+    \\  const values: Record<string, string> = {};
+    \\  for (const [name, value] of params) {
+    \\    if (!pk.includes(name)) return { error: `unknown parameter '${name}'` };
+    \\    if (name in values) return { error: `repeated parameter '${name}'` };
+    \\    values[name] = value;
+    \\  }
+    \\  for (const name of pk) {
+    \\    if (!(name in values)) return { error: `missing pk field '${name}'` };
+    \\  }
+    \\  return { values };
     \\}
     \\
     \\
@@ -144,6 +162,44 @@ fn listRoute(comptime entity_name: []const u8) []const u8 {
         "    }\n";
 }
 
+/// Whether every field of the pk is text: its value is then the query-string
+/// value as is (a pk of another type would need it parsed: not yet).
+fn hasTextPk(comptime type_defs: anytype, comptime entity: anytype) bool {
+    for (entity.pk) |pk_field| {
+        const domain = @field(entity.fields, pk_field).type;
+        if (tsTypeOf(@field(type_defs, domain).Type) != .string) return false;
+    }
+    return true;
+}
+
+/// The route of an entity with a text pk: without a query string, the list;
+/// with one, the row of that pk (`readPk`, then `select<Entity>ByPk`), encoded,
+/// or a JSON 404; a query string that is not exactly the pk is a JSON 400.
+fn listAndRowRoute(comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
+    var pk_names: []const u8 = "";
+    var pk_object: []const u8 = "{ ";
+    for (entity.pk, 0..) |pk_field, i| {
+        const sep = if (i > 0) ", " else "";
+        pk_names = pk_names ++ sep ++ "\"" ++ pk_field ++ "\"";
+        pk_object = pk_object ++ sep ++ pk_field ++ ": pk.values." ++ pk_field;
+    }
+    pk_object = pk_object ++ " }";
+    const entity_pascal = pascal(entity_name);
+    return "    if (req.method === \"GET\" && url.pathname === \"/api/" ++ entity_name ++ "\") {\n" ++
+        "      if (url.search === \"\") {\n" ++
+        "        const q = selectAll" ++ entity_pascal ++ "();\n" ++
+        "        const { rows } = await pool.query(q.text, q.values);\n" ++
+        "        return json(res, 200, rows.map(encode" ++ entity_pascal ++ "));\n" ++
+        "      }\n" ++
+        "      const pk = readPk(url.searchParams, [" ++ pk_names ++ "]);\n" ++
+        "      if (\"error\" in pk) return json(res, 400, { error: pk.error });\n" ++
+        "      const q = select" ++ entity_pascal ++ "ByPk(" ++ pk_object ++ ");\n" ++
+        "      const { rows } = await pool.query(q.text, q.values);\n" ++
+        "      if (rows.length === 0) return json(res, 404, { error: \"not found\" });\n" ++
+        "      return json(res, 200, encode" ++ entity_pascal ++ "(rows[0]));\n" ++
+        "    }\n";
+}
+
 fn contains(comptime names: []const []const u8, comptime name: []const u8) bool {
     for (names) |n| {
         if (std.mem.eql(u8, n, name)) return true;
@@ -166,7 +222,9 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
             var routes: []const u8 = "";
             for (entity_names, 0..) |entity_name, i| {
                 const entity = zigma.completeEntity(@field(entity_defs, entity_name));
+                const text_pk = hasTextPk(type_defs, entity);
                 imports = imports ++ (if (i > 0) ", " else "") ++ "selectAll" ++ pascal(entity_name);
+                if (text_pk) imports = imports ++ ", select" ++ pascal(entity_name) ++ "ByPk";
                 // one decoder per struct domain, the first time it appears
                 for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
                     const domain = @field(entity.fields, field_name).type;
@@ -177,7 +235,7 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
                     }
                 }
                 encoders = encoders ++ encoderFn(type_defs, entity_name, entity) ++ "\n";
-                routes = routes ++ listRoute(entity_name);
+                routes = routes ++ if (text_pk) listAndRowRoute(entity_name, entity) else listRoute(entity_name);
             }
             break :blk header_before_imports ++ imports ++ header_after_imports ++
                 decoders ++ encoders ++ server_start ++ routes ++ footer;
@@ -186,8 +244,8 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
 }
 
 /// The HTTP server of the given entities (`.{ .periodos = aida.periodos }`),
-/// over the system's `type_defs`: one GET /api/<entity> route per entity, in
-/// declaration order.
+/// over the system's `type_defs`: one GET /api/<entity> route per entity (the
+/// list, and one row when its pk is text only), in declaration order.
 pub fn generateTsServer(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     return ServerHolder(type_defs, entity_defs).text;
 }

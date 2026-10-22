@@ -308,6 +308,45 @@ enteramente en Zig:
     el original, más `error.Timeout` en `acquire()`.
   * Ninguno de los dos fija `minimum_zig_version` en su `build.zig.zon`.
 
+## Hito 3: capa HTTP (y después frontend)
+
+El hito 3 arranca por la capa HTTP del backend, que el frontend va a necesitar.
+
+**Decisiones.**
+* Node puro (`node:http`), sin framework; cliente de Postgres `pg`.
+* `server.ts` **generado** desde el SSOT, como `dml.ts` y `rules.ts`, con una ruta explícita
+  por entidad y operación (`src/ts_server_generator.zig`).
+* API bajo `/api/<entidad>`; la pk (y más adelante los filtros) va en el **query string**.
+* Todas las respuestas son JSON: una lista es un array pelado, un error es
+  `{ "error": ... }` (404 sin ruta, 500 ante una excepción, que se loguea).
+* Cada fila se codifica campo por campo desde el SSOT, **en `server.ts`**: un `bigint` es
+  un número JSON exacto (`JSON.rawJSON` sobre el string exacto que da `pg`; ni por un
+  `number` ni como string), un struct es un objeto leído de la forma de texto del tipo
+  compuesto (`fecha` → `{ "año", "mes", "día" }`). Texto o un struct dentro de un
+  compuesto: no compila todavía.
+* El servidor es el proceso de larga duración del servicio `backend` (puerto 3000, con
+  healthcheck). Test: `zig build http-docker` (pide la API desde el host).
+
+**Hecho.**
+* `GET /api/<entidad>` (listar) para las 11 entidades de aida.
+* `GET /api/<entidad>?<pk completa>` (una fila): el objeto, o 404 JSON. Para las entidades
+  cuya pk es solo texto (`docentes`, `materias`, `periodos`, `cursos`, `alumnos`,
+  `inscripciones`); el generador lo decide desde el SSOT. Un query string que no es
+  exactamente la pk es 400 JSON (`unknown parameter`, `repeated parameter`,
+  `missing pk field`). Las 5 entidades con `bigint` o `fecha` en la pk todavía no tienen esta
+  ruta (habría que parsear esos tipos del query string) e **ignoran** el query string:
+  devuelven la lista.
+
+**Plan: las operaciones que faltan, empezando por `periodos`.** En este orden:
+1. ~~**Una fila:** `GET /api/periodos?periodo=…`.~~ Hecho. Trae la lectura del query string (la pk
+   completa, convertida al tipo de cada campo) y los errores de entrada.
+2. **Baja:** `DELETE /api/periodos?periodo=…`. Reusa la lectura de la pk del paso 1.
+3. **Alta:** `POST /api/periodos`, cuerpo JSON. Trae la lectura del cuerpo y la pregunta de
+   qué pasa con una pk duplicada (ligada a los errores de dominio de pk/uk/fk, pendientes).
+
+`periodos` no tiene modificación (su único campo es la pk: no hay nada que `SET`); el `PUT`
+aparece con otra entidad (por ejemplo `materias`), después de estos tres pasos.
+
 ## Reglas de dominio: interop TS → Zig (WASM)
 
 Las reglas de dominio se escriben una vez en Zig y el backend TS las corre compiladas a

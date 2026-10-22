@@ -1,8 +1,10 @@
 //! The generated HTTP server (backend/src/server.ts) running as the
 //! long-running process of the `backend` service of docker-compose.yml, and
 //! called over HTTP from the host: GET /api/<entity> lists the rows of the real
-//! database as a bare JSON array, for every entity of aida, and an unknown path
-//! is a JSON 404.
+//! database as a bare JSON array, for every entity of aida; with the full pk in
+//! the query string it returns that row (or a JSON 404), for the entities whose
+//! pk is text only; a query string that is not exactly the pk is a JSON 400;
+//! an unknown path is a JSON 404.
 //!
 //! Each field keeps its SSOT type in the JSON: a bigint (aida's `integer`,
 //! i64, BIGINT in Postgres) is an exact JSON number, never rounded through a JS
@@ -89,6 +91,30 @@ const script =
     \\]);
     \\for (const row of clases) assert.deepEqual(Object.keys(row), ['periodo', 'materia', 'orden', 'fecha', 'tema']);
     \\
+    \\// one row: the full pk in the query string -> the object, or a JSON 404
+    \\res = await fetch(base + '/api/periodos?periodo=http-docker-test');
+    \\assert.equal(res.status, 200);
+    \\assert.deepEqual(await res.json(), { periodo: 'http-docker-test' });
+    \\res = await fetch(base + '/api/periodos?periodo=no-such-periodo');
+    \\assert.equal(res.status, 404);
+    \\assert.deepEqual(await res.json(), { error: 'not found' });
+    \\// a composite text pk, its fields in any order
+    \\res = await fetch(base + '/api/cursos?materia=http-docker-test&periodo=http-docker-test');
+    \\assert.equal(res.status, 200);
+    \\assert.deepEqual(await res.json(), { periodo: 'http-docker-test', materia: 'http-docker-test', docente: null });
+    \\
+    \\// a query string that is not exactly the pk: 400 with a JSON error
+    \\for (const [query, error] of [
+    \\  ['/api/periodos?periodo=http-docker-test&foo=1', "unknown parameter 'foo'"],
+    \\  ['/api/periodos?periodo=a&periodo=b', "repeated parameter 'periodo'"],
+    \\  ['/api/cursos?periodo=http-docker-test', "missing pk field 'materia'"],
+    \\]) {
+    \\  res = await fetch(base + query);
+    \\  assert.equal(res.status, 400, query);
+    \\  assert.match(res.headers.get('content-type') ?? '', /^application\/json/, query);
+    \\  assert.deepEqual(await res.json(), { error }, query);
+    \\}
+    \\
     \\// an unknown path: 404 with a JSON error
     \\res = await fetch(base + '/api/inexistentes');
     \\assert.equal(res.status, 404);
@@ -98,7 +124,7 @@ const script =
     \\console.log('HTTP_OK');
 ;
 
-test "the backend container lists every entity from the real database, each field with its SSOT type" {
+test "the backend container lists every entity and reads one row by its pk, each field with its SSOT type" {
     try psql(cleanup);
     try psql(seed);
     defer psql(cleanup) catch {};
