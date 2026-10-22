@@ -22,7 +22,10 @@
 //! for now, the generic 500: pk/uk/fk violations are handled together later.
 //! Create (POST /api/<entity>, the row as a JSON body: 201 without a body) for
 //! the entities whose fields are all text; a body that is not a row of the
-//! entity (`readBody`) is a JSON 400, a duplicate pk the generic 500.
+//! entity (`readBody`) is a JSON 400, a duplicate pk the generic 500. Update
+//! (PUT /api/<entity>?<full pk>, the fields outside the pk as a JSON body: 204,
+//! or a JSON 404) for the entities with a text pk, text fields and some field
+//! outside the pk; the full row is written (an absent nullable field is null).
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -267,6 +270,54 @@ fn createRoute(comptime entity_name: []const u8, comptime entity: anytype) []con
         "    }\n";
 }
 
+/// Whether the entity has some field outside the pk: an all-pk entity has
+/// nothing to update (dml.ts has no `update<Entity>` for it).
+fn hasNonPkFields(comptime entity: anytype) bool {
+    for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
+        if (!isPkField(entity, field_name)) return true;
+    }
+    return false;
+}
+
+/// The update route of an entity with a text pk, text fields and some field
+/// outside the pk: PUT /api/<entity>?<pk> with the fields outside the pk as a
+/// JSON body -> 204 without a body, or a JSON 404 when no row had that pk. The
+/// update is the full row (`update<Entity>` of dml.ts): a nullable field the
+/// body leaves out is written as null; a pk field in the body is an unknown
+/// field.
+fn updateRoute(comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
+    var pk_names: []const u8 = "";
+    var pk_object: []const u8 = "{ ";
+    for (entity.pk, 0..) |pk_field, i| {
+        const sep = if (i > 0) ", " else "";
+        pk_names = pk_names ++ sep ++ "\"" ++ pk_field ++ "\"";
+        pk_object = pk_object ++ sep ++ pk_field ++ ": pk.values." ++ pk_field;
+    }
+    pk_object = pk_object ++ " }";
+    var fields: []const u8 = "{ ";
+    var row: []const u8 = "{ ";
+    var first = true;
+    for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
+        if (isPkField(entity, field_name)) continue;
+        const nullable = @field(entity.fields, field_name).nullable;
+        const sep = if (first) "" else ", ";
+        first = false;
+        fields = fields ++ sep ++ field_name ++ ": " ++ (if (nullable) "true" else "false");
+        row = row ++ sep ++ field_name ++ ": body.values." ++ field_name;
+    }
+    return "    if (req.method === \"PUT\" && url.pathname === \"/api/" ++ entity_name ++ "\") {\n" ++
+        "      const pk = readPk(url.searchParams, [" ++ pk_names ++ "]);\n" ++
+        "      if (\"error\" in pk) return json(res, 400, { error: pk.error });\n" ++
+        "      const body = await readBody(req, " ++ fields ++ " });\n" ++
+        "      if (\"error\" in body) return json(res, 400, { error: body.error });\n" ++
+        "      const q = update" ++ pascal(entity_name) ++ "(" ++ pk_object ++ ", " ++ row ++ " });\n" ++
+        "      const { rowCount } = await pool.query(q.text, q.values);\n" ++
+        "      if (rowCount === 0) return json(res, 404, { error: \"not found\" });\n" ++
+        "      res.writeHead(204);\n" ++
+        "      return res.end();\n" ++
+        "    }\n";
+}
+
 /// The delete route of an entity with a text pk: DELETE /api/<entity>?<pk>
 /// -> 204 without a body, or a JSON 404 when no row had that pk; a query
 /// string that is not exactly the pk (none included) is a JSON 400, so it
@@ -318,6 +369,8 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
                 if (text_pk) imports = imports ++ ", select" ++ pascal(entity_name) ++ "ByPk, delete" ++ pascal(entity_name);
                 const text_fields = hasTextFields(type_defs, entity);
                 if (text_fields) imports = imports ++ ", insert" ++ pascal(entity_name);
+                const updatable = text_pk and text_fields and hasNonPkFields(entity);
+                if (updatable) imports = imports ++ ", update" ++ pascal(entity_name);
                 // one decoder per struct domain, the first time it appears
                 for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
                     const domain = @field(entity.fields, field_name).type;
@@ -333,6 +386,7 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
                 else
                     listRoute(entity_name);
                 if (text_fields) routes = routes ++ createRoute(entity_name, entity);
+                if (updatable) routes = routes ++ updateRoute(entity_name, entity);
             }
             break :blk header_before_imports ++ imports ++ header_after_imports ++
                 decoders ++ encoders ++ server_start ++ routes ++ footer;
@@ -342,8 +396,9 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
 
 /// The HTTP server of the given entities (`.{ .periodos = aida.periodos }`),
 /// over the system's `type_defs`: one GET /api/<entity> route per entity (the
-/// list, and one row and delete when its pk is text only) and a POST route
-/// when every field is text, in declaration order.
+/// list, and one row and delete when its pk is text only), a POST route when
+/// every field is text and a PUT route when, besides, some field is outside
+/// the pk, in declaration order.
 pub fn generateTsServer(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     return ServerHolder(type_defs, entity_defs).text;
 }

@@ -32,6 +32,13 @@
 //! JSON object with only the entity's fields, each a string; a nullable field
 //! may be null or absent (taken as null), the others are required; anything
 //! else is a 400. A duplicate pk is, for now, the generic 500.
+//!
+//! Update (PUT /api/<entity>?<full pk>, the fields outside the pk as a JSON
+//! body: 204 without a body, or a JSON 404 when no row had that pk) for the
+//! entities with a text-only pk, text-only fields and some field outside the
+//! pk (an all-pk entity has nothing to update). The update is the full row:
+//! a nullable field the body leaves out is written as null; a pk field in the
+//! body is an unknown field (the pk is only in the query string).
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -170,11 +177,45 @@ test "generateTsServer: create reads every field of the entity, the nullable one
     ) != null);
 }
 
+test "generateTsServer: update takes the pk from the query string and the other fields from the body" {
+    const server = ts.generateTsServer(aida.type_defs, .{ .materias = aida.materias });
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\    if (req.method === "PUT" && url.pathname === "/api/materias") {
+        \\      const pk = readPk(url.searchParams, ["materia"]);
+        \\      if ("error" in pk) return json(res, 400, { error: pk.error });
+        \\      const body = await readBody(req, { denominacion: false });
+        \\      if ("error" in body) return json(res, 400, { error: body.error });
+        \\      const q = updateMaterias({ materia: pk.values.materia }, { denominacion: body.values.denominacion });
+        \\      const { rowCount } = await pool.query(q.text, q.values);
+        \\      if (rowCount === 0) return json(res, 404, { error: "not found" });
+        \\      res.writeHead(204);
+        \\      return res.end();
+        \\    }
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, server, "updateMaterias } from \"./dml.ts\";") != null);
+}
+
+test "generateTsServer: update with a composite pk and a nullable field" {
+    const server = ts.generateTsServer(aida.type_defs, .{ .cursos = aida.cursos });
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\      const body = await readBody(req, { docente: true });
+        \\      if ("error" in body) return json(res, 400, { error: body.error });
+        \\      const q = updateCursos({ periodo: pk.values.periodo, materia: pk.values.materia }, { docente: body.values.docente });
+    ) != null);
+}
+
+test "generateTsServer: no update route for an entity that is all pk" {
+    const server = ts.generateTsServer(aida.type_defs, .{ .periodos = aida.periodos, .inscripciones = aida.inscripciones });
+    try std.testing.expect(std.mem.indexOf(u8, server, "\"PUT\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, server, "update") == null);
+}
+
 test "generateTsServer: no one-row nor delete route (yet) for an entity whose pk is not text only" {
     const server = ts.generateTsServer(aida.type_defs, .{ .clases = aida.clases });
     try std.testing.expect(std.mem.indexOf(u8, server, "selectClasesByPk") == null);
     try std.testing.expect(std.mem.indexOf(u8, server, "deleteClases") == null);
     try std.testing.expect(std.mem.indexOf(u8, server, "insertClases") == null);
+    try std.testing.expect(std.mem.indexOf(u8, server, "updateClases") == null);
     try std.testing.expect(std.mem.indexOf(u8, server,
         \\    if (req.method === "GET" && url.pathname === "/api/clases") {
         \\      const q = selectAllClases();

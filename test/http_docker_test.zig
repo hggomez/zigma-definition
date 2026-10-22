@@ -7,7 +7,9 @@
 //! when it was not there); a query string that is not exactly the pk is a JSON
 //! 400; POST with the row as a JSON body creates it (201), for the entities
 //! whose fields are all text, and a body that is not a row of the entity is a
-//! JSON 400; an unknown path is a JSON 404.
+//! JSON 400; PUT with the pk in the query string and the other fields as a
+//! JSON body updates the row (204, or a JSON 404 when it was not there); an
+//! unknown path is a JSON 404.
 //!
 //! Each field keeps its SSOT type in the JSON: a bigint (aida's `integer`,
 //! i64, BIGINT in Postgres) is an exact JSON number, never rounded through a JS
@@ -173,6 +175,39 @@ const script =
     \\res = await fetch(base + '/api/clases', { method: 'POST', body: '{}' });
     \\assert.equal(res.status, 404);
     \\
+    \\// update: the pk in the query string, the other fields in the body; 204
+    \\// without a body, then the row has the new values
+    \\res = await fetch(base + '/api/materias?materia=http-docker-test', { method: 'PUT', body: JSON.stringify({ denominacion: 'http-docker-test-updated' }) });
+    \\assert.equal(res.status, 204);
+    \\assert.equal(await res.text(), '');
+    \\res = await fetch(base + '/api/materias?materia=http-docker-test');
+    \\assert.deepEqual(await res.json(), { materia: 'http-docker-test', denominacion: 'http-docker-test-updated' });
+    \\// a composite pk; a nullable field set, then left out of the body: null
+    \\res = await fetch(base + '/api/cursos?periodo=http-docker-test&materia=http-docker-test', { method: 'PUT', body: JSON.stringify({ docente: 'http-docker-test' }) });
+    \\assert.equal(res.status, 204);
+    \\res = await fetch(base + '/api/cursos?periodo=http-docker-test&materia=http-docker-test');
+    \\assert.deepEqual(await res.json(), { periodo: 'http-docker-test', materia: 'http-docker-test', docente: 'http-docker-test' });
+    \\res = await fetch(base + '/api/cursos?periodo=http-docker-test&materia=http-docker-test', { method: 'PUT', body: '{}' });
+    \\assert.equal(res.status, 204);
+    \\res = await fetch(base + '/api/cursos?periodo=http-docker-test&materia=http-docker-test');
+    \\assert.deepEqual(await res.json(), { periodo: 'http-docker-test', materia: 'http-docker-test', docente: null });
+    \\// no row with that pk: a JSON 404 (nothing is created)
+    \\res = await fetch(base + '/api/materias?materia=no-such-materia', { method: 'PUT', body: JSON.stringify({ denominacion: 'x' }) });
+    \\assert.equal(res.status, 404);
+    \\assert.deepEqual(await res.json(), { error: 'not found' });
+    \\res = await fetch(base + '/api/materias?materia=no-such-materia');
+    \\assert.equal(res.status, 404);
+    \\// the pk only goes in the query string; without it, a JSON 400
+    \\res = await fetch(base + '/api/materias?materia=http-docker-test', { method: 'PUT', body: JSON.stringify({ materia: 'other', denominacion: 'x' }) });
+    \\assert.equal(res.status, 400);
+    \\assert.deepEqual(await res.json(), { error: "unknown field 'materia'" });
+    \\res = await fetch(base + '/api/materias', { method: 'PUT', body: JSON.stringify({ denominacion: 'x' }) });
+    \\assert.equal(res.status, 400);
+    \\assert.deepEqual(await res.json(), { error: "missing pk field 'materia'" });
+    \\// an entity that is all pk has nothing to update: no route
+    \\res = await fetch(base + '/api/periodos?periodo=http-docker-test', { method: 'PUT', body: '{}' });
+    \\assert.equal(res.status, 404);
+    \\
     \\// an unknown path: 404 with a JSON error
     \\res = await fetch(base + '/api/inexistentes');
     \\assert.equal(res.status, 404);
@@ -182,7 +217,7 @@ const script =
     \\console.log('HTTP_OK');
 ;
 
-test "the backend container lists every entity, reads, deletes and creates one row, each field with its SSOT type" {
+test "the backend container lists every entity, reads, deletes, creates and updates one row, each field with its SSOT type" {
     try psql(cleanup);
     try psql(seed);
     defer psql(cleanup) catch {};

@@ -355,6 +355,13 @@ El hito 3 arranca por la capa HTTP del backend, que el frontend va a necesitar.
   * Los tipos de `dml.ts` no reflejan `nullable` (`insertDocentes` declara `cargo: string`):
     `server.ts` le pasa `string | null`, que en runtime funciona (`pg` manda `NULL`) pero un
     `tsc` rechazaría. Misma limitación de `zigma` que en `TEST_QUEUE.md`.
+* `PUT /api/<entidad>?<pk completa>` (modificación), los campos fuera de la pk como cuerpo
+  JSON: 204 **sin cuerpo**, o 404 JSON si no había fila con esa pk (no se crea nada). Para las
+  entidades con pk solo texto, campos solo texto y algún campo fuera de la pk (en aida:
+  `docentes`, `materias`, `cursos`, `alumnos`; `periodos` e `inscripciones` son todo pk:
+  no hay nada que modificar). Es de fila completa (`update<E>` de `dml.ts`): un campo
+  nullable que el cuerpo no trae se escribe `null`. La pk solo va en el query string: un
+  campo de la pk en el cuerpo es `unknown field` (400).
 
 **Plan: las operaciones que faltan, empezando por `periodos`.** En este orden:
 1. ~~**Una fila:** `GET /api/periodos?periodo=…`.~~ Hecho. Trae la lectura del query string (la pk
@@ -364,7 +371,7 @@ El hito 3 arranca por la capa HTTP del backend, que el frontend va a necesitar.
    qué pasa con una pk duplicada (ligada a los errores de dominio de pk/uk/fk, pendientes).
 
 `periodos` no tiene modificación (su único campo es la pk: no hay nada que `SET`); el `PUT`
-aparece con otra entidad (por ejemplo `materias`), después de estos tres pasos.
+aparece con otra entidad (por ejemplo `materias`), después de estos tres pasos. Hecho.
 
 ## Reglas de dominio: interop TS → Zig (WASM)
 
