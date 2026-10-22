@@ -142,11 +142,17 @@ fn nonPkTypedParams(comptime type_defs: anytype, comptime entity: anytype) []con
 }
 
 /// `"a" = $1 AND "b" = $2`, the placeholders starting after `offset` params.
-fn pkWhere(comptime entity: anytype, comptime offset: usize) []const u8 {
+/// The WHERE of the pk, its parameters from `offset + 1`. A struct column is
+/// compared with its parameter cast to the composite type, named after the
+/// domain: pg sends parameters untyped, and Postgres would take it as an
+/// anonymous composite, whose text it cannot read.
+fn pkWhere(comptime type_defs: anytype, comptime entity: anytype, comptime offset: usize) []const u8 {
     comptime var out: []const u8 = "";
     inline for (entity.pk, 0..) |col, i| {
         const sep = if (i > 0) " AND " else "";
-        out = out ++ sep ++ "\"" ++ col ++ "\" = " ++ std.fmt.comptimePrint("${d}", .{offset + i + 1});
+        const domain = @field(entity.fields, col).type;
+        const cast = if (@typeInfo(zigTypeOf(type_defs, domain)) == .@"struct") "::" ++ domain else "";
+        out = out ++ sep ++ "\"" ++ col ++ "\" = " ++ std.fmt.comptimePrint("${d}", .{offset + i + 1}) ++ cast;
     }
     return out;
 }
@@ -262,7 +268,7 @@ pub fn selectByPkFn(comptime type_defs: anytype, comptime name: []const u8, comp
     return queryFn(
         opFnName("select", name, "ByPk"),
         "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }",
-        "SELECT * FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(entity, 0),
+        "SELECT * FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(type_defs, entity, 0),
         pkAccessors(entity, "pk"),
     );
 }
@@ -284,7 +290,7 @@ pub fn updateFn(comptime type_defs: anytype, comptime name: []const u8, comptime
     return queryFn(
         opFnName("update", name, ""),
         "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }, row: { " ++ nonPkTypedParams(type_defs, entity) ++ " }",
-        "UPDATE \"" ++ name ++ "\" SET " ++ nonPkAssignments(entity) ++ " WHERE " ++ pkWhere(entity, nonPkCount(entity)),
+        "UPDATE \"" ++ name ++ "\" SET " ++ nonPkAssignments(entity) ++ " WHERE " ++ pkWhere(type_defs, entity, nonPkCount(entity)),
         nonPkAccessors(entity, "row") ++ ", " ++ pkAccessors(entity, "pk"),
     );
 }
@@ -294,7 +300,7 @@ pub fn deleteFn(comptime type_defs: anytype, comptime name: []const u8, comptime
     return queryFn(
         opFnName("delete", name, ""),
         "pk: { " ++ pkTypedParams(type_defs, entity) ++ " }",
-        "DELETE FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(entity, 0),
+        "DELETE FROM \"" ++ name ++ "\" WHERE " ++ pkWhere(type_defs, entity, 0),
         pkAccessors(entity, "pk"),
     );
 }

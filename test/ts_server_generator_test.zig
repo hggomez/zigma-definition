@@ -16,15 +16,18 @@
 //! - a string, a number or a boolean goes as pg gives it;
 //! - a nullable field (not in the pk) that needs a conversion keeps null.
 //!
-//! Operations: the list (GET /api/<entity>, no query string) for every entity
-//! given, and one row (GET /api/<entity>?<full pk>: the object, or a JSON 404)
-//! and delete (DELETE /api/<entity>?<full pk>: 204 without a body, or a JSON
-//! 404 when no row had that pk) for the entities whose pk is text only (a pk
-//! of another type would need its value parsed from the query string: not
-//! yet). The query string must have every field of the pk exactly once and
-//! nothing else, or it is a 400. A delete that Postgres rejects (a referenced
-//! row) is, for now, the generic 500: pk/uk/fk violations are handled
-//! together later.
+//! Operations: the list (GET /api/<entity>, no query string), one row
+//! (GET /api/<entity>?<full pk>: the object, or a JSON 404) and delete
+//! (DELETE /api/<entity>?<full pk>: 204 without a body, or a JSON 404 when no
+//! row had that pk) for every entity given. The query string must have every
+//! parameter of the pk exactly once and nothing else, or it is a 400; a struct
+//! of the pk is one parameter per field (`fecha.año=…&fecha.mes=…`). Each value
+//! is then read by its type (`pk<Entity>`): text as is, an integer as decimal
+//! digits inside the interval of its Zig type (exact, as a bigint; else a 400
+//! `field '…' must be an integer in min..max`), a struct as the composite's
+//! literal `(…,…)` that Postgres reads. A delete that Postgres rejects (a
+//! referenced row) is, for now, the generic 500: pk/uk/fk violations are
+//! handled together later.
 //!
 //! Create (POST /api/<entity>, the row as a JSON body: 201 without a body)
 //! for the entities whose fields are all text (a bigint or a fecha in a body
@@ -35,10 +38,10 @@
 //!
 //! Update (PUT /api/<entity>?<full pk>, the fields outside the pk as a JSON
 //! body: 204 without a body, or a JSON 404 when no row had that pk) for the
-//! entities with a text-only pk, text-only fields and some field outside the
-//! pk (an all-pk entity has nothing to update). The update is the full row:
-//! a nullable field the body leaves out is written as null; a pk field in the
-//! body is an unknown field (the pk is only in the query string).
+//! entities with text-only fields and some field outside the pk (an all-pk
+//! entity has nothing to update). The update is the full row: a nullable
+//! field the body leaves out is written as null; a pk field in the body is an
+//! unknown field (the pk is only in the query string).
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -75,6 +78,14 @@ test "generateTsServer: the list, one row and delete with the full pk, create wi
         \\  return { values };
         \\}
         \\
+        \\// An integer from its decimal text, inside min..max, exact (as a bigint);
+        \\// null when the text is not one.
+        \\function readInteger(text: string, min: bigint, max: bigint): bigint | null {
+        \\  if (!/^-?[0-9]+$/.test(text)) return null;
+        \\  const n = BigInt(text);
+        \\  return n < min || n > max ? null : n;
+        \\}
+        \\
         \\// The body of a request as a row of an entity whose fields are all text: a
         \\// JSON object with only its fields, each a string; a nullable field may be
         \\// null or absent (taken as null), the others are required.
@@ -107,6 +118,11 @@ test "generateTsServer: the list, one row and delete with the full pk, create wi
         \\  return { periodo: row.periodo };
         \\}
         \\
+        \\// The pk of periodos from its query-string values, each read by its type.
+        \\function pkPeriodos(v: Record<string, string>): { value: any } | { error: string } {
+        \\  return { value: { periodo: v["periodo"] } };
+        \\}
+        \\
         \\const server = createServer(async (req, res) => {
         \\  const url = new URL(req.url ?? "/", "http://localhost");
         \\  try {
@@ -118,7 +134,9 @@ test "generateTsServer: the list, one row and delete with the full pk, create wi
         \\      }
         \\      const pk = readPk(url.searchParams, ["periodo"]);
         \\      if ("error" in pk) return json(res, 400, { error: pk.error });
-        \\      const q = selectPeriodosByPk({ periodo: pk.values.periodo });
+        \\      const key = pkPeriodos(pk.values);
+        \\      if ("error" in key) return json(res, 400, { error: key.error });
+        \\      const q = selectPeriodosByPk(key.value);
         \\      const { rows } = await pool.query(q.text, q.values);
         \\      if (rows.length === 0) return json(res, 404, { error: "not found" });
         \\      return json(res, 200, encodePeriodos(rows[0]));
@@ -126,7 +144,9 @@ test "generateTsServer: the list, one row and delete with the full pk, create wi
         \\    if (req.method === "DELETE" && url.pathname === "/api/periodos") {
         \\      const pk = readPk(url.searchParams, ["periodo"]);
         \\      if ("error" in pk) return json(res, 400, { error: pk.error });
-        \\      const q = deletePeriodos({ periodo: pk.values.periodo });
+        \\      const key = pkPeriodos(pk.values);
+        \\      if ("error" in key) return json(res, 400, { error: key.error });
+        \\      const q = deletePeriodos(key.value);
         \\      const { rowCount } = await pool.query(q.text, q.values);
         \\      if (rowCount === 0) return json(res, 404, { error: "not found" });
         \\      res.writeHead(204);
@@ -155,15 +175,66 @@ test "generateTsServer: the list, one row and delete with the full pk, create wi
 test "generateTsServer: one row and delete with a composite text pk, every pk field passed in pk order" {
     const server = ts.generateTsServer(aida.type_defs, .{ .cursos = aida.cursos });
     try std.testing.expect(std.mem.indexOf(u8, server,
+        \\// The pk of cursos from its query-string values, each read by its type.
+        \\function pkCursos(v: Record<string, string>): { value: any } | { error: string } {
+        \\  return { value: { periodo: v["periodo"], materia: v["materia"] } };
+        \\}
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, server,
         \\      const pk = readPk(url.searchParams, ["periodo", "materia"]);
         \\      if ("error" in pk) return json(res, 400, { error: pk.error });
-        \\      const q = selectCursosByPk({ periodo: pk.values.periodo, materia: pk.values.materia });
+        \\      const key = pkCursos(pk.values);
+        \\      if ("error" in key) return json(res, 400, { error: key.error });
+        \\      const q = selectCursosByPk(key.value);
     ) != null);
     try std.testing.expect(std.mem.indexOf(u8, server,
         \\    if (req.method === "DELETE" && url.pathname === "/api/cursos") {
         \\      const pk = readPk(url.searchParams, ["periodo", "materia"]);
         \\      if ("error" in pk) return json(res, 400, { error: pk.error });
-        \\      const q = deleteCursos({ periodo: pk.values.periodo, materia: pk.values.materia });
+        \\      const key = pkCursos(pk.values);
+        \\      if ("error" in key) return json(res, 400, { error: key.error });
+        \\      const q = deleteCursos(key.value);
+    ) != null);
+}
+
+test "generateTsServer: a bigint in the pk read as decimal digits inside the i64 interval, exact" {
+    const server = ts.generateTsServer(aida.type_defs, .{ .clases = aida.clases });
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\import { selectAllClases, selectClasesByPk, deleteClases } from "./dml.ts";
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\// The pk of clases from its query-string values, each read by its type.
+        \\function pkClases(v: Record<string, string>): { value: any } | { error: string } {
+        \\  const orden = readInteger(v["orden"], -9223372036854775808n, 9223372036854775807n);
+        \\  if (orden === null) return { error: "field 'orden' must be an integer in -9223372036854775808..9223372036854775807" };
+        \\  return { value: { periodo: v["periodo"], materia: v["materia"], orden: orden } };
+        \\}
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\      const pk = readPk(url.searchParams, ["periodo", "materia", "orden"]);
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, server, "const q = deleteClases(key.value);") != null);
+    // a body with a bigint or a fecha: not yet
+    try std.testing.expect(std.mem.indexOf(u8, server, "insertClases") == null);
+    try std.testing.expect(std.mem.indexOf(u8, server, "updateClases") == null);
+}
+
+test "generateTsServer: a struct in the pk, one parameter per field, sent to Postgres as the composite's literal" {
+    const server = ts.generateTsServer(aida.type_defs, .{ .mesas = aida.mesas });
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\// The pk of mesas from its query-string values, each read by its type.
+        \\function pkMesas(v: Record<string, string>): { value: any } | { error: string } {
+        \\  const fecha_año = readInteger(v["fecha.año"], 0n, 65535n);
+        \\  if (fecha_año === null) return { error: "field 'fecha.año' must be an integer in 0..65535" };
+        \\  const fecha_mes = readInteger(v["fecha.mes"], 0n, 255n);
+        \\  if (fecha_mes === null) return { error: "field 'fecha.mes' must be an integer in 0..255" };
+        \\  const fecha_día = readInteger(v["fecha.día"], 0n, 255n);
+        \\  if (fecha_día === null) return { error: "field 'fecha.día' must be an integer in 0..255" };
+        \\  return { value: { periodo: v["periodo"], materia: v["materia"], fecha: `(${fecha_año},${fecha_mes},${fecha_día})` } };
+        \\}
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\      const pk = readPk(url.searchParams, ["periodo", "materia", "fecha.año", "fecha.mes", "fecha.día"]);
     ) != null);
 }
 
@@ -183,9 +254,11 @@ test "generateTsServer: update takes the pk from the query string and the other 
         \\    if (req.method === "PUT" && url.pathname === "/api/materias") {
         \\      const pk = readPk(url.searchParams, ["materia"]);
         \\      if ("error" in pk) return json(res, 400, { error: pk.error });
+        \\      const key = pkMaterias(pk.values);
+        \\      if ("error" in key) return json(res, 400, { error: key.error });
         \\      const body = await readBody(req, { denominacion: false });
         \\      if ("error" in body) return json(res, 400, { error: body.error });
-        \\      const q = updateMaterias({ materia: pk.values.materia }, { denominacion: body.values.denominacion });
+        \\      const q = updateMaterias(key.value, { denominacion: body.values.denominacion });
         \\      const { rowCount } = await pool.query(q.text, q.values);
         \\      if (rowCount === 0) return json(res, 404, { error: "not found" });
         \\      res.writeHead(204);
@@ -200,7 +273,7 @@ test "generateTsServer: update with a composite pk and a nullable field" {
     try std.testing.expect(std.mem.indexOf(u8, server,
         \\      const body = await readBody(req, { docente: true });
         \\      if ("error" in body) return json(res, 400, { error: body.error });
-        \\      const q = updateCursos({ periodo: pk.values.periodo, materia: pk.values.materia }, { docente: body.values.docente });
+        \\      const q = updateCursos(key.value, { docente: body.values.docente });
     ) != null);
 }
 
@@ -208,18 +281,6 @@ test "generateTsServer: no update route for an entity that is all pk" {
     const server = ts.generateTsServer(aida.type_defs, .{ .periodos = aida.periodos, .inscripciones = aida.inscripciones });
     try std.testing.expect(std.mem.indexOf(u8, server, "\"PUT\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, server, "update") == null);
-}
-
-test "generateTsServer: no one-row nor delete route (yet) for an entity whose pk is not text only" {
-    const server = ts.generateTsServer(aida.type_defs, .{ .clases = aida.clases });
-    try std.testing.expect(std.mem.indexOf(u8, server, "selectClasesByPk") == null);
-    try std.testing.expect(std.mem.indexOf(u8, server, "deleteClases") == null);
-    try std.testing.expect(std.mem.indexOf(u8, server, "insertClases") == null);
-    try std.testing.expect(std.mem.indexOf(u8, server, "updateClases") == null);
-    try std.testing.expect(std.mem.indexOf(u8, server,
-        \\    if (req.method === "GET" && url.pathname === "/api/clases") {
-        \\      const q = selectAllClases();
-    ) != null);
 }
 
 // Every kind of field: a bigint pk, a struct with a bigint, a boolean and a
@@ -230,6 +291,7 @@ const types = zigma.defineTypes(.{
     .text = zigma.TypeDef{ .Type = []const u8 },
     .integer = zigma.TypeDef{ .Type = i64 },
     .boolean = zigma.TypeDef{ .Type = bool },
+    .small = zigma.TypeDef{ .Type = u8 },
     .medida = zigma.TypeDef{ .Type = Medida },
 });
 
@@ -240,6 +302,15 @@ const lecturas = zigma.defineEntity(.{
         .medida = .{ .type = "medida" },
         .cantidad = .{ .type = "integer" },
         .activo = .{ .type = "boolean", .nullable = false },
+    }),
+});
+
+// A narrow integer in the pk: a JS number once read.
+const niveles = zigma.defineEntity(.{
+    .pk = .{"nivel"},
+    .fields = zigma.record(types, .{
+        .nivel = .{ .type = "small" },
+        .nombre = .{ .type = "text" },
     }),
 });
 
@@ -258,6 +329,17 @@ test "generateTsServer: each field encoded by its type, a struct decoded from th
         \\
     ) != null);
     try std.testing.expect(std.mem.indexOf(u8, server, "return json(res, 200, rows.map(encodeLecturas));") != null);
+}
+
+test "generateTsServer: a narrow integer in the pk is read inside its interval, then as a number" {
+    const server = ts.generateTsServer(types, .{ .niveles = niveles });
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\function pkNiveles(v: Record<string, string>): { value: any } | { error: string } {
+        \\  const nivel = readInteger(v["nivel"], 0n, 255n);
+        \\  if (nivel === null) return { error: "field 'nivel' must be an integer in 0..255" };
+        \\  return { value: { nivel: Number(nivel) } };
+        \\}
+    ) != null);
 }
 
 test "generateTsServer: aida's clases, with its bigint orden (pk) and nullable fecha" {
@@ -279,7 +361,7 @@ test "generateTsServer: aida's clases, with its bigint orden (pk) and nullable f
 test "generateTsServer: one route and one encoder per entity, in declaration order; each struct decoder once" {
     const server = ts.generateTsServer(aida.type_defs, .{ .periodos = aida.periodos, .clases = aida.clases, .mesas = aida.mesas });
     try std.testing.expect(std.mem.indexOf(u8, server,
-        \\import { selectAllPeriodos, selectPeriodosByPk, deletePeriodos, insertPeriodos, selectAllClases, selectAllMesas } from "./dml.ts";
+        \\import { selectAllPeriodos, selectPeriodosByPk, deletePeriodos, insertPeriodos, selectAllClases, selectClasesByPk, deleteClases, selectAllMesas, selectMesasByPk, deleteMesas } from "./dml.ts";
     ) != null);
     const periodos_route = std.mem.indexOf(u8, server, "url.pathname === \"/api/periodos\"").?;
     const clases_route = std.mem.indexOf(u8, server, "url.pathname === \"/api/clases\"").?;

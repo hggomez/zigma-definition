@@ -14,18 +14,21 @@
 //! and escaped, so it is not read yet). A nullable field (not in the pk) that
 //! needs a conversion keeps null.
 //!
-//! Operations: the list (GET /api/<entity>, no query string) for every entity
-//! given, and one row (GET /api/<entity>?<full pk>: the object, or a JSON 404)
-//! and delete (DELETE /api/<entity>?<full pk>: 204, or a JSON 404) for the
-//! entities whose pk is text only; a query string that is not exactly the pk
-//! (`readPk`) is a JSON 400. A delete Postgres rejects (a referenced row) is,
-//! for now, the generic 500: pk/uk/fk violations are handled together later.
+//! Operations, for every entity: the list (GET /api/<entity>, no query
+//! string), one row (GET /api/<entity>?<full pk>: the object, or a JSON 404)
+//! and delete (DELETE /api/<entity>?<full pk>: 204, or a JSON 404). The query
+//! string must be exactly the pk (`readPk`; a struct is one parameter per
+//! field, `fecha.año=…`), and each value must fit its type (`pk<Entity>`:
+//! text as is, an integer as decimal digits inside its Zig interval, a struct
+//! sent to Postgres as the composite's literal `(…,…)`); else a JSON 400. A
+//! delete Postgres rejects (a referenced row) is, for now, the generic 500:
+//! pk/uk/fk violations are handled together later.
 //! Create (POST /api/<entity>, the row as a JSON body: 201 without a body) for
 //! the entities whose fields are all text; a body that is not a row of the
 //! entity (`readBody`) is a JSON 400, a duplicate pk the generic 500. Update
 //! (PUT /api/<entity>?<full pk>, the fields outside the pk as a JSON body: 204,
-//! or a JSON 404) for the entities with a text pk, text fields and some field
-//! outside the pk; the full row is written (an absent nullable field is null).
+//! or a JSON 404) for the entities with text fields and some field outside
+//! the pk; the full row is written (an absent nullable field is null).
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -67,6 +70,14 @@ const header_after_imports =
     \\    if (!(name in values)) return { error: `missing pk field '${name}'` };
     \\  }
     \\  return { values };
+    \\}
+    \\
+    \\// An integer from its decimal text, inside min..max, exact (as a bigint);
+    \\// null when the text is not one.
+    \\function readInteger(text: string, min: bigint, max: bigint): bigint | null {
+    \\  if (!/^-?[0-9]+$/.test(text)) return null;
+    \\  const n = BigInt(text);
+    \\  return n < min || n > max ? null : n;
     \\}
     \\
     \\// The body of a request as a row of an entity whose fields are all text: a
@@ -188,38 +199,90 @@ fn encoderFn(comptime type_defs: anytype, comptime entity_name: []const u8, comp
         "}\n";
 }
 
-/// The route that lists an entity: GET /api/<entity> -> its rows, encoded, as
-/// a JSON array, through `selectAll<Entity>` of dml.ts.
-fn listRoute(comptime entity_name: []const u8) []const u8 {
-    return "    if (req.method === \"GET\" && url.pathname === \"/api/" ++ entity_name ++ "\") {\n" ++
-        "      const q = selectAll" ++ pascal(entity_name) ++ "();\n" ++
-        "      const { rows } = await pool.query(q.text, q.values);\n" ++
-        "      return json(res, 200, rows.map(encode" ++ pascal(entity_name) ++ "));\n" ++
-        "    }\n";
-}
-
-/// Whether every field of the pk is text: its value is then the query-string
-/// value as is (a pk of another type would need it parsed: not yet).
-fn hasTextPk(comptime type_defs: anytype, comptime entity: anytype) bool {
+/// The query-string parameters of the pk, in pk order: a field's name, or for
+/// a struct one parameter per field (`fecha.año`), quoted for TS.
+fn pkParamsText(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
+    var out: []const u8 = "";
     for (entity.pk) |pk_field| {
-        const domain = @field(entity.fields, pk_field).type;
-        if (tsTypeOf(@field(type_defs, domain).Type) != .string) return false;
+        const t = tsTypeOf(@field(type_defs, @field(entity.fields, pk_field).type).Type);
+        if (t == .object) {
+            for (t.object) |part| {
+                out = out ++ (if (out.len > 0) ", " else "") ++ "\"" ++ pk_field ++ "." ++ part.name ++ "\"";
+            }
+        } else {
+            out = out ++ (if (out.len > 0) ", " else "") ++ "\"" ++ pk_field ++ "\"";
+        }
     }
-    return true;
+    return out;
 }
 
-/// The route of an entity with a text pk: without a query string, the list;
-/// with one, the row of that pk (`readPk`, then `select<Entity>ByPk`), encoded,
-/// or a JSON 404; a query string that is not exactly the pk is a JSON 400.
-fn listAndRowRoute(comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
-    var pk_names: []const u8 = "";
-    var pk_object: []const u8 = "{ ";
+/// The lines that read an integer parameter `param` into the TS variable
+/// `variable`, inside the interval of its Zig type, or return a 400 error.
+fn readIntegerText(comptime param: []const u8, comptime variable: []const u8, comptime interval: zig_type_map_ts.Interval) []const u8 {
+    const range = std.fmt.comptimePrint("{d}..{d}", .{ interval.min, interval.max });
+    const bounds = std.fmt.comptimePrint("{d}n, {d}n", .{ interval.min, interval.max });
+    return "  const " ++ variable ++ " = readInteger(v[\"" ++ param ++ "\"], " ++ bounds ++ ");\n" ++
+        "  if (" ++ variable ++ " === null) return { error: \"field '" ++ param ++ "' must be an integer in " ++ range ++ "\" };\n";
+}
+
+/// `pk<Entity>`: the pk of a row from its query-string values (already
+/// checked by `readPk`), each read by its type: text as is, an integer inside
+/// its interval (a bigint exact, a narrower one as a number), a struct as the
+/// composite's literal `(…,…)` that Postgres reads. A value that does not fit
+/// is a 400 error.
+fn pkFn(comptime type_defs: anytype, comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
+    var checks: []const u8 = "";
+    var object: []const u8 = "{ ";
     for (entity.pk, 0..) |pk_field, i| {
-        const sep = if (i > 0) ", " else "";
-        pk_names = pk_names ++ sep ++ "\"" ++ pk_field ++ "\"";
-        pk_object = pk_object ++ sep ++ pk_field ++ ": pk.values." ++ pk_field;
+        const domain = @field(entity.fields, pk_field).type;
+        const t = tsTypeOf(@field(type_defs, domain).Type);
+        const value = switch (t) {
+            .string => "v[\"" ++ pk_field ++ "\"]",
+            .bigint => |interval| blk: {
+                checks = checks ++ readIntegerText(pk_field, pk_field, interval);
+                break :blk pk_field;
+            },
+            .number => |interval| blk: {
+                checks = checks ++ readIntegerText(pk_field, pk_field, interval);
+                break :blk "Number(" ++ pk_field ++ ")";
+            },
+            .object => |parts| blk: {
+                var literal: []const u8 = "`(";
+                for (parts, 0..) |part, j| {
+                    const variable = pk_field ++ "_" ++ part.name;
+                    switch (part.type) {
+                        .bigint, .number => |interval| checks = checks ++ readIntegerText(pk_field ++ "." ++ part.name, variable, interval),
+                        else => @compileError("field '" ++ part.name ++ "' of type '" ++ domain ++ "': only integers inside a struct of the pk are read from the query string yet"),
+                    }
+                    literal = literal ++ (if (j > 0) "," else "") ++ "${" ++ variable ++ "}";
+                }
+                break :blk literal ++ ")`";
+            },
+            .boolean => @compileError("field '" ++ pk_field ++ "': a boolean in the pk is not read from the query string yet"),
+        };
+        object = object ++ (if (i > 0) ", " else "") ++ pk_field ++ ": " ++ value;
     }
-    pk_object = pk_object ++ " }";
+    return "// The pk of " ++ entity_name ++ " from its query-string values, each read by its type.\n" ++
+        "function pk" ++ pascal(entity_name) ++ "(v: Record<string, string>): { value: any } | { error: string } {\n" ++
+        checks ++
+        "  return { value: " ++ object ++ " } };\n" ++
+        "}\n";
+}
+
+/// The lines that read the pk of a request: the query string must be exactly
+/// the pk (`readPk`), and each value must fit its type (`pk<Entity>`); else a
+/// JSON 400. Leaves the pk, ready for dml.ts, in `key.value`.
+fn readKeyText(comptime type_defs: anytype, comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
+    return "      const pk = readPk(url.searchParams, [" ++ pkParamsText(type_defs, entity) ++ "]);\n" ++
+        "      if (\"error\" in pk) return json(res, 400, { error: pk.error });\n" ++
+        "      const key = pk" ++ pascal(entity_name) ++ "(pk.values);\n" ++
+        "      if (\"error\" in key) return json(res, 400, { error: key.error });\n";
+}
+
+/// The GET route of an entity: without a query string, the list
+/// (`selectAll<Entity>`); with one, the row of that pk (`select<Entity>ByPk`),
+/// encoded, or a JSON 404.
+fn getRoute(comptime type_defs: anytype, comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
     const entity_pascal = pascal(entity_name);
     return "    if (req.method === \"GET\" && url.pathname === \"/api/" ++ entity_name ++ "\") {\n" ++
         "      if (url.search === \"\") {\n" ++
@@ -227,12 +290,26 @@ fn listAndRowRoute(comptime entity_name: []const u8, comptime entity: anytype) [
         "        const { rows } = await pool.query(q.text, q.values);\n" ++
         "        return json(res, 200, rows.map(encode" ++ entity_pascal ++ "));\n" ++
         "      }\n" ++
-        "      const pk = readPk(url.searchParams, [" ++ pk_names ++ "]);\n" ++
-        "      if (\"error\" in pk) return json(res, 400, { error: pk.error });\n" ++
-        "      const q = select" ++ entity_pascal ++ "ByPk(" ++ pk_object ++ ");\n" ++
+        readKeyText(type_defs, entity_name, entity) ++
+        "      const q = select" ++ entity_pascal ++ "ByPk(key.value);\n" ++
         "      const { rows } = await pool.query(q.text, q.values);\n" ++
         "      if (rows.length === 0) return json(res, 404, { error: \"not found\" });\n" ++
         "      return json(res, 200, encode" ++ entity_pascal ++ "(rows[0]));\n" ++
+        "    }\n";
+}
+
+/// The delete route of an entity: DELETE /api/<entity>?<pk> -> 204 without a
+/// body, or a JSON 404 when no row had that pk; a query string that is not
+/// exactly the pk (none included) is a JSON 400, so it never deletes more than
+/// one row.
+fn deleteRoute(comptime type_defs: anytype, comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
+    return "    if (req.method === \"DELETE\" && url.pathname === \"/api/" ++ entity_name ++ "\") {\n" ++
+        readKeyText(type_defs, entity_name, entity) ++
+        "      const q = delete" ++ pascal(entity_name) ++ "(key.value);\n" ++
+        "      const { rowCount } = await pool.query(q.text, q.values);\n" ++
+        "      if (rowCount === 0) return json(res, 404, { error: \"not found\" });\n" ++
+        "      res.writeHead(204);\n" ++
+        "      return res.end();\n" ++
         "    }\n";
 }
 
@@ -279,21 +356,12 @@ fn hasNonPkFields(comptime entity: anytype) bool {
     return false;
 }
 
-/// The update route of an entity with a text pk, text fields and some field
-/// outside the pk: PUT /api/<entity>?<pk> with the fields outside the pk as a
-/// JSON body -> 204 without a body, or a JSON 404 when no row had that pk. The
-/// update is the full row (`update<Entity>` of dml.ts): a nullable field the
-/// body leaves out is written as null; a pk field in the body is an unknown
-/// field.
-fn updateRoute(comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
-    var pk_names: []const u8 = "";
-    var pk_object: []const u8 = "{ ";
-    for (entity.pk, 0..) |pk_field, i| {
-        const sep = if (i > 0) ", " else "";
-        pk_names = pk_names ++ sep ++ "\"" ++ pk_field ++ "\"";
-        pk_object = pk_object ++ sep ++ pk_field ++ ": pk.values." ++ pk_field;
-    }
-    pk_object = pk_object ++ " }";
+/// The update route of an entity with text fields and some field outside the
+/// pk: PUT /api/<entity>?<pk> with the fields outside the pk as a JSON body ->
+/// 204 without a body, or a JSON 404 when no row had that pk. The update is
+/// the full row (`update<Entity>` of dml.ts): a nullable field the body leaves
+/// out is written as null; a pk field in the body is an unknown field.
+fn updateRoute(comptime type_defs: anytype, comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
     var fields: []const u8 = "{ ";
     var row: []const u8 = "{ ";
     var first = true;
@@ -306,35 +374,10 @@ fn updateRoute(comptime entity_name: []const u8, comptime entity: anytype) []con
         row = row ++ sep ++ field_name ++ ": body.values." ++ field_name;
     }
     return "    if (req.method === \"PUT\" && url.pathname === \"/api/" ++ entity_name ++ "\") {\n" ++
-        "      const pk = readPk(url.searchParams, [" ++ pk_names ++ "]);\n" ++
-        "      if (\"error\" in pk) return json(res, 400, { error: pk.error });\n" ++
+        readKeyText(type_defs, entity_name, entity) ++
         "      const body = await readBody(req, " ++ fields ++ " });\n" ++
         "      if (\"error\" in body) return json(res, 400, { error: body.error });\n" ++
-        "      const q = update" ++ pascal(entity_name) ++ "(" ++ pk_object ++ ", " ++ row ++ " });\n" ++
-        "      const { rowCount } = await pool.query(q.text, q.values);\n" ++
-        "      if (rowCount === 0) return json(res, 404, { error: \"not found\" });\n" ++
-        "      res.writeHead(204);\n" ++
-        "      return res.end();\n" ++
-        "    }\n";
-}
-
-/// The delete route of an entity with a text pk: DELETE /api/<entity>?<pk>
-/// -> 204 without a body, or a JSON 404 when no row had that pk; a query
-/// string that is not exactly the pk (none included) is a JSON 400, so it
-/// never deletes more than one row.
-fn deleteRoute(comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
-    var pk_names: []const u8 = "";
-    var pk_object: []const u8 = "{ ";
-    for (entity.pk, 0..) |pk_field, i| {
-        const sep = if (i > 0) ", " else "";
-        pk_names = pk_names ++ sep ++ "\"" ++ pk_field ++ "\"";
-        pk_object = pk_object ++ sep ++ pk_field ++ ": pk.values." ++ pk_field;
-    }
-    pk_object = pk_object ++ " }";
-    return "    if (req.method === \"DELETE\" && url.pathname === \"/api/" ++ entity_name ++ "\") {\n" ++
-        "      const pk = readPk(url.searchParams, [" ++ pk_names ++ "]);\n" ++
-        "      if (\"error\" in pk) return json(res, 400, { error: pk.error });\n" ++
-        "      const q = delete" ++ pascal(entity_name) ++ "(" ++ pk_object ++ ");\n" ++
+        "      const q = update" ++ pascal(entity_name) ++ "(key.value, " ++ row ++ " });\n" ++
         "      const { rowCount } = await pool.query(q.text, q.values);\n" ++
         "      if (rowCount === 0) return json(res, 404, { error: \"not found\" });\n" ++
         "      res.writeHead(204);\n" ++
@@ -355,22 +398,22 @@ fn contains(comptime names: []const []const u8, comptime name: []const u8) bool 
 fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type {
     return struct {
         const text: []const u8 = blk: {
-            @setEvalBranchQuota(100000);
+            @setEvalBranchQuota(200000);
             const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
             var imports: []const u8 = "";
             var decoders: []const u8 = "";
             var decoded: []const []const u8 = &.{};
-            var encoders: []const u8 = "";
+            var functions: []const u8 = "";
             var routes: []const u8 = "";
             for (entity_names, 0..) |entity_name, i| {
                 const entity = zigma.completeEntity(@field(entity_defs, entity_name));
-                const text_pk = hasTextPk(type_defs, entity);
-                imports = imports ++ (if (i > 0) ", " else "") ++ "selectAll" ++ pascal(entity_name);
-                if (text_pk) imports = imports ++ ", select" ++ pascal(entity_name) ++ "ByPk, delete" ++ pascal(entity_name);
+                const entity_pascal = pascal(entity_name);
                 const text_fields = hasTextFields(type_defs, entity);
-                if (text_fields) imports = imports ++ ", insert" ++ pascal(entity_name);
-                const updatable = text_pk and text_fields and hasNonPkFields(entity);
-                if (updatable) imports = imports ++ ", update" ++ pascal(entity_name);
+                const updatable = text_fields and hasNonPkFields(entity);
+                imports = imports ++ (if (i > 0) ", " else "") ++ "selectAll" ++ entity_pascal ++
+                    ", select" ++ entity_pascal ++ "ByPk, delete" ++ entity_pascal;
+                if (text_fields) imports = imports ++ ", insert" ++ entity_pascal;
+                if (updatable) imports = imports ++ ", update" ++ entity_pascal;
                 // one decoder per struct domain, the first time it appears
                 for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
                     const domain = @field(entity.fields, field_name).type;
@@ -380,25 +423,23 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
                         decoded = decoded ++ &[_][]const u8{domain};
                     }
                 }
-                encoders = encoders ++ encoderFn(type_defs, entity_name, entity) ++ "\n";
-                routes = routes ++ if (text_pk)
-                    listAndRowRoute(entity_name, entity) ++ deleteRoute(entity_name, entity)
-                else
-                    listRoute(entity_name);
+                functions = functions ++ encoderFn(type_defs, entity_name, entity) ++ "\n" ++
+                    pkFn(type_defs, entity_name, entity) ++ "\n";
+                routes = routes ++ getRoute(type_defs, entity_name, entity) ++ deleteRoute(type_defs, entity_name, entity);
                 if (text_fields) routes = routes ++ createRoute(entity_name, entity);
-                if (updatable) routes = routes ++ updateRoute(entity_name, entity);
+                if (updatable) routes = routes ++ updateRoute(type_defs, entity_name, entity);
             }
             break :blk header_before_imports ++ imports ++ header_after_imports ++
-                decoders ++ encoders ++ server_start ++ routes ++ footer;
+                decoders ++ functions ++ server_start ++ routes ++ footer;
         };
     };
 }
 
 /// The HTTP server of the given entities (`.{ .periodos = aida.periodos }`),
-/// over the system's `type_defs`: one GET /api/<entity> route per entity (the
-/// list, and one row and delete when its pk is text only), a POST route when
-/// every field is text and a PUT route when, besides, some field is outside
-/// the pk, in declaration order.
+/// over the system's `type_defs`: for every entity a GET route (the list, and
+/// one row by its pk) and a DELETE route; a POST route when every field is
+/// text, and a PUT route when, besides, some field is outside the pk; in
+/// declaration order.
 pub fn generateTsServer(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     return ServerHolder(type_defs, entity_defs).text;
 }

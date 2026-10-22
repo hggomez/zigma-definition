@@ -405,3 +405,28 @@ test "insertFnTest: each field's sample comes from the Zig type of its domain" {
         \\});
     , todos_los_tipos_insert_test_ts);
 }
+
+// pg sends its parameters untyped: comparing a composite column with one,
+// Postgres takes the parameter as an anonymous composite (`record`), whose
+// text it cannot read ("input of anonymous composite types is not
+// implemented"). A struct column of the pk is compared with the parameter cast
+// to its composite type, named after the domain. (An INSERT or a SET takes the
+// type from the column: no cast.)
+const mesas_info = zigma.completeEntity(aida.mesas);
+const mesas_select_by_pk_ts = ts.selectByPkFn(aida.type_defs, "mesas", mesas_info);
+const mesas_delete_ts = ts.deleteFn(aida.type_defs, "mesas", mesas_info);
+const mesas_update_ts = ts.updateFn(aida.type_defs, "mesas", mesas_info);
+const mesas_insert_ts = ts.insertFn(aida.type_defs, "mesas", mesas_info);
+
+test "selectByPkFn, deleteFn, updateFn: a struct column of the pk is compared cast to its composite type" {
+    try std.testing.expect(std.mem.indexOf(u8, mesas_select_by_pk_ts,
+        \\'SELECT * FROM "mesas" WHERE "periodo" = $1 AND "materia" = $2 AND "fecha" = $3::fecha'
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, mesas_delete_ts,
+        \\'DELETE FROM "mesas" WHERE "periodo" = $1 AND "materia" = $2 AND "fecha" = $3::fecha'
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, mesas_update_ts,
+        \\'UPDATE "mesas" SET "presidente" = $1, "vocal" = $2 WHERE "periodo" = $3 AND "materia" = $4 AND "fecha" = $5::fecha'
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, mesas_insert_ts, "::") == null);
+}

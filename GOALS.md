@@ -329,17 +329,21 @@ El hito 3 arranca por la capa HTTP del backend, que el frontend va a necesitar.
 
 **Hecho.**
 * `GET /api/<entidad>` (listar) para las 11 entidades de aida.
-* `GET /api/<entidad>?<pk completa>` (una fila): el objeto, o 404 JSON. Para las entidades
-  cuya pk es solo texto (`docentes`, `materias`, `periodos`, `cursos`, `alumnos`,
-  `inscripciones`); el generador lo decide desde el SSOT. Un query string que no es
-  exactamente la pk es 400 JSON (`unknown parameter`, `repeated parameter`,
-  `missing pk field`). Las 5 entidades con `bigint` o `fecha` en la pk todavía no tienen esta
-  ruta (habría que parsear esos tipos del query string) e **ignoran** el query string:
-  devuelven la lista.
+* `GET /api/<entidad>?<pk completa>` (una fila): el objeto, o 404 JSON, para **las 11
+  entidades**. Un query string que no es exactamente la pk es 400 JSON (`unknown parameter`,
+  `repeated parameter`, `missing pk field`). Cada valor se lee por su tipo (`pk<Entidad>`):
+  texto tal cual; un entero como dígitos decimales dentro del intervalo de su tipo de Zig
+  (exacto, como `bigint`; si no, 400 `field '…' must be an integer in min..max`); un struct
+  como un parámetro por campo (`fecha.año=2026&fecha.mes=3&fecha.día=14`), cada uno con su
+  rango, y mandado a Postgres como el literal del compuesto `(2026,3,14)`.
+  * Hallazgo: `pg` manda los parámetros sin tipo, y al comparar una columna compuesta con
+    uno Postgres lo toma como compuesto anónimo (`record`), cuyo texto no sabe leer
+    (`input of anonymous composite types is not implemented`). Por eso en `dml.ts` el
+    `WHERE` de la pk castea las columnas struct a su tipo compuesto (`"fecha" = $3::fecha`).
+    `INSERT` y `SET` toman el tipo de la columna: no hace falta.
 * `DELETE /api/<entidad>?<pk completa>` (baja): 204 **sin cuerpo** (la única respuesta que no
   es JSON), o 404 JSON si no había fila con esa pk; sin la pk completa es 400 JSON, así que
-  nunca borra más de una fila. Para las mismas 6 entidades con pk solo texto (las otras 5 no
-  tienen la ruta: un `DELETE` les da el 404 de "sin ruta"). Borrar una fila referenciada por
+  nunca borra más de una fila. Para las 11 entidades (la pk se lee igual que en el `GET`). Borrar una fila referenciada por
   otras (un `periodo` con `cursos`) lo rechaza Postgres y es, por ahora, el 500 genérico:
   decidido manejar todas las violaciones de pk/uk/fk juntas, más adelante (se evaluó un 500
   con mensaje `referenced by <tabla>` o un 409, y se descartó por ahora).

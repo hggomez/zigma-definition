@@ -45,6 +45,7 @@ fn psql(sql: []const u8) !void {
 // Every row the test writes, keyed by the same value; removed child-first.
 const cleanup =
     \\DELETE FROM clases WHERE periodo = 'http-docker-test';
+    \\DELETE FROM mesas WHERE periodo = 'http-docker-test';
     \\DELETE FROM cursos WHERE periodo = 'http-docker-test';
     \\DELETE FROM materias WHERE materia = 'http-docker-test';
     \\DELETE FROM docentes WHERE docente = 'http-docker-test';
@@ -58,6 +59,7 @@ const seed =
     \\INSERT INTO clases (periodo, materia, orden, fecha, tema) VALUES
     \\  ('http-docker-test', 'http-docker-test', 9007199254740993, ROW(2026, 3, 14), NULL),
     \\  ('http-docker-test', 'http-docker-test', 1, NULL, 'sin fecha');
+    \\INSERT INTO mesas (periodo, materia, fecha) VALUES ('http-docker-test', 'http-docker-test', ROW(2026, 3, 14));
 ;
 
 // An ES module run on the host with `node --input-type=module -e`: requests
@@ -141,6 +143,43 @@ const script =
     \\assert.deepEqual(await res.json(), { error: 'internal error' });
     \\res = await fetch(base + '/api/periodos?periodo=http-docker-test');
     \\assert.equal(res.status, 200, 'the referenced row is still there');
+    \\
+    \\// a bigint in the pk: decimal digits, exact (2^53 + 1); not an integer, or
+    \\// outside the i64 interval: a JSON 400
+    \\const clasePk = '/api/clases?periodo=http-docker-test&materia=http-docker-test&orden=';
+    \\res = await fetch(base + clasePk + '9007199254740993');
+    \\assert.equal(res.status, 200);
+    \\const clase = await res.text();
+    \\assert.match(clase, /"orden":9007199254740993[,}]/);
+    \\assert.deepEqual(JSON.parse(clase, (key, value, context) => key === 'orden' ? BigInt(context.source) : value),
+    \\  { periodo: 'http-docker-test', materia: 'http-docker-test', orden: 9007199254740993n, fecha: { año: 2026, mes: 3, día: 14 }, tema: null });
+    \\for (const orden of ['abc', '1.5', '9223372036854775808']) {
+    \\  res = await fetch(base + clasePk + orden);
+    \\  assert.equal(res.status, 400, orden);
+    \\  assert.deepEqual(await res.json(), { error: "field 'orden' must be an integer in -9223372036854775808..9223372036854775807" }, orden);
+    \\}
+    \\
+    \\// a struct in the pk: one parameter per field, each inside its interval
+    \\const mesaPk = '/api/mesas?periodo=http-docker-test&materia=http-docker-test';
+    \\res = await fetch(base + mesaPk + '&fecha.año=2026&fecha.mes=3&fecha.día=14');
+    \\assert.equal(res.status, 200);
+    \\assert.deepEqual(await res.json(), { periodo: 'http-docker-test', materia: 'http-docker-test', fecha: { año: 2026, mes: 3, día: 14 }, presidente: null, vocal: null });
+    \\res = await fetch(base + mesaPk + '&fecha.año=2026&fecha.mes=300&fecha.día=14');
+    \\assert.equal(res.status, 400);
+    \\assert.deepEqual(await res.json(), { error: "field 'fecha.mes' must be an integer in 0..255" });
+    \\res = await fetch(base + mesaPk + '&fecha.año=2026&fecha.mes=3');
+    \\assert.equal(res.status, 400);
+    \\assert.deepEqual(await res.json(), { error: "missing pk field 'fecha.día'" });
+    \\
+    \\// delete by a bigint pk and by a struct pk
+    \\res = await fetch(base + clasePk + '1', { method: 'DELETE' });
+    \\assert.equal(res.status, 204);
+    \\res = await fetch(base + clasePk + '1');
+    \\assert.equal(res.status, 404);
+    \\res = await fetch(base + mesaPk + '&fecha.año=2026&fecha.mes=3&fecha.día=14', { method: 'DELETE' });
+    \\assert.equal(res.status, 204);
+    \\res = await fetch(base + mesaPk + '&fecha.año=2026&fecha.mes=3&fecha.día=14');
+    \\assert.equal(res.status, 404);
     \\
     \\// create: 201 without a body, then the row is there; a nullable field the
     \\// body leaves out is null
