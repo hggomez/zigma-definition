@@ -16,8 +16,10 @@
 //!
 //! Operations: the list (GET /api/<entity>, no query string) for every entity
 //! given, and one row (GET /api/<entity>?<full pk>: the object, or a JSON 404)
-//! for the entities whose pk is text only; a query string that is not exactly
-//! the pk (`readPk`) is a JSON 400.
+//! and delete (DELETE /api/<entity>?<full pk>: 204, or a JSON 404) for the
+//! entities whose pk is text only; a query string that is not exactly the pk
+//! (`readPk`) is a JSON 400. A delete Postgres rejects (a referenced row) is,
+//! for now, the generic 500: pk/uk/fk violations are handled together later.
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -200,6 +202,30 @@ fn listAndRowRoute(comptime entity_name: []const u8, comptime entity: anytype) [
         "    }\n";
 }
 
+/// The delete route of an entity with a text pk: DELETE /api/<entity>?<pk>
+/// -> 204 without a body, or a JSON 404 when no row had that pk; a query
+/// string that is not exactly the pk (none included) is a JSON 400, so it
+/// never deletes more than one row.
+fn deleteRoute(comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
+    var pk_names: []const u8 = "";
+    var pk_object: []const u8 = "{ ";
+    for (entity.pk, 0..) |pk_field, i| {
+        const sep = if (i > 0) ", " else "";
+        pk_names = pk_names ++ sep ++ "\"" ++ pk_field ++ "\"";
+        pk_object = pk_object ++ sep ++ pk_field ++ ": pk.values." ++ pk_field;
+    }
+    pk_object = pk_object ++ " }";
+    return "    if (req.method === \"DELETE\" && url.pathname === \"/api/" ++ entity_name ++ "\") {\n" ++
+        "      const pk = readPk(url.searchParams, [" ++ pk_names ++ "]);\n" ++
+        "      if (\"error\" in pk) return json(res, 400, { error: pk.error });\n" ++
+        "      const q = delete" ++ pascal(entity_name) ++ "(" ++ pk_object ++ ");\n" ++
+        "      const { rowCount } = await pool.query(q.text, q.values);\n" ++
+        "      if (rowCount === 0) return json(res, 404, { error: \"not found\" });\n" ++
+        "      res.writeHead(204);\n" ++
+        "      return res.end();\n" ++
+        "    }\n";
+}
+
 fn contains(comptime names: []const []const u8, comptime name: []const u8) bool {
     for (names) |n| {
         if (std.mem.eql(u8, n, name)) return true;
@@ -224,7 +250,7 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
                 const entity = zigma.completeEntity(@field(entity_defs, entity_name));
                 const text_pk = hasTextPk(type_defs, entity);
                 imports = imports ++ (if (i > 0) ", " else "") ++ "selectAll" ++ pascal(entity_name);
-                if (text_pk) imports = imports ++ ", select" ++ pascal(entity_name) ++ "ByPk";
+                if (text_pk) imports = imports ++ ", select" ++ pascal(entity_name) ++ "ByPk, delete" ++ pascal(entity_name);
                 // one decoder per struct domain, the first time it appears
                 for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
                     const domain = @field(entity.fields, field_name).type;
@@ -235,7 +261,10 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
                     }
                 }
                 encoders = encoders ++ encoderFn(type_defs, entity_name, entity) ++ "\n";
-                routes = routes ++ if (text_pk) listAndRowRoute(entity_name, entity) else listRoute(entity_name);
+                routes = routes ++ if (text_pk)
+                    listAndRowRoute(entity_name, entity) ++ deleteRoute(entity_name, entity)
+                else
+                    listRoute(entity_name);
             }
             break :blk header_before_imports ++ imports ++ header_after_imports ++
                 decoders ++ encoders ++ server_start ++ routes ++ footer;
@@ -245,7 +274,8 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
 
 /// The HTTP server of the given entities (`.{ .periodos = aida.periodos }`),
 /// over the system's `type_defs`: one GET /api/<entity> route per entity (the
-/// list, and one row when its pk is text only), in declaration order.
+/// list, and one row and delete when its pk is text only), in declaration
+/// order.
 pub fn generateTsServer(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     return ServerHolder(type_defs, entity_defs).text;
 }

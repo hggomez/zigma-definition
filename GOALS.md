@@ -336,11 +336,18 @@ El hito 3 arranca por la capa HTTP del backend, que el frontend va a necesitar.
   `missing pk field`). Las 5 entidades con `bigint` o `fecha` en la pk todavía no tienen esta
   ruta (habría que parsear esos tipos del query string) e **ignoran** el query string:
   devuelven la lista.
+* `DELETE /api/<entidad>?<pk completa>` (baja): 204 **sin cuerpo** (la única respuesta que no
+  es JSON), o 404 JSON si no había fila con esa pk; sin la pk completa es 400 JSON, así que
+  nunca borra más de una fila. Para las mismas 6 entidades con pk solo texto (las otras 5 no
+  tienen la ruta: un `DELETE` les da el 404 de "sin ruta"). Borrar una fila referenciada por
+  otras (un `periodo` con `cursos`) lo rechaza Postgres y es, por ahora, el 500 genérico:
+  decidido manejar todas las violaciones de pk/uk/fk juntas, más adelante (se evaluó un 500
+  con mensaje `referenced by <tabla>` o un 409, y se descartó por ahora).
 
 **Plan: las operaciones que faltan, empezando por `periodos`.** En este orden:
 1. ~~**Una fila:** `GET /api/periodos?periodo=…`.~~ Hecho. Trae la lectura del query string (la pk
    completa, convertida al tipo de cada campo) y los errores de entrada.
-2. **Baja:** `DELETE /api/periodos?periodo=…`. Reusa la lectura de la pk del paso 1.
+2. ~~**Baja:** `DELETE /api/periodos?periodo=…`.~~ Hecho. Reusa la lectura de la pk del paso 1.
 3. **Alta:** `POST /api/periodos`, cuerpo JSON. Trae la lectura del cuerpo y la pregunta de
    qué pasa con una pk duplicada (ligada a los errores de dominio de pk/uk/fk, pendientes).
 

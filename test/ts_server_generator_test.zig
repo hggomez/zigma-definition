@@ -18,9 +18,13 @@
 //!
 //! Operations: the list (GET /api/<entity>, no query string) for every entity
 //! given, and one row (GET /api/<entity>?<full pk>: the object, or a JSON 404)
-//! for the entities whose pk is text only (a pk of another type would need
-//! its value parsed from the query string: not yet). The query string must
-//! have every field of the pk exactly once and nothing else, or it is a 400.
+//! and delete (DELETE /api/<entity>?<full pk>: 204 without a body, or a JSON
+//! 404 when no row had that pk) for the entities whose pk is text only (a pk
+//! of another type would need its value parsed from the query string: not
+//! yet). The query string must have every field of the pk exactly once and
+//! nothing else, or it is a 400. A delete that Postgres rejects (a referenced
+//! row) is, for now, the generic 500: pk/uk/fk violations are handled
+//! together later.
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -28,12 +32,12 @@ const aida = @import("aida");
 const ts = @import("ts_server_generator");
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-test "generateTsServer: the list without a query string, one row with the full pk, anything else a JSON 404" {
+test "generateTsServer: the list without a query string, one row and delete with the full pk, anything else a JSON 404" {
     try expectEqualStrings(
         \\import { createServer, type ServerResponse } from "node:http";
         \\import pg from "pg";
         \\
-        \\import { selectAllPeriodos, selectPeriodosByPk } from "./dml.ts";
+        \\import { selectAllPeriodos, selectPeriodosByPk, deletePeriodos } from "./dml.ts";
         \\
         \\const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
         \\
@@ -77,6 +81,15 @@ test "generateTsServer: the list without a query string, one row with the full p
         \\      if (rows.length === 0) return json(res, 404, { error: "not found" });
         \\      return json(res, 200, encodePeriodos(rows[0]));
         \\    }
+        \\    if (req.method === "DELETE" && url.pathname === "/api/periodos") {
+        \\      const pk = readPk(url.searchParams, ["periodo"]);
+        \\      if ("error" in pk) return json(res, 400, { error: pk.error });
+        \\      const q = deletePeriodos({ periodo: pk.values.periodo });
+        \\      const { rowCount } = await pool.query(q.text, q.values);
+        \\      if (rowCount === 0) return json(res, 404, { error: "not found" });
+        \\      res.writeHead(204);
+        \\      return res.end();
+        \\    }
         \\    return json(res, 404, { error: "not found" });
         \\  } catch (err) {
         \\    console.error(err);
@@ -89,18 +102,25 @@ test "generateTsServer: the list without a query string, one row with the full p
     , ts.generateTsServer(aida.type_defs, .{ .periodos = aida.periodos }));
 }
 
-test "generateTsServer: one row with a composite text pk, every pk field passed to selectByPk in pk order" {
+test "generateTsServer: one row and delete with a composite text pk, every pk field passed in pk order" {
     const server = ts.generateTsServer(aida.type_defs, .{ .cursos = aida.cursos });
     try std.testing.expect(std.mem.indexOf(u8, server,
         \\      const pk = readPk(url.searchParams, ["periodo", "materia"]);
         \\      if ("error" in pk) return json(res, 400, { error: pk.error });
         \\      const q = selectCursosByPk({ periodo: pk.values.periodo, materia: pk.values.materia });
     ) != null);
+    try std.testing.expect(std.mem.indexOf(u8, server,
+        \\    if (req.method === "DELETE" && url.pathname === "/api/cursos") {
+        \\      const pk = readPk(url.searchParams, ["periodo", "materia"]);
+        \\      if ("error" in pk) return json(res, 400, { error: pk.error });
+        \\      const q = deleteCursos({ periodo: pk.values.periodo, materia: pk.values.materia });
+    ) != null);
 }
 
-test "generateTsServer: no one-row route (yet) for an entity whose pk is not text only" {
+test "generateTsServer: no one-row nor delete route (yet) for an entity whose pk is not text only" {
     const server = ts.generateTsServer(aida.type_defs, .{ .clases = aida.clases });
     try std.testing.expect(std.mem.indexOf(u8, server, "selectClasesByPk") == null);
+    try std.testing.expect(std.mem.indexOf(u8, server, "deleteClases") == null);
     try std.testing.expect(std.mem.indexOf(u8, server,
         \\    if (req.method === "GET" && url.pathname === "/api/clases") {
         \\      const q = selectAllClases();
@@ -164,7 +184,7 @@ test "generateTsServer: aida's clases, with its bigint orden (pk) and nullable f
 test "generateTsServer: one route and one encoder per entity, in declaration order; each struct decoder once" {
     const server = ts.generateTsServer(aida.type_defs, .{ .periodos = aida.periodos, .clases = aida.clases, .mesas = aida.mesas });
     try std.testing.expect(std.mem.indexOf(u8, server,
-        \\import { selectAllPeriodos, selectPeriodosByPk, selectAllClases, selectAllMesas } from "./dml.ts";
+        \\import { selectAllPeriodos, selectPeriodosByPk, deletePeriodos, selectAllClases, selectAllMesas } from "./dml.ts";
     ) != null);
     const periodos_route = std.mem.indexOf(u8, server, "url.pathname === \"/api/periodos\"").?;
     const clases_route = std.mem.indexOf(u8, server, "url.pathname === \"/api/clases\"").?;

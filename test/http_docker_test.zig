@@ -3,8 +3,9 @@
 //! called over HTTP from the host: GET /api/<entity> lists the rows of the real
 //! database as a bare JSON array, for every entity of aida; with the full pk in
 //! the query string it returns that row (or a JSON 404), for the entities whose
-//! pk is text only; a query string that is not exactly the pk is a JSON 400;
-//! an unknown path is a JSON 404.
+//! pk is text only, and DELETE with the full pk removes it (204, or a JSON 404
+//! when it was not there); a query string that is not exactly the pk is a JSON
+//! 400; an unknown path is a JSON 404.
 //!
 //! Each field keeps its SSOT type in the JSON: a bigint (aida's `integer`,
 //! i64, BIGINT in Postgres) is an exact JSON number, never rounded through a JS
@@ -42,11 +43,11 @@ const cleanup =
     \\DELETE FROM clases WHERE periodo = 'http-docker-test';
     \\DELETE FROM cursos WHERE periodo = 'http-docker-test';
     \\DELETE FROM materias WHERE materia = 'http-docker-test';
-    \\DELETE FROM periodos WHERE periodo = 'http-docker-test';
+    \\DELETE FROM periodos WHERE periodo IN ('http-docker-test', 'http-docker-test-delete');
 ;
 
 const seed =
-    \\INSERT INTO periodos (periodo) VALUES ('http-docker-test');
+    \\INSERT INTO periodos (periodo) VALUES ('http-docker-test'), ('http-docker-test-delete');
     \\INSERT INTO materias (materia, denominacion) VALUES ('http-docker-test', 'http-docker-test');
     \\INSERT INTO cursos (periodo, materia) VALUES ('http-docker-test', 'http-docker-test');
     \\INSERT INTO clases (periodo, materia, orden, fecha, tema) VALUES
@@ -115,6 +116,27 @@ const script =
     \\  assert.deepEqual(await res.json(), { error }, query);
     \\}
     \\
+    \\// delete: 204 without a body, then the row is gone; deleting it again is a
+    \\// JSON 404; without the full pk it is a JSON 400 (never "delete everything")
+    \\res = await fetch(base + '/api/periodos?periodo=http-docker-test-delete', { method: 'DELETE' });
+    \\assert.equal(res.status, 204);
+    \\assert.equal(await res.text(), '');
+    \\res = await fetch(base + '/api/periodos?periodo=http-docker-test-delete');
+    \\assert.equal(res.status, 404);
+    \\res = await fetch(base + '/api/periodos?periodo=http-docker-test-delete', { method: 'DELETE' });
+    \\assert.equal(res.status, 404);
+    \\assert.deepEqual(await res.json(), { error: 'not found' });
+    \\res = await fetch(base + '/api/periodos', { method: 'DELETE' });
+    \\assert.equal(res.status, 400);
+    \\assert.deepEqual(await res.json(), { error: "missing pk field 'periodo'" });
+    \\// a row other rows reference (the periodo of a curso): Postgres rejects
+    \\// it; for now the generic 500 (pk/uk/fk violations, all together: later)
+    \\res = await fetch(base + '/api/periodos?periodo=http-docker-test', { method: 'DELETE' });
+    \\assert.equal(res.status, 500);
+    \\assert.deepEqual(await res.json(), { error: 'internal error' });
+    \\res = await fetch(base + '/api/periodos?periodo=http-docker-test');
+    \\assert.equal(res.status, 200, 'the referenced row is still there');
+    \\
     \\// an unknown path: 404 with a JSON error
     \\res = await fetch(base + '/api/inexistentes');
     \\assert.equal(res.status, 404);
@@ -124,7 +146,7 @@ const script =
     \\console.log('HTTP_OK');
 ;
 
-test "the backend container lists every entity and reads one row by its pk, each field with its SSOT type" {
+test "the backend container lists every entity, reads and deletes one row by its pk, each field with its SSOT type" {
     try psql(cleanup);
     try psql(seed);
     defer psql(cleanup) catch {};
