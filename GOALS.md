@@ -174,8 +174,8 @@ compuesta), y la traducción de valores TS ↔ Postgres: hoy `insertClases` pasa
 `"[object Object]"`; hay que serializarlo al literal del compuesto y parsearlo al leer), y
 los campos `bigint` (`i64`) y los enteros con `DOMAIN` todavía no pasan por ningún test de
 integración (el único hoy es `periodos`, una sola columna de texto).
-Después: el resto del backend (endpoints HTTP) y el interop TS → Zig para las reglas de
-dominio.
+Después: el resto del backend (endpoints HTTP). El interop TS → Zig para las reglas de
+dominio ya está hecho (ver "Reglas de dominio: interop TS → Zig (WASM)" más abajo).
 
 ### Decisiones previas
 
@@ -189,15 +189,16 @@ lo que ya existe maduro en el ecosistema Node para HTTP/Postgres.
 El backend en TypeScript necesita poder invocar funciones de dominio escritas en Zig (por
 ejemplo `validarCargo`) sin reescribirlas: esas reglas viven en la única fuente de verdad
 (las definiciones `zigma`/`aida` en Zig), así que hace falta un mecanismo de interop
-TS → Zig. **Sin decidir todavía cuál**, para la próxima sesión:
+TS → Zig. **Decidido: WASM** (ver "Reglas de dominio: interop TS → Zig (WASM)" más
+abajo). Las opciones que se evaluaron:
 
 * **C ABI**: Zig exporta funciones (`export fn ... callconv(.c)`) a una lib compartida
   (`.so`/`.dll`), invocada desde Node con una librería tipo `koffi` (FFI sin escribir un
   addon nativo). Más directo, pero la lib queda atada a la plataforma/arquitectura donde
   se compiló — no es problema si el contenedor del backend siempre la compila en su
   propio build Linux.
-* **WASM**: Zig compila a `wasm32`, corrido con un runtime WASM embebido en Node
-  (bindings de `wasmtime`/`wasmer`). Más portable (no atado a la plataforma del
+* **WASM**: Zig compila a `wasm32`, corrido por el `WebAssembly` que Node ya trae (no
+  hacen falta bindings de `wasmtime`/`wasmer`). Más portable (no atado a la plataforma del
   contenedor), pero pasar datos complejos (structs, strings) es más manual — hay que
   serializar contra la memoria lineal del módulo.
 * En cualquiera de los dos casos: las funciones de `zigma` son comptime/genéricas, y no
@@ -267,17 +268,69 @@ enteramente en Zig:
     el original, más `error.Timeout` en `acquire()`.
   * Ninguno de los dos fija `minimum_zig_version` en su `build.zig.zon`.
 
+## Reglas de dominio: interop TS → Zig (WASM)
+
+Las reglas de dominio se escriben una vez en Zig y el backend TS las corre compiladas a
+WASM. Hecho en la rama `type-translation`, probado con un sistema propio de prueba
+(`test/test_system.zig`: salas y reservas, sin aida, que no se tocó).
+
+**Declaración (`zigma.defineRules`, `src/rules.zig`).** Las reglas de un sistema se
+declaran con `zigma.defineRules(type_defs, .{ .checkBooking = .{ .record = booking, .rule
+= checkBooking } })`: la key es el nombre de la regla. Una regla es **siempre una
+validación**: toma exactamente `RecordInstanceType(type_defs, record)` y devuelve
+`error{...}!void`. El record va explícito porque el tipo del parámetro (el struct
+derivado) perdió lo que necesita un generador (los tipos de dominio, `nullable`, de qué
+record viene); `defineRules` chequea que los dos coincidan. Rechazos: 10 casos "no
+compila" (`test/compile_errors/rules_*`).
+
+**El módulo WASM (`src/rules_wasm.zig`).** Genérico: exporta las reglas del módulo que
+`build.zig` le da como `"system"`, con `@export` en un loop comptime (sin generar texto
+Zig). **Un `.wasm` por sistema**, con un export por regla, con el nombre de la regla, más
+`alloc`. Contrato con el que llama:
+* entrada: la instancia del record como JSON UTF-8, escrita en memoria pedida con `alloc`;
+  el export recibe puntero y largo, y la libera;
+* salida: un string empaquetado `ptr << 32 | len`: `""` si pasa, el nombre del error de Zig
+  si la regla la rechaza, `"InvalidInput"` si el JSON no es una instancia del record
+  (`std.json` parsea al tipo exacto: campo faltante o de más, tipo incorrecto, fuera de
+  rango, `null` → `"InvalidInput"`). Los strings de resultado son constantes: no se liberan.
+* Hallazgos: `alloc(0)` daba la dirección `0xFFFFFFFF`, que no es memoria, así que una
+  entrada vacía rompía del lado que llama; ahora devuelve un byte estático y el export
+  libera solo entradas no vacías. `rdynamic` (que conserva los exports) también exporta
+  `__stack_pointer`: se acepta como artefacto del build, porque la lista exacta
+  (`export_symbol_names`) obligaría a repetir los nombres de las reglas en `build.zig`.
+
+**`rules.ts`, generado (`src/ts_rules_generator.zig`).** La mitad TS del contrato. Carga
+`./rules.wasm` (al lado suyo) una vez, al importarse, y expone cada regla tipada:
+* parámetro: el tipo TS del parámetro de la regla (`tsTypeOf`), el mismo tipo que parsea
+  WASM;
+* resultado: `RuleResult<E> = { ok: true } | { ok: false; error: E }`, con `E` los nombres de
+  error de Zig (ordenados: el orden que da el compilador no es estable) más
+  `"InvalidInput"`;
+* serializador campo por campo: solo los campos del parámetro van al JSON (TS deja pasar
+  objetos con propiedades de más, como una fila entera, que WASM rechazaría), y un `bigint`
+  como número JSON exacto (`JSON.rawJSON`; `JSON.stringify` tira con un `bigint`).
+* `rules.ts` **confía en los tipos TS** de su argumento: datos sin tipar en runtime (un
+  `bigint` faltante o con un string) pueden hacer tirar al serializador antes de llegar a
+  WASM. Validar datos de afuera es trabajo del que llama.
+
+**Tests.** Nativos en `zig build test` (`run` del módulo WASM con el testing allocator, y el
+texto exacto de `rules.ts`); contra el `.wasm` real desde Node en `zig build rules-wasm`
+(necesita Node, fuera de `zig build test`): el contrato escrito a mano
+(`test/rules_wasm_node_test.zig`: exports, `alloc`, empaquetado, rango de `i64`, 10.000
+llamadas sin crecer la memoria) y el `rules.ts` generado al lado del `.wasm`
+(`test/rules_ts_node_test.zig`: `RuleResult`, propiedades de más, `bigint` exacto incluido
+2^53 + 1).
+
+**Falta:** cuándo se aplica una regla (qué la dispara: tarea para más adelante); declarar
+las reglas de aida (`validarCargo` es todavía una función suelta, y `cargo` no tiene
+entidad); el `.wasm` y `rules.ts` de aida en el backend.
+
 ## Próximos pasos
 
-1. Elegir mecanismo de interop TypeScript → Zig (C ABI vía `koffi` vs WASM) —
-   investigación, no implementación todavía.
-2. Definir cómo se generan los exports concretos: el paso de build que monomorfice, para
-   el sistema aida, las funciones de validación/reglas de negocio escritas en Zig hacia
-   el ABI/WASM elegido.
-3. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`):
+1. Armar el `backend` como servicio propio en `docker-compose.yml` (junto a `postgres`):
    Dockerfile de Node, sin acoplar el desarrollo al host Windows.
-4. Elegir cliente de Postgres para TypeScript y, si hace falta, framework HTTP (o arrancar
+2. Elegir cliente de Postgres para TypeScript y, si hace falta, framework HTTP (o arrancar
    con Node puro).
-5. Primer paso chico, TDD, a acordar con el programador: probablemente el primer llamado
-   real desde TypeScript a una función de Zig ya compilada (el `validarCargo` de ejemplo),
-   antes de sumarle HTTP o DB.
+3. Reglas: definir cuándo se aplica una regla y llevar las de aida (`validarCargo`) al
+   backend con `rules.ts` / `rules.wasm`.
+4. Traducción de valores TS ↔ Postgres (`fecha`, `bigint`), ver "Falta" en el hito 2.

@@ -39,6 +39,33 @@ Hito 1 (base de datos) completo, ver `GOALS.md`. Queda una limitación conocida:
   test (`DROP SCHEMA public CASCADE`, `ON_ERROR_STOP=1`). Primer intento como referencia:
   commit `5fad670` en `lucas-branch`.
 
+## Pendientes (reglas: `defineRules`, `rules_wasm`, `ts_rules_generator`)
+
+* Cuándo se aplica una regla (qué la dispara): decidido dejarlo para más adelante.
+* Reglas de aida: declarar `validarCargo` con `defineRules` (hoy es una función suelta, y
+  `cargo` no tiene entidad), y su `.wasm` + `rules.ts` en el backend.
+* `RecordInstanceType` ignora `nullable` (un campo nullable es `T`, no `?T`): un `null` en el
+  JSON de una regla es `"InvalidInput"` aunque la definición lo permita. Limitación de
+  `zigma`, no de WASM; aparece con datos reales.
+
+## Hechos reglas (referencia rápida, no repetir)
+
+* `zigma.defineRules(type_defs, rule_defs)` (`src/rules.zig`, re-exportado por `zigma`):
+  devuelve la colección sin cambios; una regla corre a través de su definición; colección
+  vacía (`.{}`, una tupla en este Zig) aceptada (`test/rules_test.zig`).
+* No compilan (`test/compile_errors/rules_*`): colección que no es struct, definición que no
+  es struct, falta `record`, falta `rule`, propiedad desconocida, `rule` no es función, dos
+  parámetros, parámetro de otro record, no es validación (`bool`), devuelve un valor
+  (`error{...}!i64`).
+* `rules_wasm.run` nativo (`test/rules_wasm_test.zig`): pasa → `""`, cada error de dominio,
+  `"InvalidInput"` (no JSON, campo faltante, campo de más, string en entero, `1.5`, `null`),
+  rango entero de `i64`; sin leaks (testing allocator).
+* `zig build rules-wasm` contra el `.wasm` real desde Node: el contrato a mano
+  (`test/rules_wasm_node_test.zig`, incluida la entrada vacía y 10.000 llamadas sin crecer
+  la memoria) y el `rules.ts` generado (`test/rules_ts_node_test.zig`).
+* `ts_rules_generator`: texto exacto de `ruleFn` (cada tipo de campo, `bigint` dentro de un
+  struct, errores ordenados) y de `generateTsRules` (`test/ts_rules_generator_test.zig`).
+
 ## Hechos ts_backend_generator (referencia rápida, no repetir)
 
 * `insertFn` / `generateTsBackend`: un builder `INSERT` por entidad, y el módulo entero.
