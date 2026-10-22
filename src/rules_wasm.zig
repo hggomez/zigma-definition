@@ -33,8 +33,14 @@ pub fn run(allocator: std.mem.Allocator, comptime rule_name: []const u8, input: 
 // `wasm_allocator` is the allocator of the module's linear memory.
 const wasm_allocator = std.heap.wasm_allocator;
 
+/// Where an empty input "is": a real address of the module's memory. An
+/// allocation of 0 bytes does not reserve memory and its pointer is not an
+/// address the caller can write to (0xFFFFFFFF on wasm32).
+var empty_input: [1]u8 = undefined;
+
 /// Room for `len` bytes of input; null (0 for the caller) when out of memory.
 fn alloc(len: usize) callconv(.c) ?[*]u8 {
+    if (len == 0) return &empty_input;
     const buf = wasm_allocator.alloc(u8, len) catch return null;
     return buf.ptr;
 }
@@ -48,7 +54,8 @@ fn RuleExport(comptime rule_name: []const u8) type {
     return struct {
         fn call(ptr: [*]u8, len: usize) callconv(.c) u64 {
             const input = ptr[0..len];
-            defer wasm_allocator.free(input);
+            // an empty input was not allocated (see `alloc`)
+            defer if (len != 0) wasm_allocator.free(input);
             return pack(run(wasm_allocator, rule_name, input));
         }
     };

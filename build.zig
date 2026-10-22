@@ -350,6 +350,60 @@ pub fn build(b: *std.Build) void {
     const ts_backend_db_step = b.step("ts-backend-db", "Generate, then run the DML integration test against the docker-compose Postgres");
     ts_backend_db_step.dependOn(&run_db_backend_integration_tests.step);
 
+    // `zig build rules-wasm`: compile the rules of the test system to one
+    // wasm32 module (src/rules_wasm.zig with test/test_system.zig as its
+    // "system") and run test/rules_wasm_node_test.zig, a Zig test that loads
+    // it with Node's built-in WebAssembly and calls the rules under the
+    // contract. Not on `test_step` (needs Node). The modules are created again
+    // for wasm32: every module of a compilation shares its target.
+    const wasm_target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
+    const zigma_wasm_mod = b.createModule(.{
+        .root_source_file = b.path("src/zigma.zig"),
+        .target = wasm_target,
+        .optimize = .ReleaseSmall,
+    });
+    const test_system_wasm_mod = b.createModule(.{
+        .root_source_file = b.path("test/test_system.zig"),
+        .target = wasm_target,
+        .optimize = .ReleaseSmall,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma_wasm_mod },
+        },
+    });
+    const test_system_rules_wasm = b.addExecutable(.{
+        .name = "test_system_rules",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/rules_wasm.zig"),
+            .target = wasm_target,
+            .optimize = .ReleaseSmall,
+            .imports = &.{
+                .{ .name = "system", .module = test_system_wasm_mod },
+            },
+        }),
+    });
+    // a library of exports: no entry point, and the `export`s kept. rdynamic
+    // also exports `__stack_pointer` (accepted, not contract); the exact list
+    // (`export_symbol_names`) would repeat the rule names here.
+    test_system_rules_wasm.entry = .disabled;
+    test_system_rules_wasm.rdynamic = true;
+
+    const rules_wasm_options = b.addOptions();
+    rules_wasm_options.addOptionPath("wasm_path", test_system_rules_wasm.getEmittedBin());
+    const rules_wasm_node_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/rules_wasm_node_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "build_options", .module = rules_wasm_options.createModule() },
+            },
+        }),
+    });
+    const run_rules_wasm_node_tests = b.addRunArtifact(rules_wasm_node_tests);
+
+    const rules_wasm_step = b.step("rules-wasm", "Compile the test system's rules to wasm32 and test them from Node");
+    rules_wasm_step.dependOn(&run_rules_wasm_node_tests.step);
+
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_sql_generator_tests.step);
