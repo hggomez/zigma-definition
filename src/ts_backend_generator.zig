@@ -27,7 +27,7 @@ fn zigTypeOf(comptime type_defs: anytype, comptime type_name: []const u8) type {
 
 /// The TS text of a type description: its name, or for an object its fields
 /// written inline, recursively (`{ x: number; y: number }`).
-fn tsText(comptime t: TsType) []const u8 {
+pub fn tsText(comptime t: TsType) []const u8 {
     return switch (t) {
         .boolean => "boolean",
         .string => "string",
@@ -80,9 +80,9 @@ fn fieldTsSample(comptime type_defs: anytype, comptime type_name: []const u8) []
 /// none of the systems in play have underscored entity names, and a
 /// container-level const of a generated struct is the way to get a
 /// comptime-known string (same trick as zigma's `LabelHolder`).
-fn PascalHolder(comptime name: []const u8) type {
+pub fn PascalHolder(comptime name: []const u8) type {
     return struct {
-        const value: [name.len]u8 = blk: {
+        pub const value: [name.len]u8 = blk: {
             var out: [name.len]u8 = undefined;
             for (name, 0..) |c, i| out[i] = if (i == 0) std.ascii.toUpper(c) else c;
             break :blk out;

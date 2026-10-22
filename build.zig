@@ -241,6 +241,29 @@ pub fn build(b: *std.Build) void {
     });
     const run_rules_wasm_tests = b.addRunArtifact(rules_wasm_tests);
 
+    const ts_rules_generator_mod = b.addModule("ts_rules_generator", .{
+        .root_source_file = b.path("src/ts_rules_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
+            .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
+        },
+    });
+    const ts_rules_generator_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/ts_rules_generator_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = zigma_mod },
+                .{ .name = "test_system", .module = test_system_mod },
+                .{ .name = "ts_rules_generator", .module = ts_rules_generator_mod },
+            },
+        }),
+    });
+    const run_ts_rules_generator_tests = b.addRunArtifact(ts_rules_generator_tests);
+
     const print_schema_exe = b.addExecutable(.{
         .name = "print_schema",
         .root_module = b.createModule(.{
@@ -413,6 +436,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_zig_type_map_sql_tests.step);
     test_step.dependOn(&run_rules_tests.step);
     test_step.dependOn(&run_rules_wasm_tests.step);
+    test_step.dependOn(&run_ts_rules_generator_tests.step);
 
     for (compile_error_cases) |case| {
         const case_obj = b.addObject(.{
