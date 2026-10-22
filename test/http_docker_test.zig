@@ -8,8 +8,10 @@
 //! 400; POST with the row as a JSON body creates it (201), for the entities
 //! whose fields are all text, and a body that is not a row of the entity is a
 //! JSON 400; PUT with the pk in the query string and the other fields as a
-//! JSON body updates the row (204, or a JSON 404 when it was not there); an
-//! unknown path is a JSON 404.
+//! JSON body updates the row (204, or a JSON 404 when it was not there); a
+//! body takes a bigint as an exact JSON number and a fecha as an object, each
+//! checked against its type (a JSON 400 naming the field); an unknown path is
+//! a JSON 404.
 //!
 //! Each field keeps its SSOT type in the JSON: a bigint (aida's `integer`,
 //! i64, BIGINT in Postgres) is an exact JSON number, never rounded through a JS
@@ -210,9 +212,6 @@ const script =
     \\res = await fetch(base + '/api/periodos', { method: 'POST', body: JSON.stringify({ periodo: 'http-docker-test' }) });
     \\assert.equal(res.status, 500);
     \\assert.deepEqual(await res.json(), { error: 'internal error' });
-    \\// an entity with a field that is not text has no create route (yet)
-    \\res = await fetch(base + '/api/clases', { method: 'POST', body: '{}' });
-    \\assert.equal(res.status, 404);
     \\
     \\// update: the pk in the query string, the other fields in the body; 204
     \\// without a body, then the row has the new values
@@ -246,6 +245,50 @@ const script =
     \\// an entity that is all pk has nothing to update: no route
     \\res = await fetch(base + '/api/periodos?periodo=http-docker-test', { method: 'PUT', body: '{}' });
     \\assert.equal(res.status, 404);
+    \\
+    \\// a body with a bigint and a struct, in the format of the responses: the
+    \\// bigint an exact JSON number (written as text: JSON.stringify throws on a
+    \\// bigint), the fecha an object { año, mes, día }
+    \\const claseBody = (orden, fecha) => '{"periodo":"http-docker-test","materia":"http-docker-test","orden":' + orden + (fecha === undefined ? '' : ',"fecha":' + fecha) + '}';
+    \\const readExact = async (res) => JSON.parse(await res.text(), (key, value, context) => key === 'orden' ? BigInt(context.source) : value);
+    \\res = await fetch(base + '/api/clases', { method: 'POST', body: claseBody('9007199254740995', '{"año":2026,"mes":4,"día":1}') });
+    \\assert.equal(res.status, 201);
+    \\res = await fetch(base + clasePk + '9007199254740995');
+    \\assert.deepEqual(await readExact(res),
+    \\  { periodo: 'http-docker-test', materia: 'http-docker-test', orden: 9007199254740995n, fecha: { año: 2026, mes: 4, día: 1 }, tema: null });
+    \\// update a struct and a text field; a nullable struct set to null
+    \\res = await fetch(base + clasePk + '9007199254740995', { method: 'PUT', body: JSON.stringify({ fecha: null, tema: 'con tema' }) });
+    \\assert.equal(res.status, 204);
+    \\res = await fetch(base + clasePk + '9007199254740995');
+    \\assert.deepEqual(await readExact(res),
+    \\  { periodo: 'http-docker-test', materia: 'http-docker-test', orden: 9007199254740995n, fecha: null, tema: 'con tema' });
+    \\res = await fetch(base + clasePk + '9007199254740995', { method: 'PUT', body: JSON.stringify({ fecha: { año: 2026, mes: 5, día: 2 } }) });
+    \\assert.equal(res.status, 204);
+    \\res = await fetch(base + clasePk + '9007199254740995');
+    \\assert.deepEqual(await readExact(res),
+    \\  { periodo: 'http-docker-test', materia: 'http-docker-test', orden: 9007199254740995n, fecha: { año: 2026, mes: 5, día: 2 }, tema: null });
+    \\// a struct in the pk of a create
+    \\res = await fetch(base + '/api/mesas', { method: 'POST', body: JSON.stringify({ periodo: 'http-docker-test', materia: 'http-docker-test', fecha: { año: 2026, mes: 7, día: 1 }, presidente: 'http-docker-test' }) });
+    \\assert.equal(res.status, 201);
+    \\res = await fetch(base + mesaPk + '&fecha.año=2026&fecha.mes=7&fecha.día=1');
+    \\assert.deepEqual(await res.json(), { periodo: 'http-docker-test', materia: 'http-docker-test', fecha: { año: 2026, mes: 7, día: 1 }, presidente: 'http-docker-test', vocal: null });
+    \\
+    \\// a bigint or a struct that does not fit its type: a JSON 400 naming the field
+    \\const ordenError = "field 'orden' must be an integer in -9223372036854775808..9223372036854775807";
+    \\for (const [body, error] of [
+    \\  [claseBody('1.5'), ordenError],
+    \\  [claseBody('"3"'), ordenError],
+    \\  [claseBody('9223372036854775808'), ordenError],
+    \\  [claseBody('8', '"2026-03-14"'), "field 'fecha' must be an object"],
+    \\  [claseBody('8', '{"año":2026,"mes":300,"día":1}'), "field 'fecha.mes' must be an integer in 0..255"],
+    \\  [claseBody('8', '{"año":2026,"mes":3}'), "missing field 'fecha.día'"],
+    \\  [claseBody('8', '{"año":2026,"mes":null,"día":1}'), "field 'fecha.mes' must not be null"],
+    \\  [claseBody('8', '{"año":2026,"mes":3,"día":1,"hora":9}'), "unknown field 'fecha.hora'"],
+    \\]) {
+    \\  res = await fetch(base + '/api/clases', { method: 'POST', body });
+    \\  assert.equal(res.status, 400, body);
+    \\  assert.deepEqual(await res.json(), { error }, body);
+    \\}
     \\
     \\// an unknown path: 404 with a JSON error
     \\res = await fetch(base + '/api/inexistentes');

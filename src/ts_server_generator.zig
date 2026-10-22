@@ -80,32 +80,66 @@ const header_after_imports =
     \\  return n < min || n > max ? null : n;
     \\}
     \\
-    \\// The body of a request as a row of an entity whose fields are all text: a
-    \\// JSON object with only its fields, each a string; a nullable field may be
-    \\// null or absent (taken as null), the others are required.
-    \\async function readBody(req: IncomingMessage, fields: Record<string, boolean>): Promise<{ values: Record<string, string | null> } | { error: string }> {
+    \\// A number of a JSON body, kept as its exact text.
+    \\class JsonNumber {
+    \\  text: string;
+    \\  constructor(text: string) {
+    \\    this.text = text;
+    \\  }
+    \\}
+    \\
+    \\// The body of a request: a JSON object, every number kept as its exact text
+    \\// (a JS number would round a bigint).
+    \\async function readBody(req: IncomingMessage): Promise<{ object: Record<string, unknown> } | { error: string }> {
     \\  const chunks: Buffer[] = [];
     \\  for await (const chunk of req) chunks.push(chunk);
     \\  let body: unknown;
     \\  try {
-    \\    body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    \\    body = JSON.parse(Buffer.concat(chunks).toString("utf8"), (key, value, context) => (typeof value === "number" ? new JsonNumber(context.source) : value));
     \\  } catch {
     \\    return { error: "body is not valid JSON" };
     \\  }
-    \\  if (typeof body !== "object" || body === null || Array.isArray(body)) return { error: "body must be a JSON object" };
-    \\  const object = body as Record<string, unknown>;
-    \\  for (const name of Object.keys(object)) {
-    \\    if (!(name in fields)) return { error: `unknown field '${name}'` };
+    \\  if (typeof body !== "object" || body === null || Array.isArray(body) || body instanceof JsonNumber) return { error: "body must be a JSON object" };
+    \\  return { object: body as Record<string, unknown> };
+    \\}
+    \\
+    \\type Read = { value: any } | { error: string };
+    \\
+    \\// A field of a JSON object, read by `read`; absent or null is null when the
+    \\// field is nullable, an error otherwise.
+    \\function readField(o: Record<string, unknown>, key: string, name: string, nullable: boolean, read: (v: unknown, name: string) => Read): Read {
+    \\  const v = o[key];
+    \\  if (v === undefined || v === null) {
+    \\    if (nullable) return { value: null };
+    \\    return { error: v === undefined ? `missing field '${name}'` : `field '${name}' must not be null` };
     \\  }
-    \\  const values: Record<string, string | null> = {};
-    \\  for (const [name, nullable] of Object.entries(fields)) {
-    \\    const value = object[name];
-    \\    if (value === undefined && !nullable) return { error: `missing field '${name}'` };
-    \\    if (value === null && !nullable) return { error: `field '${name}' must not be null` };
-    \\    if (value !== undefined && value !== null && typeof value !== "string") return { error: `field '${name}' must be a string` };
-    \\    values[name] = (value ?? null) as string | null;
-    \\  }
-    \\  return { values };
+    \\  return read(v, name);
+    \\}
+    \\
+    \\// A field of a JSON object other than `keys`, as an error; null when there is none.
+    \\function unknownField(o: Record<string, unknown>, keys: string[], prefix: string): Read | null {
+    \\  const extra = Object.keys(o).find((key) => !keys.includes(key));
+    \\  return extra === undefined ? null : { error: `unknown field '${prefix}${extra}'` };
+    \\}
+    \\
+    \\function readText(v: unknown, name: string): Read {
+    \\  return typeof v === "string" ? { value: v } : { error: `field '${name}' must be a string` };
+    \\}
+    \\
+    \\function readBoolean(v: unknown, name: string): Read {
+    \\  return typeof v === "boolean" ? { value: v } : { error: `field '${name}' must be a boolean` };
+    \\}
+    \\
+    \\// An integer of a JSON body inside min..max: exact, as a bigint.
+    \\function readBigint(v: unknown, name: string, min: bigint, max: bigint): Read {
+    \\  const n = v instanceof JsonNumber ? readInteger(v.text, min, max) : null;
+    \\  return n === null ? { error: `field '${name}' must be an integer in ${min}..${max}` } : { value: n };
+    \\}
+    \\
+    \\// An integer of a JSON body inside min..max, as a number.
+    \\function readNumber(v: unknown, name: string, min: bigint, max: bigint): Read {
+    \\  const n = readBigint(v, name, min, max);
+    \\  return "error" in n ? n : { value: Number(n.value) };
     \\}
     \\
     \\
@@ -313,34 +347,98 @@ fn deleteRoute(comptime type_defs: anytype, comptime entity_name: []const u8, co
         "    }\n";
 }
 
-/// Whether every field of the entity is text: a body of strings is then the
-/// row as is (a bigint or a fecha in a body would need the TS -> Postgres
-/// translation: not yet).
-fn hasTextFields(comptime type_defs: anytype, comptime entity: anytype) bool {
-    for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
-        const domain = @field(entity.fields, field_name).type;
-        if (tsTypeOf(@field(type_defs, domain).Type) != .string) return false;
-    }
-    return true;
+/// The TS reader of a body value of type `t` (`(v, name) => Read`): a string,
+/// a boolean, an integer inside the interval of its Zig type (a bigint exact,
+/// a narrower one as a number), a struct by its `read<Domain>`.
+fn readerText(comptime domain: []const u8, comptime t: TsType) []const u8 {
+    return switch (t) {
+        .string => "readText",
+        .boolean => "readBoolean",
+        .bigint => |interval| std.fmt.comptimePrint("(v, name) => readBigint(v, name, {d}n, {d}n)", .{ interval.min, interval.max }),
+        .number => |interval| std.fmt.comptimePrint("(v, name) => readNumber(v, name, {d}n, {d}n)", .{ interval.min, interval.max }),
+        .object => "read" ++ pascal(domain),
+    };
 }
 
-/// The create route of an entity whose fields are all text: POST
-/// /api/<entity> with the row as a JSON body (`readBody`, told which fields
-/// are nullable: nullable and not in the pk) -> 201 without a body; a body
-/// that is not a row of the entity is a JSON 400.
-fn createRoute(comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
-    var fields: []const u8 = "{ ";
-    var row: []const u8 = "{ ";
-    for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names, 0..) |field_name, i| {
-        const nullable = @field(entity.fields, field_name).nullable and !isPkField(entity, field_name);
-        const sep = if (i > 0) ", " else "";
-        fields = fields ++ sep ++ field_name ++ ": " ++ (if (nullable) "true" else "false");
-        row = row ++ sep ++ field_name ++ ": body.values." ++ field_name;
+/// `read<Domain>`: a struct from a JSON body, an object with exactly its
+/// fields (none nullable), each read by its type, as the composite's literal
+/// `(…,…)` that Postgres reads. An error names the field inside the struct
+/// (`fecha.mes`).
+fn structReaderFn(comptime domain: []const u8, comptime parts: []const zig_type_map_ts.TsField) []const u8 {
+    var keys: []const u8 = "";
+    var reads: []const u8 = "";
+    var literal: []const u8 = "`(";
+    for (parts, 0..) |part, i| {
+        switch (part.type) {
+            .string => @compileError("field '" ++ part.name ++ "' of type '" ++ domain ++ "': text inside a composite type is not read yet"),
+            .object => @compileError("field '" ++ part.name ++ "' of type '" ++ domain ++ "': a struct inside a composite type is not read yet"),
+            else => {},
+        }
+        keys = keys ++ (if (i > 0) ", " else "") ++ "\"" ++ part.name ++ "\"";
+        reads = reads ++ "  const " ++ part.name ++ " = readField(o, \"" ++ part.name ++ "\", `${name}." ++ part.name ++ "`, false, " ++ readerText(domain, part.type) ++ ");\n" ++
+            "  if (\"error\" in " ++ part.name ++ ") return " ++ part.name ++ ";\n";
+        literal = literal ++ (if (i > 0) "," else "") ++ "${" ++ part.name ++ ".value}";
     }
+    return "// " ++ domain ++ " from a JSON body: an object with exactly its fields, each read by its\n" ++
+        "// type, as the composite's literal \"(…,…)\" that Postgres reads.\n" ++
+        "function read" ++ pascal(domain) ++ "(v: unknown, name: string): Read {\n" ++
+        "  if (typeof v !== \"object\" || v === null || Array.isArray(v) || v instanceof JsonNumber) return { error: `field '${name}' must be an object` };\n" ++
+        "  const o = v as Record<string, unknown>;\n" ++
+        "  const extra = unknownField(o, [" ++ keys ++ "], `${name}.`);\n" ++
+        "  if (extra !== null) return extra;\n" ++
+        reads ++
+        "  return { value: " ++ literal ++ ")` };\n" ++
+        "}\n";
+}
+
+/// The reader of some fields of an entity from a JSON body (`row<Entity>`:
+/// every field, for a create; `set<Entity>`: the fields outside the pk, for an
+/// update): only those fields, each read by its type; a nullable one (outside
+/// the pk) may be null or absent.
+fn bodyFn(comptime type_defs: anytype, comptime entity_name: []const u8, comptime entity: anytype, comptime only_non_pk: bool) []const u8 {
+    var keys: []const u8 = "";
+    var reads: []const u8 = "";
+    var object: []const u8 = "{ ";
+    var first = true;
+    for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
+        const in_pk = isPkField(entity, field_name);
+        if (only_non_pk and in_pk) continue;
+        const field = @field(entity.fields, field_name);
+        const t = tsTypeOf(@field(type_defs, field.type).Type);
+        const nullable = field.nullable and !in_pk;
+        const sep = if (first) "" else ", ";
+        first = false;
+        keys = keys ++ sep ++ "\"" ++ field_name ++ "\"";
+        reads = reads ++ "  const " ++ field_name ++ " = readField(o, \"" ++ field_name ++ "\", \"" ++ field_name ++ "\", " ++
+            (if (nullable) "true" else "false") ++ ", " ++ readerText(field.type, t) ++ ");\n" ++
+            "  if (\"error\" in " ++ field_name ++ ") return " ++ field_name ++ ";\n";
+        object = object ++ sep ++ field_name ++ ": " ++ field_name ++ ".value";
+    }
+    const head = if (only_non_pk)
+        "// The fields outside the pk of " ++ entity_name ++ " from a JSON body: only those, each read by its type.\n" ++
+            "function set" ++ pascal(entity_name)
+    else
+        "// A row of " ++ entity_name ++ " from a JSON body: only its fields, each read by its type.\n" ++
+            "function row" ++ pascal(entity_name);
+    return head ++ "(o: Record<string, unknown>): Read {\n" ++
+        "  const extra = unknownField(o, [" ++ keys ++ "], \"\");\n" ++
+        "  if (extra !== null) return extra;\n" ++
+        reads ++
+        "  return { value: " ++ object ++ " } };\n" ++
+        "}\n";
+}
+
+/// The create route of an entity: POST /api/<entity> with the row as a JSON
+/// body (`readBody`, then `row<Entity>`) -> 201 without a body; a body that is
+/// not a row of the entity is a JSON 400.
+fn createRoute(comptime entity_name: []const u8) []const u8 {
+    const entity_pascal = pascal(entity_name);
     return "    if (req.method === \"POST\" && url.pathname === \"/api/" ++ entity_name ++ "\") {\n" ++
-        "      const body = await readBody(req, " ++ fields ++ " });\n" ++
+        "      const body = await readBody(req);\n" ++
         "      if (\"error\" in body) return json(res, 400, { error: body.error });\n" ++
-        "      const q = insert" ++ pascal(entity_name) ++ "(" ++ row ++ " });\n" ++
+        "      const row = row" ++ entity_pascal ++ "(body.object);\n" ++
+        "      if (\"error\" in row) return json(res, 400, { error: row.error });\n" ++
+        "      const q = insert" ++ entity_pascal ++ "(row.value);\n" ++
         "      await pool.query(q.text, q.values);\n" ++
         "      res.writeHead(201);\n" ++
         "      return res.end();\n" ++
@@ -356,28 +454,21 @@ fn hasNonPkFields(comptime entity: anytype) bool {
     return false;
 }
 
-/// The update route of an entity with text fields and some field outside the
-/// pk: PUT /api/<entity>?<pk> with the fields outside the pk as a JSON body ->
-/// 204 without a body, or a JSON 404 when no row had that pk. The update is
-/// the full row (`update<Entity>` of dml.ts): a nullable field the body leaves
-/// out is written as null; a pk field in the body is an unknown field.
+/// The update route of an entity with some field outside the pk: PUT
+/// /api/<entity>?<pk> with the fields outside the pk as a JSON body
+/// (`set<Entity>`) -> 204 without a body, or a JSON 404 when no row had that
+/// pk. The update is the full row (`update<Entity>` of dml.ts): a nullable
+/// field the body leaves out is written as null; a pk field in the body is an
+/// unknown field.
 fn updateRoute(comptime type_defs: anytype, comptime entity_name: []const u8, comptime entity: anytype) []const u8 {
-    var fields: []const u8 = "{ ";
-    var row: []const u8 = "{ ";
-    var first = true;
-    for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
-        if (isPkField(entity, field_name)) continue;
-        const nullable = @field(entity.fields, field_name).nullable;
-        const sep = if (first) "" else ", ";
-        first = false;
-        fields = fields ++ sep ++ field_name ++ ": " ++ (if (nullable) "true" else "false");
-        row = row ++ sep ++ field_name ++ ": body.values." ++ field_name;
-    }
+    const entity_pascal = pascal(entity_name);
     return "    if (req.method === \"PUT\" && url.pathname === \"/api/" ++ entity_name ++ "\") {\n" ++
         readKeyText(type_defs, entity_name, entity) ++
-        "      const body = await readBody(req, " ++ fields ++ " });\n" ++
+        "      const body = await readBody(req);\n" ++
         "      if (\"error\" in body) return json(res, 400, { error: body.error });\n" ++
-        "      const q = update" ++ pascal(entity_name) ++ "(key.value, " ++ row ++ " });\n" ++
+        "      const row = set" ++ entity_pascal ++ "(body.object);\n" ++
+        "      if (\"error\" in row) return json(res, 400, { error: row.error });\n" ++
+        "      const q = update" ++ entity_pascal ++ "(key.value, row.value);\n" ++
         "      const { rowCount } = await pool.query(q.text, q.values);\n" ++
         "      if (rowCount === 0) return json(res, 404, { error: \"not found\" });\n" ++
         "      res.writeHead(204);\n" ++
@@ -398,48 +489,48 @@ fn contains(comptime names: []const []const u8, comptime name: []const u8) bool 
 fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type {
     return struct {
         const text: []const u8 = blk: {
-            @setEvalBranchQuota(200000);
+            @setEvalBranchQuota(400000);
             const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
             var imports: []const u8 = "";
-            var decoders: []const u8 = "";
-            var decoded: []const []const u8 = &.{};
+            var structs: []const u8 = "";
+            var seen: []const []const u8 = &.{};
             var functions: []const u8 = "";
             var routes: []const u8 = "";
             for (entity_names, 0..) |entity_name, i| {
                 const entity = zigma.completeEntity(@field(entity_defs, entity_name));
                 const entity_pascal = pascal(entity_name);
-                const text_fields = hasTextFields(type_defs, entity);
-                const updatable = text_fields and hasNonPkFields(entity);
+                const updatable = hasNonPkFields(entity);
                 imports = imports ++ (if (i > 0) ", " else "") ++ "selectAll" ++ entity_pascal ++
-                    ", select" ++ entity_pascal ++ "ByPk, delete" ++ entity_pascal;
-                if (text_fields) imports = imports ++ ", insert" ++ entity_pascal;
+                    ", select" ++ entity_pascal ++ "ByPk, delete" ++ entity_pascal ++ ", insert" ++ entity_pascal;
                 if (updatable) imports = imports ++ ", update" ++ entity_pascal;
-                // one decoder per struct domain, the first time it appears
+                // one decoder and one body reader per struct domain, the first
+                // time it appears
                 for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
                     const domain = @field(entity.fields, field_name).type;
                     const t = tsTypeOf(@field(type_defs, domain).Type);
-                    if (t == .object and !contains(decoded, domain)) {
-                        decoders = decoders ++ decoderFn(domain, t.object) ++ "\n";
-                        decoded = decoded ++ &[_][]const u8{domain};
+                    if (t == .object and !contains(seen, domain)) {
+                        structs = structs ++ decoderFn(domain, t.object) ++ "\n" ++ structReaderFn(domain, t.object) ++ "\n";
+                        seen = seen ++ &[_][]const u8{domain};
                     }
                 }
                 functions = functions ++ encoderFn(type_defs, entity_name, entity) ++ "\n" ++
-                    pkFn(type_defs, entity_name, entity) ++ "\n";
-                routes = routes ++ getRoute(type_defs, entity_name, entity) ++ deleteRoute(type_defs, entity_name, entity);
-                if (text_fields) routes = routes ++ createRoute(entity_name, entity);
+                    pkFn(type_defs, entity_name, entity) ++ "\n" ++
+                    bodyFn(type_defs, entity_name, entity, false) ++ "\n";
+                if (updatable) functions = functions ++ bodyFn(type_defs, entity_name, entity, true) ++ "\n";
+                routes = routes ++ getRoute(type_defs, entity_name, entity) ++ deleteRoute(type_defs, entity_name, entity) ++
+                    createRoute(entity_name);
                 if (updatable) routes = routes ++ updateRoute(type_defs, entity_name, entity);
             }
             break :blk header_before_imports ++ imports ++ header_after_imports ++
-                decoders ++ functions ++ server_start ++ routes ++ footer;
+                structs ++ functions ++ server_start ++ routes ++ footer;
         };
     };
 }
 
 /// The HTTP server of the given entities (`.{ .periodos = aida.periodos }`),
 /// over the system's `type_defs`: for every entity a GET route (the list, and
-/// one row by its pk) and a DELETE route; a POST route when every field is
-/// text, and a PUT route when, besides, some field is outside the pk; in
-/// declaration order.
+/// one row by its pk), a DELETE and a POST route, and a PUT route when some
+/// field is outside the pk; in declaration order.
 pub fn generateTsServer(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     return ServerHolder(type_defs, entity_defs).text;
 }

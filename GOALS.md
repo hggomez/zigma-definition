@@ -347,23 +347,28 @@ El hito 3 arranca por la capa HTTP del backend, que el frontend va a necesitar.
   otras (un `periodo` con `cursos`) lo rechaza Postgres y es, por ahora, el 500 genérico:
   decidido manejar todas las violaciones de pk/uk/fk juntas, más adelante (se evaluó un 500
   con mensaje `referenced by <tabla>` o un 409, y se descartó por ahora).
-* `POST /api/<entidad>` (alta), la fila como cuerpo JSON: 201 **sin cuerpo**. Para las
-  entidades cuyos campos son todos texto (en aida, las mismas 6; el generador lo decide
-  desde el SSOT): un `bigint` o una `fecha` en un cuerpo necesitan la traducción
-  TS → Postgres, pendiente. El cuerpo tiene que ser un objeto JSON con solo los campos de la
-  entidad, cada uno string; un campo nullable (y fuera de la pk) puede venir `null` o
-  faltar (se toma como `null`), los demás son obligatorios; si no, 400 JSON
-  (`body is not valid JSON`, `body must be a JSON object`, `unknown field`,
-  `missing field`, `must not be null`, `must be a string`). Una pk duplicada es, por ahora,
-  el 500 genérico. Un query string en un `POST` se ignora (no se decidió otra cosa).
+* `POST /api/<entidad>` (alta), la fila como cuerpo JSON: 201 **sin cuerpo**, para **las 11
+  entidades**. El cuerpo va en el mismo formato que las respuestas: un `bigint` como número
+  JSON exacto (`readBody` guarda el texto exacto de cada número, nunca pasa por un `number`
+  de JS) y una `fecha` como `{ "año", "mes", "día" }`. Tiene que ser un objeto JSON con solo
+  los campos de la entidad (`row<Entidad>`), cada uno leído por su tipo: string, boolean,
+  entero dentro del intervalo de su tipo de Zig (lo chequea el servidor), struct como objeto
+  con exactamente sus campos (`read<Dominio>`, mandado a Postgres como el literal del
+  compuesto). Un campo nullable (y fuera de la pk) puede venir `null` o faltar (se toma como
+  `null`), los demás son obligatorios; si no, 400 JSON que nombra el campo (`fecha.mes`
+  dentro de un struct): `body is not valid JSON`, `body must be a JSON object`,
+  `unknown field`, `missing field`, `must not be null`, `must be a string`,
+  `must be a boolean`, `must be an integer in min..max`, `must be an object`. Una pk
+  duplicada es, por ahora, el 500 genérico. Un query string en un `POST` se ignora (no se
+  decidió otra cosa).
   * Los tipos de `dml.ts` no reflejan `nullable` (`insertDocentes` declara `cargo: string`):
     `server.ts` le pasa `string | null`, que en runtime funciona (`pg` manda `NULL`) pero un
     `tsc` rechazaría. Misma limitación de `zigma` que en `TEST_QUEUE.md`.
 * `PUT /api/<entidad>?<pk completa>` (modificación), los campos fuera de la pk como cuerpo
   JSON: 204 **sin cuerpo**, o 404 JSON si no había fila con esa pk (no se crea nada). Para las
-  entidades con pk solo texto, campos solo texto y algún campo fuera de la pk (en aida:
-  `docentes`, `materias`, `cursos`, `alumnos`; `periodos` e `inscripciones` son todo pk:
-  no hay nada que modificar). Es de fila completa (`update<E>` de `dml.ts`): un campo
+  entidades con algún campo fuera de la pk (en aida, 9: `periodos` e `inscripciones` son todo
+  pk, no hay nada que modificar). El cuerpo se lee como en el `POST`, con solo los campos
+  fuera de la pk (`set<Entidad>`). Es de fila completa (`update<E>` de `dml.ts`): un campo
   nullable que el cuerpo no trae se escribe `null`. La pk solo va en el query string: un
   campo de la pk en el cuerpo es `unknown field` (400).
 
