@@ -126,6 +126,19 @@ rama `type-translation` (último punto).
 
 ## Hito 2 (backend): estado y decisiones
 
+**Cerrado (2026-10-22).** Hecho: la interfaz de DML generada (`dml.ts`) con sus tests y su
+integración contra Postgres, las reglas de dominio de Zig corriendo desde TS vía WASM
+(`rules.ts` / `rules.wasm`), el cliente de Postgres decidido (`pg`) y el backend en su propio
+contenedor de `docker-compose`. **Queda para más adelante** (decisión del programador):
+
+* la capa HTTP (endpoints CRUD) y si usar framework o Node puro: hasta entonces el servicio
+  `backend` no tiene proceso de larga duración;
+* las reglas de aida: cuándo se aplica una regla, `validarCargo` declarada con
+  `defineRules`, su `rules.ts` / `rules.wasm` en la imagen;
+* la traducción de valores TS ↔ Postgres (`fecha`, `bigint`) y los casos de integración que
+  faltan (ver "Falta" más abajo y `TEST_QUEUE.md`);
+* volver a aplicar el esquema sobre una base existente (`already exists`).
+
 ### Progreso
 
 Primera capa del backend TS: la **interfaz de DML sobre la base**, generada desde el SSOT
@@ -353,6 +366,8 @@ las reglas de aida (`validarCargo` es todavía una función suelta, y `cargo` no
 entidad); el `.wasm` y `rules.ts` de aida en el backend.
 
 ## Próximos pasos
+
+Hito 2 cerrado: lo que sigue de esta lista queda para más adelante.
 
 Hecho: el `backend` como servicio propio en `docker-compose.yml` (ver el progreso del
 hito 2) y el cliente de Postgres (`pg`, ver "Decisiones previas").
