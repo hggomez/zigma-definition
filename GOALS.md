@@ -406,11 +406,15 @@ Windows los argumentos se leen con `iterateAllocator`); `frontend/Dockerfile` +
 `frontend/nginx.conf`; servicios `frontend` y `e2e` en `docker-compose.yml`; la suite de
 Playwright (`e2e/tests/frontend.spec.ts`) y su test de Zig (`test/frontend_e2e_test.zig`).
 
-**Próximo paso:** correr `zig build frontend-e2e` hasta verde. Todavía **no se vio correr**:
-la primera corrida se cortó mientras bajaba la imagen de Playwright (unos 2 GB, más de
-5 minutos; conviene correrla en segundo plano). Después: verlo a mano en el navegador
-(`http://localhost:8080`), y los pasos siguientes del frontend (una fila, baja, alta y
-modificación con formularios).
+**`zig build frontend-e2e` en verde (2026-10-23):** las 6 specs de Playwright pasan. Hicieron
+falta dos arreglos: el healthcheck del `frontend` pide `http://127.0.0.1/` (el `wget` de
+busybox resuelve `localhost` a `::1` y nginx escucha solo IPv4) y `try_files` suma `$uri/`
+(sin eso `/` daba 404 en vez del índice). Requiere Docker Desktop corriendo; la primera
+corrida baja la imagen de Playwright (unos 2 GB, conviene en segundo plano).
+
+**Próximo paso:** verlo a mano en el navegador (`http://localhost:8080`); quizás una spec
+que abra `/` (hoy solo lo cubre el healthcheck). Después, los pasos siguientes del frontend
+(una fila, baja, alta y modificación con formularios).
 
 ## Reglas de dominio: interop TS → Zig (WASM)
 
