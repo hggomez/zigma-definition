@@ -31,6 +31,7 @@ pub const seeds = blk: {
                 .telefono = null,
                 .experiencia = null,
                 .esImportador = null,
+                .fecha_nacimiento = null,
             },
             .{
                 .docente = "2",
@@ -43,6 +44,11 @@ pub const seeds = blk: {
                 .telefono = null,
                 .experiencia = null,
                 .esImportador = null,
+                .fecha_nacimiento = .{
+                    .@"año" = 1990,
+                    .mes = 5,
+                    .@"día" = 14,
+                },
             },
         },
         .alumnos = [_]aida.Alumno{

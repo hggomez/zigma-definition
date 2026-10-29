@@ -10,6 +10,11 @@ pub const Config = struct {
     max_requests: ?usize = null,
 };
 
+/// Para aplicaciones cuyos validadores no necesitan contexto adicional.
+pub const EmptyContextProvider = struct {
+    pub fn get(_: EmptyContextProvider) error{}!void {}
+};
+
 const cors_origin = std.http.Header{
     .name = "Access-Control-Allow-Origin",
     .value = "*",
@@ -66,6 +71,7 @@ pub fn serve(
     allocator: std.mem.Allocator,
     api: anytype,
     repository: anytype,
+    context_provider: anytype,
     config: Config,
 ) !void {
     const address = try std.Io.net.IpAddress.parse(config.address, config.port);
@@ -149,12 +155,19 @@ pub fn serve(
 
         // Desde acá, la capa de sockets deja de importar: Api recibe el mismo valor
         // Request que entregaría un test unitario u otra biblioteca HTTP.
+        // El proveedor es de la aplicación. Se invoca una vez por solicitud, antes
+        // de entrar a la API; un fallo impide consultar o escribir el repositorio.
+        const context = context_provider.get() catch {
+            try send(&request, 500, "{\"error\":{\"code\":\"internal_error\",\"message\":\"Internal server error\"}}");
+            served += 1;
+            continue;
+        };
         const response = api.handle(request_allocator, repository, .{
             .method = method,
             .target = target,
             .content_type = content_type,
             .body = body,
-        }) catch {
+        }, context) catch {
             // Los errores Zig inesperados se filtran en la última interfaz para
             // no exponer diagnósticos de implementación ni de la base de datos.
             try send(

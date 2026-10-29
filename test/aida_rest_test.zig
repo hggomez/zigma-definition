@@ -1,7 +1,7 @@
 const std = @import("std");
 const aida_rest = @import("aida_rest");
 
-test "AIDA fecha wire maps domain objects to ISO storage without calendar checks" {
+test "AIDA fecha wire maps valid domain objects to ISO storage" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
@@ -9,10 +9,10 @@ test "AIDA fecha wire maps domain objects to ISO storage without calendar checks
         "2024-02-29",
         try aida_rest.date_codec.queryToPostgres(arena.allocator(), "2024-02-29"),
     );
-    // Not a real civil date: encoding only, no calendar validation in the wire codec.
-    try std.testing.expectEqualStrings(
-        "2025-02-30",
-        try aida_rest.date_codec.queryToPostgres(arena.allocator(), "2025-02-30"),
+    // La forma del objeto no alcanza: el calendario también debe ser válido.
+    try std.testing.expectError(
+        error.InvalidValue,
+        aida_rest.date_codec.queryToPostgres(arena.allocator(), "2025-02-30"),
     );
 
     const object_json = "{\"año\":2024,\"mes\":2,\"día\":29}";
@@ -55,6 +55,7 @@ test "AIDA REST docente adapter reports the domain business violation" {
         .telefono = null,
         .experiencia = 4,
         .esImportador = null,
-    }).?;
+        .fecha_nacimiento = null,
+    }, .{ .today = .{ .@"año" = 2026, .mes = 10, .@"día" = 28 } }).?;
     try std.testing.expectEqualStrings("teorico_requires_five_years_experience", violation.code);
 }

@@ -20,7 +20,8 @@ pub fn main(init: std.process.Init) !void {
     var api = aida_rest.Api.init(.{ .max_body_bytes = 256 });
     var repository = crud.Repository(aida.Model).init(&connection);
     std.debug.print("ready {d}\n", .{port});
-    try std_http.serve(init.io, init.gpa, &api, &repository, .{
+    var context_provider = aida_rest.ContextProvider{ .io = init.io };
+    try std_http.serve(init.io, init.gpa, &api, &repository, &context_provider, .{
         .port = port,
         .max_body_bytes = 256,
     });

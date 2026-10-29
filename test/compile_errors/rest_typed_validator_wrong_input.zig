@@ -1,7 +1,7 @@
 const rest = @import("zigma_rest");
 const fixture = @import("fixtures/typed_validator.zig");
 
-fn validate(_: []const rest.FieldValue) ?rest.BusinessRuleViolation {
+fn validate(_: []const rest.FieldValue, _: void) ?rest.BusinessRuleViolation {
     return null;
 }
 

@@ -88,6 +88,9 @@ expect_response() {
 request "$base_url/materias"
 expect_response 200 '[]'
 
+# Casos compartidos con el backend en memoria, sobre este proceso descartable.
+python3 "$(dirname "$0")/docente_age_http.py" "$base_url"
+
 oversized_body=$(python3 -c 'print("x" * 257)')
 request --request POST --header 'content-type: application/json' --data "$oversized_body" "$base_url/materias"
 if [ "$HTTP_STATUS" != 413 ]; then
@@ -97,7 +100,7 @@ fi
 
 request --request POST --header 'content-type: application/json' \
     --data '{"docente":"d1","nombres":"Ada"}' "$base_url/docentes"
-expect_response 201 '{"docente":"d1","apellido":null,"nombres":"Ada","cargo":null,"email":null,"email_alternativo":null,"jefe":null,"telefono":null,"experiencia":null,"esImportador":null}'
+expect_response 201 '{"docente":"d1","apellido":null,"nombres":"Ada","cargo":null,"email":null,"email_alternativo":null,"jefe":null,"telefono":null,"experiencia":null,"esImportador":null,"fecha_nacimiento":null}'
 
 # La regla concreta se ejecuta antes de escribir, también con valores de libpq.
 request --request POST --header 'content-type: application/json' \
@@ -107,14 +110,14 @@ request "$base_url/docentes?docente=d2"
 expect_response 200 '[]'
 
 request --request PUT --header 'content-type: application/json' \
-    --data '{"cargo":"teorico","experiencia":5,"esImportador":false}' "$base_url/docentes?docente=d1"
-expect_response 200 '[{"docente":"d1","apellido":null,"nombres":"Ada","cargo":"teorico","email":null,"email_alternativo":null,"jefe":null,"telefono":null,"experiencia":5,"esImportador":false}]'
+    --data '{"cargo":"teorico","experiencia":5,"esImportador":false,"fecha_nacimiento":{"año":1980,"mes":1,"día":1}}' "$base_url/docentes?docente=d1"
+expect_response 200 '[{"docente":"d1","apellido":null,"nombres":"Ada","cargo":"teorico","email":null,"email_alternativo":null,"jefe":null,"telefono":null,"experiencia":5,"esImportador":false,"fecha_nacimiento":{"año":1980,"mes":1,"día":1}}]'
 
 request --request PUT --header 'content-type: application/json' \
     --data '{"experiencia":4}' "$base_url/docentes?docente=d1"
 expect_response 422 '{"error":{"code":"teorico_requires_five_years_experience","message":"A docente with cargo '\''teorico'\'' requires at least 5 years of experiencia"}}'
 request "$base_url/docentes?docente=d1"
-expect_response 200 '[{"docente":"d1","apellido":null,"nombres":"Ada","cargo":"teorico","email":null,"email_alternativo":null,"jefe":null,"telefono":null,"experiencia":5,"esImportador":false}]'
+expect_response 200 '[{"docente":"d1","apellido":null,"nombres":"Ada","cargo":"teorico","email":null,"email_alternativo":null,"jefe":null,"telefono":null,"experiencia":5,"esImportador":false,"fecha_nacimiento":{"año":1980,"mes":1,"día":1}}]'
 
 request --request POST --header 'content-type: application/json' \
     --data '{"materia":"m1","denominacion":"Álgebra"}' "$base_url/materias"
@@ -165,11 +168,47 @@ fi
 
 request --request POST --header 'content-type: application/json' \
     --data '{"periodo":"p1","materia":"m1","orden":2,"fecha":{"año":2025,"mes":2,"día":30}}' "$base_url/clases"
-# Calendar validity is not enforced by the REST fecha wire codec; PostgreSQL DATE rejects it.
-if [ "$HTTP_STATUS" != 500 ] && [ "$HTTP_STATUS" != 400 ] && [ "$HTTP_STATUS" != 409 ]; then
-    echo "expected database/date rejection, received $HTTP_STATUS $HTTP_BODY" >&2
-    exit 1
-fi
+# El mismo codec rechaza la fecha antes de ejecutar INSERT o UPDATE.
+invalid_date_response='{"error":{"code":"invalid_request","message":"Request fields or values are invalid"}}'
+expect_response 400 "$invalid_date_response"
+request "$base_url/clases?orden=2&materia=m1&periodo=p1"
+expect_response 200 '[]'
+
+for invalid_date in '{"año":2025,"mes":2,"día":30}' '{"año":0,"mes":1,"día":1}' '{"año":10000,"mes":1,"día":1}' '"2024-02-29"'; do
+    request --request PUT --header 'content-type: application/json' \
+        --data "{\"fecha\":$invalid_date}" "$base_url/clases?orden=1&materia=m1&periodo=p1"
+    expect_response 400 "$invalid_date_response"
+    request "$base_url/clases?orden=1&materia=m1&periodo=p1"
+    expect_response 200 '[{"periodo":"p1","materia":"m1","orden":1,"fecha":{"año":2026,"mes":8,"día":31},"tema":"Actualizado"}]'
+done
+
+for invalid_filter in '2025-02-30' '{"año":1900,"mes":2,"día":29}'; do
+    request --get --data-urlencode "fecha=$invalid_filter" "$base_url/clases"
+    expect_response 400 "$invalid_date_response"
+done
+
+# Los extremos y febrero bisiesto conservan su JSON; ambos formatos de query funcionan.
+for iso_date in 0001-01-01 2000-02-29 9999-12-31; do
+    case "$iso_date" in
+        0001-01-01) date_json='{"año":1,"mes":1,"día":1}' ;;
+        2000-02-29) date_json='{"año":2000,"mes":2,"día":29}' ;;
+        9999-12-31) date_json='{"año":9999,"mes":12,"día":31}' ;;
+    esac
+    expected_clase="[{\"periodo\":\"p1\",\"materia\":\"m1\",\"orden\":1,\"fecha\":$date_json,\"tema\":\"Actualizado\"}]"
+    request --request PUT --header 'content-type: application/json' \
+        --data "{\"fecha\":$date_json}" "$base_url/clases?orden=1&materia=m1&periodo=p1"
+    expect_response 200 "$expected_clase"
+    for date_filter in "$iso_date" "$date_json"; do
+        request --get --data-urlencode "fecha=$date_filter" "$base_url/clases"
+        expect_response 200 "$expected_clase"
+    done
+done
+request --request PUT --header 'content-type: application/json' \
+    --data '{"fecha":null}' "$base_url/clases?orden=1&materia=m1&periodo=p1"
+expect_response 200 '[{"periodo":"p1","materia":"m1","orden":1,"fecha":null,"tema":"Actualizado"}]'
+request --request PUT --header 'content-type: application/json' \
+    --data '{"fecha":{"año":2026,"mes":8,"día":31}}' "$base_url/clases?orden=1&materia=m1&periodo=p1"
+expect_response 200 '[{"periodo":"p1","materia":"m1","orden":1,"fecha":{"año":2026,"mes":8,"día":31},"tema":"Actualizado"}]'
 
 request --request PUT --header 'content-type: application/json' \
     --data '{"materia":"m2"}' "$base_url/materias?materia=m1"

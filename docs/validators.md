@@ -11,31 +11,79 @@ La aplicación publica tipos concretos desde sus definiciones, por ejemplo
 tipo; el adaptador REST traduce el resultado al formato de violación público:
 
 ```zig
-fn validateDocenteBusinessRules(value: aida.Docente) ?rest.BusinessRuleViolation {
-    aida.validarDocente(value) catch return .{
-        .code = "teorico_requires_five_years_experience",
-        .message = "A docente with cargo 'teorico' requires at least 5 years of experiencia",
-    };
-    return null;
-}
+const Context = aida_rest.ValidationContext; // struct { today: aida.Fecha }
 
 const validators = rest.defineBusinessValidators(aida.Model, .{
-    .docentes = rest.BusinessValidator(aida.Docente){
-        .validate = validateDocenteBusinessRules,
+    .docentes = rest.BusinessValidator(aida.Docente, Context){
+        // Adaptador de AIDA: llama a validarDocente(value, context.today)
+        // y traduce cada error de dominio a su código y mensaje públicos.
+        .validate = aida_rest.business_validators.docentes.validate,
     },
 });
 const Api = rest.Api(aida.Model, codecs, validators);
 ```
 
-`BusinessValidator(T)` contiene `validate: *const fn (T) ?BusinessRuleViolation`.
-El registro exige exactamente el tipo `BusinessValidator(Model.Row(entity))`:
+`BusinessValidator(T, Context)` contiene
+`validate: *const fn (T, Context) ?BusinessRuleViolation`.
+El registro exige exactamente `BusinessValidator(Model.Row(entity), Context)`:
 rechaza una entidad desconocida, otra entidad como entrada, un struct manual de
-igual forma o una firma incompatible. Una entidad omitida no tiene validador;
+igual forma o una firma incompatible. Todos los validadores de una API comparten
+el mismo tipo de contexto; mezclar tipos distintos también falla al compilar.
+Una entidad omitida no tiene validador;
 `Api(Model, codecs, .{})` conserva el CRUD sin reglas de negocio.
 
 Los validadores son funciones locales y síncronas. Reciben una fila completa,
-incluidos sus opcionales, y devuelven null o una violación con `code` y `message`.
+incluidos sus opcionales, y el contexto de aplicación. Devuelven null o una
+violación con `code` y `message`.
 No reciben JSON, celdas de PostgreSQL ni una conexión de base de datos.
+
+## Fecha de referencia y regla de edad
+
+`Api.ValidationContext` expone el tipo compartido. La firma de entrada es
+`api.handle(allocator, repository, request, context)`. Para pruebas se pasa un
+valor fijo; una API sin validadores usa `void` y recibe `{}` como último argumento.
+Los validadores que no requieren contexto también se declaran con `void`.
+
+En AIDA, [validation_context.zig](../examples/aida/src/validation_context.zig)
+convierte el reloj real a una fecha civil con **UTC−03:00 fijo**. Es una política
+de la aplicación, independiente de la zona horaria del sistema operativo.
+`ContextProvider.get()` se llama una vez por solicitud dentro de `std_http.serve`:
+no se guarda una fecha al arrancar ni se vuelve a consultar el reloj por cada fila.
+La firma del transporte es `serve(io, allocator, api, repository, provider, config)`.
+El proveedor es una dependencia de la aplicación y no toma la fecha del cliente.
+Si falla, se devuelve 500 sanitizado sin invocar la API; el servidor continúa.
+Para contexto `void`, el transporte ofrece `EmptyContextProvider`.
+
+```zig
+var provider = aida_rest.ContextProvider{ .io = init.io };
+try std_http.serve(init.io, init.gpa, &api, &repository, &provider, .{});
+
+// En un test o llamador sin HTTP:
+const context: Api.ValidationContext = .{
+    .today = .{ .@"año" = 2026, .mes = 10, .@"día" = 28 },
+};
+const response = try api.handle(allocator, &repository, request, context);
+defer allocator.free(response.body);
+```
+
+`validarDocente(Docente, Fecha)` conserva la normalización de `cargo` (espacios y
+mayúsculas). Para `teorico`, primero exige cinco años de experiencia y luego fecha
+de nacimiento y treinta años cumplidos. Otros cargos pueden omitir el nacimiento.
+`Fecha.ageOn(today)` valida ambas fechas, rechaza nacimientos futuros y calcula
+años cumplidos, sin dividir segundos por 365. El cumpleaños del 29 de febrero se
+considera el 1 de marzo en años no bisiestos.
+
+| Error de negocio | Código REST (422) |
+| --- | --- |
+| Experiencia ausente o menor que cinco | `teorico_requires_five_years_experience` |
+| Nacimiento ausente | `teorico_requires_birth_date` |
+| Edad menor que treinta | `teorico_requires_thirty_years` |
+| Nacimiento futuro | `birth_date_in_future` |
+
+Una fecha civil inválida enviada por HTTP sigue produciendo 400 desde el codec,
+antes de llegar al validador. Los datos inválidos almacenados siguen produciendo
+500 al decodificarse. El adaptador también devuelve `invalid_birth_date` si se lo
+invoca directamente con una fecha inválida, fuera de esos puntos de conversión.
 
 ## Conversión y ejecución
 
@@ -57,7 +105,8 @@ Una violación devuelve HTTP 422 y evita la escritura. Un resultado de repositor
 malformado o una conversión incompatible produce un HTTP 500 sanitizado.
 `OutOfMemory` de la conversión se propaga. La arena de solicitud conserva las
 reservas temporales y los resultados del repositorio se liberan también en errores.
-La fila se presta durante la llamada: la función no debe retener sus referencias.
+La fila y el contexto se prestan durante la llamada: la función no debe retener
+sus referencias.
 Los mensajes pueden ser literales estáticos; el callback no recibe un allocator.
 
 La secuencia SELECT → validación → UPDATE conserva su comportamiento actual y no

@@ -27,7 +27,9 @@ pub fn main(init: std.process.Init) !void {
         8080;
 
     std.debug.print("Testing backend (in memory) listening on http://{s}:{d}/api\n", .{ address, port });
-    try std_http.serve(init.io, init.gpa, &api, &repository, .{
+    const Provider = if (app_rest.Api.ValidationContext == void) std_http.EmptyContextProvider else app_rest.ContextProvider;
+    var context_provider: Provider = if (app_rest.Api.ValidationContext == void) .{} else .{ .io = init.io };
+    try std_http.serve(init.io, init.gpa, &api, &repository, &context_provider, .{
         .address = address,
         .port = port,
     });

@@ -12,11 +12,12 @@ pub const BusinessRuleViolation = struct {
     message: []const u8,
 };
 
-/// La regla recibe exactamente la entidad registrada, con valores de dominio.
-/// Es síncrona: no puede retener referencias a la fila después de la llamada.
-pub fn BusinessValidator(comptime T: type) type {
+/// La regla recibe la entidad registrada y un contexto de aplicación explícito.
+/// Es síncrona: no puede retener referencias a esos valores después de la llamada.
+pub fn BusinessValidator(comptime T: type, comptime C: type) type {
     return struct {
-        validate: *const fn (T) ?BusinessRuleViolation,
+        pub const Context = C;
+        validate: *const fn (T, C) ?BusinessRuleViolation,
     };
 }
 
@@ -33,10 +34,24 @@ pub fn defineBusinessValidators(
     inline for (@typeInfo(@TypeOf(validators)).@"struct".field_names) |entity_name| {
         if (!@hasField(@TypeOf(model_info), entity_name))
             @compileError("REST business validator '" ++ entity_name ++ "': unknown entity");
-        if (@TypeOf(@field(validators, entity_name)) != BusinessValidator(Model.Row(entity_name)))
-            @compileError("REST business validator '" ++ entity_name ++ "': must be a zigma_rest.BusinessValidator(Model.Row(\"" ++ entity_name ++ "\"))");
+        const Validator = @TypeOf(@field(validators, entity_name));
+        const diagnostic = "REST business validator '" ++ entity_name ++ "': must be a zigma_rest.BusinessValidator(Model.Row(\"" ++ entity_name ++ "\"), Context)";
+        if (@typeInfo(Validator) != .@"struct") @compileError(diagnostic);
+        if (!@hasDecl(Validator, "Context")) @compileError(diagnostic);
+        if (@TypeOf(Validator.Context) != type) @compileError(diagnostic);
+        if (Validator != BusinessValidator(Model.Row(entity_name), Validator.Context)) @compileError(diagnostic);
+        if (Validator.Context != ContextOf(validators))
+            @compileError("REST business validator '" ++ entity_name ++ "': validation context must match other validators");
     }
     return validators;
+}
+
+/// El registro ya comprobado comparte un único contexto de aplicación.
+/// Sin validadores, no necesita datos adicionales de runtime.
+pub fn ContextOf(comptime validators: anytype) type {
+    const names = @typeInfo(@TypeOf(validators)).@"struct".field_names;
+    if (names.len == 0) return void;
+    return @TypeOf(@field(validators, names[0])).Context;
 }
 
 /// Materializa la fila usando los codecs actuales y un árbol JSON en memoria.
@@ -102,7 +117,8 @@ pub fn validateUpdatedRows(
     allocator: std.mem.Allocator,
     current: anytype,
     updates: []const FieldValue,
-    validator: BusinessValidator(Model.Row(entity_name)),
+    validator: anytype,
+    context: @TypeOf(validator).Context,
 ) DecodeError!?BusinessRuleViolation {
     const entity = @field(Model.info, entity_name);
     if (!resultHasEntityShape(entity, current)) return error.InvalidRepositoryResult;
@@ -116,7 +132,7 @@ pub fn validateUpdatedRows(
             };
         }
         const value = try decodeRow(Model, entity_name, codecs, allocator, &merged);
-        if (validator.validate(value)) |violation| return violation;
+        if (validator.validate(value, context)) |violation| return violation;
     }
     return null;
 }

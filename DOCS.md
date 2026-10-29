@@ -363,13 +363,16 @@ de ese motor. Los nombres públicos de módulos (`zigma`, `zigma_rest`,
 * `src/rest/request.zig`: parsing de query/JSON y construcción de filtros y valores
   de INSERT/UPDATE según los campos y la nulabilidad del modelo.
 * `src/rest/response.zig`: serialización de filas y traducción de errores a estados y JSON HTTP.
-* `src/rest/validation.zig`: registro de validadores y validación de filas combinadas
-  con el patch de PUT; no consulta repositorios ni construye respuestas HTTP.
+* `src/rest/validation.zig`: registro de validadores tipados y conversión de filas
+  textuales a entidades concretas, incluida la combinación con el patch de PUT;
+  no consulta repositorios ni construye respuestas HTTP.
 * `src/postgres/crud.zig`: CRUD PostgreSQL parametrizado derivado de las entidades.
 * `src/rest/std_http.zig`: adaptador HTTP bloqueante y secuencial sobre `std.http`.
 * `examples/aida/src/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
 * `examples/aida/src/postgres.zig`: mappings y modelo PostgreSQL compilado de AIDA.
 * `examples/aida/src/rest.zig`: codecs de `fecha`/`email` y API REST compilada de AIDA.
+* `examples/aida/src/validation_context.zig`: reloj de aplicación y fecha por solicitud
+  con UTC−03:00 fijo; el dominio recibe esa fecha explícitamente.
 * `examples/aida/src/server.zig`: composición Liquibase → libpq → REST → `std.http`.
 * `db/`: snapshot aceptado, changelog raíz, changesets inmutables y drafts.
 * `migration_tools/`: comandos de desarrollo para crear, aceptar y aplicar migraciones,
@@ -626,15 +629,17 @@ y coordina GET, POST, PUT y DELETE. Los detalles de entrada viven en `request.zi
 los de salida en `response.zig` y las reglas en `validation.zig`. Ninguno de estos
 archivos importa el controlador; comparten las declaraciones de `types.zig`.
 `codecs.zig` conserva las conversiones entre HTTP/JSON y texto del repositorio.
-Esta distribución mantiene la representación textual y los bindings de validadores
-actuales; los codecs y repositorios tipados siguen siendo una etapa posterior.
+El repositorio conserva el intercambio de texto/null. `validation.zig` convierte esas
+filas a entidades concretas antes de invocar los validadores de negocio. Las familias
+de codecs tipados y el repositorio que intercambia filas tipadas siguen pendientes.
 
 `zigma_rest.Api(Model, codecs, validators)` es la única fábrica del controlador REST:
 produce en compilación la tabla de rutas y el dispatch para todas las entidades.
 El tercer argumento es el registro de validadores por entidad; se pasa `.{}` cuando
 no hay reglas de negocio. Los codecs se mantienen separados tanto de `TypeDef` como de los
-mappings SQL. El framework incluye `text`, `integer` y `boolean`; AIDA agrega `fecha` ISO
-`YYYY-MM-DD` y usa el codec de texto para `email`:
+mappings SQL. El framework incluye `text`, `integer` y `boolean`; AIDA agrega `fecha`
+como objeto JSON y lo convierte a texto ISO `YYYY-MM-DD` para el repositorio. Para
+`email` usa el codec de texto:
 
 ```zig
 const codecs = rest.defineCodecs(aida.type_defs, zigma.merge(.{
@@ -658,17 +663,27 @@ en memoria y valida cada estado resultante antes del `UPDATE`:
 
 ```zig
 const validators = rest.defineBusinessValidators(aida.Model, .{
-    .docentes = rest.BusinessValidator(aida.Docente){ .validate = validateDocenteBusinessRules },
+    .docentes = rest.BusinessValidator(aida.Docente, aida_rest.ValidationContext){
+        .validate = aida_rest.business_validators.docentes.validate,
+    },
 });
 
 const Api = rest.Api(aida.Model, codecs, validators);
 ```
 
-La firma del callback es `fn (aida.Docente) ?rest.BusinessRuleViolation`: devuelve
-null o una violación. El registro exige exactamente `BusinessValidator(Model.Row(entity))`;
+La firma del callback es `fn (aida.Docente, aida_rest.ValidationContext) ?rest.BusinessRuleViolation`:
+devuelve null o una violación. El registro exige exactamente
+`BusinessValidator(Model.Row(entity), Context)` y un mismo tipo de contexto por API;
 un struct manual de igual forma, otra entidad o una firma incompatible no compilan.
-En AIDA el adaptador llama a `validarDocente(value: Docente)` y traduce su error de
+En AIDA el adaptador llama a `validarDocente(value: Docente, today: Fecha)` y traduce su error de
 dominio al código y mensaje públicos, sin buscar columnas ni parsear enteros.
+
+`api.handle(allocator, repository, request, context)` recibe el contexto explícito.
+El transporte obtiene ese valor una sola vez por solicitud usando un proveedor de
+la aplicación. AIDA usa el día civil en UTC−03:00 fijo para todos los docentes del
+mismo PUT; el siguiente request vuelve a consultar el reloj. Con un registro vacío,
+`Api.ValidationContext` es `void` y se pasa `{}`. El proveedor y los códigos 422 de
+la regla de treinta años se explican en [validators.md](docs/validators.md).
 
 REST convierte la fila textual completa con `postgresToJson`, construye un árbol
 `std.json.Value` y obtiene el tipo registrado con `std.json.parseFromValueLeaky`.
@@ -697,6 +712,64 @@ Los identificadores SQL provienen exclusivamente de las definiciones y se escapa
 valores viajan mediante `$1`, `$2`, etc.; incluso un valor con forma de inyección nunca se
 concatena al SQL. Violaciones PostgreSQL de clase SQLSTATE `23` se devuelven como `409`, una
 conexión no disponible como `503`, y los diagnósticos internos no aparecen en HTTP.
+
+### Validación civil de Fecha
+
+El dominio [Fecha](examples/aida/src/aida.zig) conserva los campos `año: u16`,
+`mes: u8` y `día: u8`. Sus operaciones son puras, utilizables en runtime y comptime,
+y no dependen de HTTP, PostgreSQL ni allocators:
+
+| Operación | Firma | Comportamiento |
+| --- | --- | --- |
+| Validar | `validate(self: Fecha) error{InvalidDate}!void` | Comprueba año, mes y cantidad de días del mes. |
+| Leer ISO | `fromIso(bytes: []const u8) error{InvalidDate}!Fecha` | Exige diez bytes `YYYY-MM-DD`, con dígitos ASCII y una fecha válida. |
+| Escribir ISO | `toIso(self: Fecha) error{InvalidDate}![10]u8` | Valida y devuelve diez bytes propios, con ceros iniciales. |
+| Edad civil | `ageOn(self: Fecha, today: Fecha) error{InvalidDate, FutureDate}!u16` | Valida ambas fechas y devuelve años cumplidos; rechaza nacimientos futuros. |
+
+La edad se calcula por cumpleaños, sin aproximarla por segundos. Para nacidos el
+29 de febrero, el cumpleaños cae el 1 de marzo en años no bisiestos. El método no
+consulta el reloj: el llamador proporciona el día de referencia.
+
+El rango es inclusivo: `0001-01-01` a `9999-12-31`. Se aplica el calendario gregoriano
+en todo el rango: un año es bisiesto si es divisible por 4, excepto los divisibles
+por 100 que no sean divisibles por 400. Por eso 1900 y 2100 no admiten el 29 de febrero,
+pero 2000 y 2024 sí. El parsing ISO rechaza signos, espacios, componentes incompletos
+y timestamps.
+
+```zig
+const fecha = try aida.Fecha.fromIso("2024-02-29");
+const iso: [10]u8 = try fecha.toIso();
+// Un literal no se valida automáticamente al construirse.
+const impossible: aida.Fecha = .{ .@"año" = 2025, .mes = 2, .@"día" = 30 };
+try impossible.validate(); // error.InvalidDate
+```
+
+[fecha_wire.zig](examples/aida/src/fecha_wire.zig) adapta esas operaciones al codec
+REST. POST y PUT siguen recibiendo un objeto `{"año":2024,"mes":2,"día":29}`;
+un string ISO en el cuerpo no reemplaza al objeto. Los filtros admiten ISO o un
+objeto JSON, codificado para su uso en la URL. El codec copia el ISO al allocator
+de la solicitud y convierte los resultados textuales a un objeto `std.json.Value`
+en orden `año`, `mes`, `día`, sin generar y volver a parsear un documento JSON.
+Los campos nullable mantienen `null`; REST lo maneja sin invocar el codec.
+
+Una fecha inválida en POST, PUT o filtros produce `400 invalid_request` antes de
+consultar o modificar el repositorio. Esto se aplica a cualquier campo que utilice
+el codec `fecha`, tanto en el backend en memoria como en PostgreSQL; no requiere
+un validador de negocio por entidad. Una fecha almacenada inválida o fuera de rango
+produce un 500 sanitizado: `invalid_repository_result` durante la respuesta o
+`business_validation_error` al preparar una validación de negocio. Las reglas de
+negocio conservan su respuesta 422.
+
+`InvalidDate` se traduce a `CodecError.InvalidValue`; `OutOfMemory` se propaga hasta
+`Api.handle`, incluido el parsing y la serialización, sin convertirse en una respuesta
+400 ni en datos almacenados inválidos. Los temporales se liberan con la arena de la
+solicitud y el llamador conserva la responsabilidad de liberar `Response.body`.
+
+Agregar métodos al struct no valida literales Zig ni deserializaciones arbitrarias:
+otros adaptadores deben llamar estas operaciones explícitamente. WASM todavía solo
+construye la forma del objeto; no invoca la validación civil local. La UI conserva su
+widget de fecha y el backend valida las solicitudes recibidas. La columna PostgreSQL
+sigue siendo `DATE`, sin cambios de schema ni migraciones.
 
 ### Servidor AIDA completo
 

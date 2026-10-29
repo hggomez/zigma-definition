@@ -10,6 +10,11 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlencode
+
+# El auxiliar compartido no debe dejar bytecode dentro del árbol de trabajo.
+sys.dont_write_bytecode = True
+from docente_age_http import check_docente_age
 
 
 def main():
@@ -61,6 +66,7 @@ def main():
         process = None
         try:
             process = start()
+            check_docente_age(request)
             request("OPTIONS", "/api/materias", expected=204)
             docentes = request("GET", "/api/docentes?docente=1")
             assert len(docentes) == 1 and docentes[0]["telefono"] is None
@@ -78,6 +84,29 @@ def main():
             clase_path = "/api/clases?orden=1&materia=AlgoI&periodo=1C2024"
             original_clase = request("GET", clase_path)[0]
             assert request("PUT", clase_path, {"fecha": None}) == [{**original_clase, "fecha": None}]
+            assert request("PUT", clase_path, {"fecha": original_clase["fecha"]}) == [original_clase]
+            invalid_request = {"error": {"code": "invalid_request", "message": "Request fields or values are invalid"}}
+            invalid_date = {"año": 2025, "mes": 2, "día": 30}
+            invalid_clase = {**original_clase, "orden": 99, "fecha": invalid_date}
+            assert request("POST", "/api/clases", invalid_clase, expected=400) == invalid_request
+            assert request("GET", "/api/clases?orden=99&materia=AlgoI&periodo=1C2024") == []
+            for invalid in (invalid_date, {"año": 0, "mes": 1, "día": 1}, {"año": 10000, "mes": 1, "día": 1}, "2024-02-29"):
+                assert request("PUT", clase_path, {"fecha": invalid}, expected=400) == invalid_request
+                assert request("GET", clase_path) == [original_clase]
+            for invalid_filter in ("2025-02-30", json.dumps(invalid_date)):
+                invalid_path = "/api/clases?" + urlencode({"fecha": invalid_filter})
+                for method in ("GET", "PUT", "DELETE"):
+                    body = {"tema": "No debe escribirse"} if method == "PUT" else None
+                    assert request(method, invalid_path, body, expected=400) == invalid_request
+                assert request("GET", clase_path) == [original_clase]
+            for valid_date, iso in (({"año": 1, "mes": 1, "día": 1}, "0001-01-01"),
+                                    ({"año": 2000, "mes": 2, "día": 29}, "2000-02-29"),
+                                    ({"año": 9999, "mes": 12, "día": 31}, "9999-12-31")):
+                expected_clase = {**original_clase, "fecha": valid_date}
+                assert request("PUT", clase_path, {"fecha": valid_date}) == [expected_clase]
+                for date_filter in (iso, json.dumps(valid_date)):
+                    matching = request("GET", "/api/clases?" + urlencode({"fecha": date_filter}))
+                    assert expected_clase in matching
             assert request("PUT", clase_path, {"fecha": original_clase["fecha"]}) == [original_clase]
             row = {"materia": "testing-backend-check", "denominacion": 'Prueba "HTTP"\\ruta\nñ'}
             assert request("POST", "/api/materias", row, expected=201) == row

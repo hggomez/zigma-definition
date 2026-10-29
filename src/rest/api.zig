@@ -68,6 +68,7 @@ pub fn Api(
         // Dentro del struct anónimo devuelto no hay un nombre de tipo en el código;
         // `@This()` lo provee para los receptores de métodos y los tipos de retorno.
         const Self = @This();
+        pub const ValidationContext = validation.ContextOf(checked_validators);
 
         // Los metadatos de rutas son una constante comptime y se pueden inspeccionar
         // sin construir `Self`. Contienen una ruta `/api/<entity>` por entidad
@@ -100,6 +101,8 @@ pub fn Api(
             repository: anytype,
             // El método, destino, headers y cuerpo ya son independientes del transporte.
             request: Request,
+            // El servidor lo obtiene una vez; todas las filas usan el mismo valor.
+            context: ValidationContext,
         ) !Response {
             // El parseo crea muchos strings, arrays y nodos JSON de corta duración.
             // Una arena por solicitud permite liberarlos en una sola acción determinista.
@@ -147,7 +150,7 @@ pub fn Api(
                 // arbitrario de la URL nunca puede convertirse después en identificador
                 // PostgreSQL.
                 if (std.mem.eql(u8, entity_path, entity_name))
-                    return handleEntity(self, allocator, scratch_allocator, repository, request, query, entity_name);
+                    return handleEntity(self, allocator, scratch_allocator, repository, request, query, entity_name, context);
             }
 
             // La ruta tenía la forma correcta, pero no nombraba ninguna entidad de la SSOT.
@@ -170,6 +173,7 @@ pub fn Api(
             // Este parámetro es clave: permite que `@field` e `inline for` usen el
             // schema exacto de la entidad al compilar cada rama generada.
             comptime entity_name: []const u8,
+            context: ValidationContext,
         ) !Response {
             // `handle` necesitaba `self` para acceder a la configuración; este helper no
             // necesita estado de instancia por ahora. Descartarlo explícitamente satisface
@@ -226,7 +230,7 @@ pub fn Api(
                         const validator = @field(checked_validators, entity_name);
                         const row = validation.decodeRow(Model, entity_name, codecs, scratch_allocator, values) catch |err|
                             return responses.businessValidationErrorResponse(response_allocator, err);
-                        if (validator.validate(row)) |details|
+                        if (validator.validate(row, context)) |details|
                             return responses.businessViolationResponse(response_allocator, details);
                     }
 
@@ -264,7 +268,7 @@ pub fn Api(
                         defer current.deinit();
 
                         const validator = @field(checked_validators, entity_name);
-                        const violation = validation.validateUpdatedRows(Model, entity_name, codecs, scratch_allocator, current, values, validator) catch |err|
+                        const violation = validation.validateUpdatedRows(Model, entity_name, codecs, scratch_allocator, current, values, validator, context) catch |err|
                             return responses.businessValidationErrorResponse(response_allocator, err);
                         if (violation) |details|
                             return responses.businessViolationResponse(response_allocator, details);

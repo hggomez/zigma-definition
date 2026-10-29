@@ -4,7 +4,7 @@ Framework en Zig que deriva tipos, CRUD REST y estructura PostgreSQL desde un co
 compartido. Incluye AIDA como aplicación de ejemplo.
 
 Esta es la guía de uso. La explicación del contrato, los módulos y las APIs está en
-[DOCS.md](DOCS.md). El proyecto es un port de
+[DOCS.md](DOCS.md). El proyecto se inspira en parte de
 [system-definition](https://github.com/ari-dc-uba-ar/system-definition).
 
 En el contrato AIDA, `Docente`, `Curso` y las demás entidades son tipos Zig generados
@@ -12,7 +12,10 @@ desde sus definiciones: pueden usarse directamente en funciones y colecciones.
 `Model.Row("docentes")` devuelve ese mismo `Docente`. La composición de record,
 definición, tipo y registro se explica en [DOCS.md](DOCS.md#entidades-definición-tipo-concreto-y-registro).
 REST utiliza esos tipos en los [validadores de negocio](docs/validators.md):
-`validarDocente(Docente)` recibe la fila completa antes de insertar o actualizar.
+`validarDocente(Docente, Fecha)` recibe la fila completa y el día de referencia antes
+de insertar o actualizar. Para cargo `teorico`, exige cinco años de experiencia,
+fecha de nacimiento y al menos treinta años cumplidos. Ambos backends toman el día
+una vez por solicitud con UTC−03:00 fijo; los rechazos de negocio devuelven HTTP 422.
 
 ## Requisitos
 
@@ -192,28 +195,16 @@ Para aplicar las migraciones aceptadas y terminar sin iniciar HTTP, usá
 `zig build apply-migrations` con las mismas variables `LIQUIBASE_*`. Este comando no
 requiere libpq; no crea ni acepta borradores.
 
-## Pendiente de revisión: `fecha`
+## Fechas
 
-El dominio AIDA define `Fecha` como struct Zig `{ año, mes, día }`
-([examples/aida/src/aida.zig](examples/aida/src/aida.zig)). Eso es la forma canónica del
-tipo; no es un string ISO.
+`Fecha` valida el calendario gregoriano para años de 1 a 9999. El JSON conserva el
+objeto `{"año":2024,"mes":2,"día":29}` y PostgreSQL la columna `DATE`. Los filtros
+admiten `YYYY-MM-DD` o un objeto JSON codificado en la query.
 
-Hoy el cableado HTTP/JSON ↔ PostgreSQL queda así (revisar si conviene unificarlo):
-
-| Capa | Forma |
-| --- | --- |
-| Dominio / WASM / JSON de fila | objeto `{"año","mes","día"}` |
-| Codec de wire | [examples/aida/src/fecha_wire.zig](examples/aida/src/fecha_wire.zig): objeto ↔ texto `YYYY-MM-DD` **sin** validar el calendario civil |
-| PostgreSQL | columna `DATE` (texto ISO hacia libpq) |
-| UI | [examples/aida/src/widgets.js](examples/aida/src/widgets.js) convierte el objeto a `<input type="date">` y viceversa |
-
-El controlador REST ([examples/aida/src/rest.zig](examples/aida/src/rest.zig)) solo registra el
-codec; no implementa reglas de `Fecha`. Una fecha civil inválida puede pasar el codec y
-fallar recién en PostgreSQL.
-
-**Preguntas abiertas:** ¿el JSON público debería ser siempre el objeto de dominio, o ISO?
-¿la validación civil pertenece al dominio, al codec, a la base, o a ninguna de esas capas?
-¿hace falta un codec genérico para structs de dominio en lugar de uno ad hoc por tipo?
+REST reutiliza esa validación y devuelve 400 ante fechas inválidas antes de acceder
+al repositorio, tanto en memoria como en PostgreSQL. Los campos nullable conservan
+`null`. WASM todavía no invoca la validación civil localmente; los literales Zig
+también requieren una llamada explícita. Véase [la API de Fecha](DOCS.md#validación-civil-de-fecha).
 
 ## Tests
 

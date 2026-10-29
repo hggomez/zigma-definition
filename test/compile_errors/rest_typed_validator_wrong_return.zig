@@ -1,6 +1,6 @@
 const fixture = @import("fixtures/typed_validator.zig");
 
-fn validate(_: fixture.Thing) bool {
+fn validate(_: fixture.Thing, _: void) bool {
     return true;
 }
 

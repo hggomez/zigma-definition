@@ -66,11 +66,12 @@ function element(tagName) {
     };
 }
 
-function ui(entity, widgets = {}) {
+function ui(entity, widgets = {}, overrides = {}) {
     const context = vm.createContext({
         TextEncoder, TextDecoder, console, URLSearchParams,
         document: { getElementById: () => ({ addEventListener() {} }), createElement: element },
         fixtureEntity: entity, fixtureWidgets: widgets,
+        ...overrides,
     });
     // Deja pendiente el arranque remoto; las pruebas llaman a los controles reales.
     new vm.Script(mainSource, {
@@ -83,6 +84,39 @@ function ui(entity, widgets = {}) {
 
 const rootFor = (control) => ({ querySelector: () => control });
 const plain = (value) => JSON.parse(JSON.stringify(value));
+
+// Ejecuta sendJson y la presentación real del estado, simulando solo HTTP y DOM.
+function requestUi(status, result, { invalidJson = false } = {}) {
+    const state = { requests: [], refreshes: 0, resets: 0 };
+    const classes = new Set();
+    const statusNode = {
+        textContent: "Error anterior",
+        classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) },
+        set innerHTML(_) { throw new Error("El error debe mostrarse como texto"); },
+    };
+    const newRow = { children: [{ replaceChildren() { state.resets++; } }] };
+    const view = ui({ name: "docentes", fields: [{ name: "nombres", storage: "text", nullable: false }], pk: [], fks: {} }, {}, {
+        console: { log() {}, error() {} },
+        document: {
+            getElementById: (id) => id === "status" ? statusNode : id === "new-row" ? newRow : element("div"),
+            createElement: element,
+            querySelectorAll: () => [],
+        },
+        fetch: async (url, init) => {
+            state.requests.push({ url, ...init });
+            return {
+                ok: status >= 200 && status < 300,
+                status,
+                async json() {
+                    if (invalidJson) throw new SyntaxError("JSON inválido");
+                    return result;
+                },
+            };
+        },
+    });
+    view.loadRows = () => { state.refreshes++; };
+    return { view, statusNode, state };
+}
 
 test("el catálogo AIDA expone nulabilidad efectiva y mantiene orden y relaciones", async () => {
     const app = await frontend();
@@ -241,7 +275,9 @@ test("booleano obligatorio conserva el checkbox", () => {
 test("editar texto conserva el booleano null de una fila cargada", async () => {
     const app = await frontend();
     const entity = app.catalogue().find((item) => item.name === "docentes");
-    const view = ui(entity);
+    // Este fixture prueba celdas vacías: el control de fecha se mantiene sin valor
+    // y su lectura utiliza el widget AIDA, como la página del consumidor.
+    const view = ui(entity, { fecha: { make: () => element("input"), read: aidaWidgets.fecha.read } });
     const loaded = { docente: "D", nombres: "Antes", esImportador: null };
     const controls = entity.fields.map((field) => view.makeInput(field, loaded[field.name] ?? null, entity.pk.includes(field.name)));
     controls[entity.fields.findIndex((field) => field.name === "nombres")].value = "Después";
@@ -250,6 +286,7 @@ test("editar texto conserva el booleano null de una fila cargada", async () => {
     const body = JSON.parse(view.restBodyFromRowJson(entity, JSON.stringify(app.row()), { omitPk: true }));
     assert.equal(body.nombres, "Después");
     assert.equal(body.esImportador, null);
+    assert.equal(body.fecha_nacimiento, null);
     assert.equal(Object.hasOwn(body, "docente"), false);
 });
 
@@ -280,4 +317,61 @@ test("POST conserva la fila y PUT solo excluye las PK, incluso compuestas", () =
     assert.deepEqual(plain(JSON.parse(view.restBodyFromRowJson(entity, JSON.stringify(row), { omitPk: true }))), {
         docente: null, texto: 'Nombre "visible"',
     });
+});
+
+for (const method of ["POST", "PUT"]) {
+    test(`${method} muestra mensaje y código de negocio del 422 sin borrar los datos`, async () => {
+        const code = "teorico_requires_thirty_years";
+        const message = "A docente with cargo 'teorico' must be at least 30 years old";
+        const { view, statusNode, state } = requestUi(422, { error: { code, message } });
+        const body = '{"nombres":"Ada"}';
+        await view.sendJson("/api/docentes?docente=d1", method, body);
+        assert.equal(statusNode.textContent, `${message} (${code})`);
+        assert.equal(state.requests.length, 1);
+        assert.equal(state.requests[0].method, method);
+        assert.equal(state.requests[0].body, body);
+        assert.equal(state.refreshes, 0);
+        assert.equal(state.resets, 0);
+    });
+}
+
+test("un 422 sin detalles válidos conserva el mensaje genérico", async () => {
+    const malformed = [
+        null, {}, { error: null }, { error: "invalid" },
+        { error: { code: "rule" } }, { error: { message: "Rechazado" } },
+        { error: { code: 42, message: "Rechazado" } },
+        { error: { code: "rule", message: {} } },
+        { error: { code: "", message: "Rechazado" } },
+        { error: { code: "rule", message: "   " } },
+    ];
+    for (const result of malformed) {
+        const { view, statusNode, state } = requestUi(422, result);
+        await view.sendJson("/api/docentes", "PUT", "{}");
+        assert.equal(statusNode.textContent, "Could not PUT docentes (422)");
+        assert.equal(state.refreshes, 0);
+        assert.equal(state.resets, 0);
+    }
+    const { view, statusNode } = requestUi(422, null, { invalidJson: true });
+    await view.sendJson("/api/docentes", "POST", "{}");
+    assert.equal(statusNode.textContent, "Could not POST docentes (422)");
+});
+
+test("los errores HTTP ajenos a negocio conservan su mensaje genérico", async () => {
+    for (const status of [400, 409, 500, 503]) {
+        const { view, statusNode, state } = requestUi(status, { error: { code: "other_error", message: "Otro error" } });
+        await view.sendJson("/api/docentes", "PUT", "{}");
+        assert.equal(statusNode.textContent, `Could not PUT docentes (${status})`);
+        assert.equal(state.refreshes, 0);
+        assert.equal(state.resets, 0);
+    }
+});
+
+test("POST y PUT exitosos siguen limpiando el estado y refrescando la tabla", async () => {
+    for (const method of ["POST", "PUT"]) {
+        const { view, statusNode, state } = requestUi(method === "POST" ? 201 : 200, {});
+        await view.sendJson("/api/docentes", method, '{"nombres":"Ada"}');
+        assert.equal(statusNode.textContent, "");
+        assert.equal(state.refreshes, 1);
+        assert.equal(state.resets, method === "POST" ? 1 : 0);
+    }
 });

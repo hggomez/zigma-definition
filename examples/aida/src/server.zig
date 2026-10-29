@@ -58,7 +58,8 @@ pub fn main(init: std.process.Init) !void {
     var api = aida_rest.Api.init(.{});
     var repository = crud.Repository(aida.Model).init(&connection);
     std.debug.print("AIDA REST listening on http://{s}:{d}\n", .{ address, port });
-    try std_http.serve(init.io, init.gpa, &api, &repository, .{
+    var context_provider = aida_rest.ContextProvider{ .io = init.io };
+    try std_http.serve(init.io, init.gpa, &api, &repository, &context_provider, .{
         .address = address,
         .port = port,
     });

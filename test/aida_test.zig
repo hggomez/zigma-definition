@@ -89,8 +89,8 @@ fn expectDocenteValidation(valid: bool, actual: aida.DocenteValidationError!void
     }
 }
 
-test "row docente validation receives all fields but only uses cargo and experiencia" {
-    const validate: *const fn (aida.Docente) aida.DocenteValidationError!void = aida.validarDocente;
+test "row docente validation receives all fields but preserves experience cases with a valid birth date" {
+    const validate: *const fn (aida.Docente, aida.Fecha) aida.DocenteValidationError!void = aida.validarDocente;
     for (docente_validation_cases) |case| {
         // Docente exige la fila completa, incluso los campos ajenos a la regla.
         var row: aida.Docente = .{
@@ -104,13 +104,14 @@ test "row docente validation receives all fields but only uses cargo and experie
             .telefono = null,
             .experiencia = case.experiencia,
             .esImportador = null,
+            .fecha_nacimiento = .{ .@"año" = 1980, .mes = 1, .@"día" = 1 },
         };
-        try expectDocenteValidation(case.valid, validate(row));
+        try expectDocenteValidation(case.valid, validate(row, .{ .@"año" = 2026, .mes = 10, .@"día" = 28 }));
 
         row.nombres = "Grace";
         row.telefono = "555-0100";
         row.esImportador = true;
-        try expectDocenteValidation(case.valid, validate(row));
+        try expectDocenteValidation(case.valid, validate(row, .{ .@"año" = 2026, .mes = 10, .@"día" = 28 }));
     }
 }
 

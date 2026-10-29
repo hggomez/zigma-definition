@@ -14,7 +14,8 @@ fn jsonResponse(allocator: std.mem.Allocator, status: u16, value: anytype) !Resp
     var output: std.Io.Writer.Allocating = .init(allocator);
     errdefer output.deinit();
     var stringify: std.json.Stringify = .{ .writer = &output.writer };
-    try stringify.write(value);
+    // Este writer solo falla al reservar memoria: no hay transporte ni archivo.
+    stringify.write(value) catch return error.OutOfMemory;
     return .{ .status = status, .body = try output.toOwnedSlice() };
 }
 
@@ -66,8 +67,10 @@ fn renderResult(
                 // El texto no-null pasa por el codec del campo; SQL NULL se
                 // representa directamente como JSON null sin pasar por el codec.
                 const domain_type = @field(entity.fields, field_name).type;
-                const json_value = @field(codecs, domain_type).postgresToJson(scratch_allocator, database_value) catch
-                    return error.InvalidRepositoryResult;
+                const json_value = @field(codecs, domain_type).postgresToJson(scratch_allocator, database_value) catch |err| return switch (err) {
+                    error.OutOfMemory => error.OutOfMemory,
+                    error.InvalidValue => error.InvalidRepositoryResult,
+                };
                 try stringify.write(json_value);
             } else {
                 try stringify.write(null);
@@ -83,6 +86,7 @@ pub fn requestValidationResponse(allocator: std.mem.Allocator, err: anyerror) !R
     // Varios errores internos de validación se reducen a un único contrato 400 seguro;
     // solo el tamaño del cuerpo y el tipo de contenido reciben estados distintos.
     return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
         error.BodyTooLarge => errorResponse(allocator, 413, "body_too_large", "Request body exceeds the configured limit"),
         error.UnsupportedMediaType => errorResponse(allocator, 415, "unsupported_media_type", "Expected application/json"),
         else => errorResponse(allocator, 400, "invalid_request", "Request fields or values are invalid"),
@@ -118,7 +122,9 @@ pub fn fromResult(
     single: bool,
 ) !Response {
     return renderResult(response_allocator, scratch_allocator, entity, codecs, result, status, single) catch |err| switch (err) {
-        error.OutOfMemory => error.OutOfMemory,
+        // renderResult escribe únicamente en un writer con allocator; su
+        // WriteFailed significa falta de memoria, no datos almacenados inválidos.
+        error.OutOfMemory, error.WriteFailed => error.OutOfMemory,
         else => errorResponse(response_allocator, 500, "invalid_repository_result", "Repository returned an invalid row shape"),
     };
 }

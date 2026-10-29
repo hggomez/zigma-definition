@@ -107,7 +107,7 @@ test "REST POST uses Model nullability before any SQL mutation" {
                 .target = "/api/things",
                 .content_type = "application/json",
                 .body = case.body,
-            });
+            }, {});
             defer std.testing.allocator.free(response.body);
             try std.testing.expect(response.status == if (case.valid) @as(u16, 201) else @as(u16, 400));
             try std.testing.expect(connection.calls == if (case.valid) @as(usize, 1) else @as(usize, 0));
@@ -131,7 +131,7 @@ test "REST PUT uses Model nullability while preserving parameter order" {
             .target = "/api/things?id=7",
             .content_type = "application/json",
             .body = "{\"note\":null}",
-        });
+        }, {});
         defer std.testing.allocator.free(response.body);
         try std.testing.expect(response.status == if (nullable) @as(u16, 200) else @as(u16, 400));
         try std.testing.expect(connection.calls == if (nullable) @as(usize, 1) else @as(usize, 0));
@@ -152,7 +152,7 @@ test "REST and CRUD keep text null distinct from SQL NULL filters" {
     const response = try api.handle(std.testing.allocator, &repository, .{
         .method = .GET,
         .target = "/api/things?note=null&id=7",
-    });
+    }, {});
     defer std.testing.allocator.free(response.body);
     try std.testing.expect(response.status == 200);
     try std.testing.expect(connection.calls == 1);
@@ -186,7 +186,7 @@ test "adding or changing rule metadata leaves every PostgreSQL artifact unchange
     }
 }
 
-fn rejectBlockedNote(value: modelFor(true, .{}).Row("things")) ?rest.BusinessRuleViolation {
+fn rejectBlockedNote(value: modelFor(true, .{}).Row("things"), _: void) ?rest.BusinessRuleViolation {
     if (value.note) |note| {
         if (std.mem.eql(u8, note, "blocked")) return .{ .code = "blocked_note", .message = "Blocked note" };
     }
@@ -196,7 +196,7 @@ fn rejectBlockedNote(value: modelFor(true, .{}).Row("things")) ?rest.BusinessRul
 test "existing business validator composition accepts Model and still rejects before INSERT" {
     const Model = modelFor(true, .{});
     const validators = rest.defineBusinessValidators(Model, .{
-        .things = rest.BusinessValidator(Model.Row("things")){ .validate = rejectBlockedNote },
+        .things = rest.BusinessValidator(Model.Row("things"), void){ .validate = rejectBlockedNote },
     });
     const Api = rest.Api(Model, rest.common_codecs, validators);
     var api = Api.init(.{});
@@ -207,7 +207,7 @@ test "existing business validator composition accepts Model and still rejects be
         .target = "/api/things",
         .content_type = "application/json",
         .body = "{\"id\":7,\"note\":\"blocked\"}",
-    });
+    }, {});
     defer std.testing.allocator.free(response.body);
     try std.testing.expect(response.status == 422);
     try std.testing.expect(connection.calls == 0);

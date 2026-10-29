@@ -118,8 +118,10 @@ fn buildFilters(
             const domain_type = @field(entity.fields, field_name).type;
             // El codec de dominio del campo valida y normaliza solo el valor;
             // la parametrización SQL posterior impide que se convierta en código SQL.
-            const value = @field(codecs, domain_type).queryToPostgres(allocator, raw_value) catch
-                return error.InvalidFilterValue;
+            const value = @field(codecs, domain_type).queryToPostgres(allocator, raw_value) catch |err| return switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                error.InvalidValue => error.InvalidFilterValue,
+            };
             try result.append(allocator, .{ .name = field_name, .value = value });
         }
     }
@@ -161,8 +163,10 @@ pub fn buildInsertValues(
             try result.append(allocator, .{ .name = field_name, .value = null });
         } else {
             const domain_type = @field(entity.fields, field_name).type;
-            const encoded = @field(codecs, domain_type).jsonToPostgres(allocator, field_value.?) catch
-                return error.InvalidBodyValue;
+            const encoded = @field(codecs, domain_type).jsonToPostgres(allocator, field_value.?) catch |err| return switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                error.InvalidValue => error.InvalidBodyValue,
+            };
             try result.append(allocator, .{ .name = field_name, .value = encoded });
         }
     }
@@ -187,8 +191,10 @@ pub fn buildUpdateValues(
                 try result.append(allocator, .{ .name = field_name, .value = null });
             } else {
                 const domain_type = @field(entity.fields, field_name).type;
-                const encoded = @field(codecs, domain_type).jsonToPostgres(allocator, field_value) catch
-                    return error.InvalidBodyValue;
+                const encoded = @field(codecs, domain_type).jsonToPostgres(allocator, field_value) catch |err| return switch (err) {
+                    error.OutOfMemory => error.OutOfMemory,
+                    error.InvalidValue => error.InvalidBodyValue,
+                };
                 try result.append(allocator, .{ .name = field_name, .value = encoded });
             }
         }
@@ -202,7 +208,10 @@ pub fn buildUpdateValues(
 fn parseJsonObject(allocator: std.mem.Allocator, body: []const u8) !std.json.Parsed(std.json.Value) {
     // Los nodos parseados viven en la arena de la solicitud. Solo se acepta un objeto;
     // los arrays para operaciones masivas quedan fuera de la fase 3.
-    var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch return error.InvalidJson;
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch |err| return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.InvalidJson,
+    };
     errdefer parsed.deinit();
     if (parsed.value != .object) return error.InvalidJson;
     return parsed;

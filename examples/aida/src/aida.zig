@@ -3,7 +3,66 @@
 const std = @import("std");
 const zigma = @import("zigma");
 
-pub const Fecha = struct { @"año": u16, mes: u8, @"día": u8 };
+/// Fecha civil gregoriana entre 0001-01-01 y 9999-12-31.
+/// Los literales Zig requieren validación explícita; no hay validación al construirlos.
+pub const Fecha = struct {
+    @"año": u16,
+    mes: u8,
+    @"día": u8,
+
+    pub fn validate(self: Fecha) error{InvalidDate}!void {
+        if (self.@"año" < 1 or self.@"año" > 9999) return error.InvalidDate;
+        const leap = self.@"año" % 4 == 0 and (self.@"año" % 100 != 0 or self.@"año" % 400 == 0);
+        const last_day: u8 = switch (self.mes) {
+            2 => if (leap) 29 else 28,
+            4, 6, 9, 11 => 30,
+            1, 3, 5, 7, 8, 10, 12 => 31,
+            else => return error.InvalidDate,
+        };
+        if (self.@"día" < 1 or self.@"día" > last_day) return error.InvalidDate;
+    }
+
+    /// Años cumplidos a una fecha explícita. Un nacimiento el 29/2 cumple años
+    /// el 1/3 cuando febrero tiene 28 días; no lee el reloj ni aproxima por días.
+    pub fn ageOn(self: Fecha, today: Fecha) error{ InvalidDate, FutureDate }!u16 {
+        try self.validate();
+        try today.validate();
+        const before_birthday = today.mes < self.mes or
+            (today.mes == self.mes and today.@"día" < self.@"día");
+        if (today.@"año" < self.@"año" or (today.@"año" == self.@"año" and before_birthday))
+            return error.FutureDate;
+        return today.@"año" - self.@"año" - @as(u16, @intFromBool(before_birthday));
+    }
+
+    /// Acepta exclusivamente YYYY-MM-DD con dígitos ASCII, sin espacios ni signos.
+    pub fn fromIso(bytes: []const u8) error{InvalidDate}!Fecha {
+        if (bytes.len != 10 or bytes[4] != '-' or bytes[7] != '-') return error.InvalidDate;
+        for (bytes, 0..) |byte, index| {
+            if (index == 4 or index == 7) continue;
+            if (byte < '0' or byte > '9') return error.InvalidDate;
+        }
+        const value: Fecha = .{
+            .@"año" = std.fmt.parseInt(u16, bytes[0..4], 10) catch return error.InvalidDate,
+            .mes = std.fmt.parseInt(u8, bytes[5..7], 10) catch return error.InvalidDate,
+            .@"día" = std.fmt.parseInt(u8, bytes[8..10], 10) catch return error.InvalidDate,
+        };
+        try value.validate();
+        return value;
+    }
+
+    /// Devuelve bytes propios, sin allocator y siempre con ceros iniciales.
+    pub fn toIso(self: Fecha) error{InvalidDate}![10]u8 {
+        try self.validate();
+        var bytes: [10]u8 = undefined;
+        // El rango ya validado garantiza que la representación cabe exactamente.
+        _ = std.fmt.bufPrint(&bytes, "{d:0>4}-{d:0>2}-{d:0>2}", .{
+            self.@"año",
+            self.mes,
+            self.@"día",
+        }) catch unreachable;
+        return bytes;
+    }
+};
 
 pub const type_defs = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{
     .fecha = zigma.TypeDef{ .Type = Fecha },
@@ -24,18 +83,11 @@ pub const materia = zigma.record(type_defs, .{
     .denominacion = .{ .type = "text", .label = "denominación", .nullable = false, .is_name = true, .description = "si corresponde a más de una carrera, aclarar en el nombre" },
 });
 
-pub const docente = zigma.record(type_defs, .{
-    .docente = .{ .type = "text" },
-    .apellido = .{ .type = "text", .nullable = true },
-    .nombres = .{ .type = "text", .nullable = false },
-    .cargo = .{ .type = "text" },
-    .email = .{ .type = "email" },
-    .email_alternativo = .{ .type = "email" },
-    .jefe = .{ .type = "text", .description = "jefe de cátedra (otro docente)" },
-    .telefono = .{ .type = "text" },
-    .experiencia = .{ .type = "integer" },
-    .esImportador = .{ .type = "boolean" },
-});
+pub const docente = zigma.record(type_defs, .{ .docente = .{ .type = "text" }, .apellido = .{ .type = "text", .nullable = true }, .nombres = .{ .type = "text", .nullable = false }, .cargo = .{ .type = "text" }, .email = .{ .type = "email" }, .email_alternativo = .{ .type = "email" }, .jefe = .{ .type = "text", .description = "jefe de cátedra (otro docente)" }, .telefono = .{ .type = "text" }, .experiencia = .{ .type = "integer" }, .esImportador = .{ .type = "boolean" }, .fecha_nacimiento = .{
+    .type = "fecha",
+    .label = "Fecha de nacimiento",
+    .nullable = true,
+} });
 
 pub const asignacion = zigma.record(type_defs, .{
     .docente = docente.docente,
@@ -200,10 +252,17 @@ pub fn validarCargo(cargo_sin_validar: Cargo) error{AyudanteNoPuedeDirigir}!void
     }
 }
 
-pub const DocenteValidationError = error{TeoricoRequiereCincoAniosExperiencia};
+pub const DocenteValidationError = error{
+    TeoricoRequiereCincoAniosExperiencia,
+    TeoricoRequiereFechaNacimiento,
+    TeoricoRequiereTreintaAnios,
+    InvalidDate,
+    FutureDate,
+};
 
-/// La entidad concreta lleva todos los campos; la regla usa cargo y experiencia.
-pub fn validarDocente(doc: Docente) DocenteValidationError!void {
+/// La entidad concreta y el día de referencia hacen la regla reproducible.
+/// La experiencia conserva su prioridad; otros cargos pueden omitir el nacimiento.
+pub fn validarDocente(doc: Docente, today: Fecha) DocenteValidationError!void {
     const cargo_value = doc.cargo orelse return;
     const normalized_cargo = std.mem.trim(u8, cargo_value, " \t\r\n");
     if (!std.ascii.eqlIgnoreCase(normalized_cargo, "teorico")) return;
@@ -212,6 +271,8 @@ pub fn validarDocente(doc: Docente) DocenteValidationError!void {
         return error.TeoricoRequiereCincoAniosExperiencia;
     if (experiencia < 5)
         return error.TeoricoRequiereCincoAniosExperiencia;
+    const birth = doc.fecha_nacimiento orelse return error.TeoricoRequiereFechaNacimiento;
+    if (try birth.ageOn(today) < 30) return error.TeoricoRequiereTreintaAnios;
 }
 
 /// Tipos concretos de aplicación; sus campos se generan desde las definiciones.

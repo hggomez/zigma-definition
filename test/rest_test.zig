@@ -16,7 +16,7 @@ const entity_defs = zigma.defineEntities(.{ .things = .{ .Type = zigma.Entity(zi
 const codecs = rest.defineCodecs(zigma.common_type_defs, rest.common_codecs);
 const TestApi = rest.Api(Model, codecs, .{});
 
-fn validateThing(value: Model.Row("things")) ?rest.BusinessRuleViolation {
+fn validateThing(value: Model.Row("things"), _: void) ?rest.BusinessRuleViolation {
     if (value.active and std.mem.eql(u8, value.name, "Blocked")) {
         return .{
             .code = "blocked_name_when_active",
@@ -27,7 +27,7 @@ fn validateThing(value: Model.Row("things")) ?rest.BusinessRuleViolation {
 }
 
 const business_validators = rest.defineBusinessValidators(Model, .{
-    .things = rest.BusinessValidator(Model.Row("things")){ .validate = validateThing },
+    .things = rest.BusinessValidator(Model.Row("things"), void){ .validate = validateThing },
 });
 const ValidatedTestApi = rest.Api(Model, codecs, business_validators);
 
@@ -149,7 +149,7 @@ test "GET filters are decoded, validated and ordered by entity field order" {
     const response = try api.handle(arena.allocator(), &repository, .{
         .method = .GET,
         .target = "/api/things?name=Alice+P%C3%A9rez&id=7",
-    });
+    }, {});
 
     try std.testing.expectEqual(@as(u16, 200), response.status);
     try std.testing.expectEqualStrings(
@@ -174,7 +174,7 @@ test "POST validates and normalizes a complete row" {
         .target = "/api/things",
         .content_type = "application/json; charset=utf-8",
         .body = "{\"id\":7,\"name\":\"Alice\",\"active\":true}",
-    });
+    }, {});
 
     try std.testing.expectEqual(@as(u16, 201), response.status);
     try std.testing.expectEqualStrings(
@@ -200,7 +200,7 @@ test "POST runs an entity business validator before inserting" {
         .target = "/api/things",
         .content_type = "application/json",
         .body = "{\"id\":7,\"name\":\"Blocked\",\"active\":true}",
-    });
+    }, {});
 
     try std.testing.expectEqual(@as(u16, 422), response.status);
     try std.testing.expect(std.mem.indexOf(u8, response.body, "blocked_name_when_active") != null);
@@ -218,7 +218,7 @@ test "PUT validates each merged current row before updating" {
         .target = "/api/things?id=7",
         .content_type = "application/json",
         .body = "{\"name\":\"Blocked\"}",
-    });
+    }, {});
     try std.testing.expectEqual(@as(u16, 422), rejected.status);
     try std.testing.expectEqual(@as(usize, 1), repository.select_calls);
     try std.testing.expectEqual(@as(usize, 0), repository.update_calls);
@@ -228,7 +228,7 @@ test "PUT validates each merged current row before updating" {
         .target = "/api/things?id=7",
         .content_type = "application/json",
         .body = "{\"active\":false}",
-    });
+    }, {});
     try std.testing.expectEqual(@as(u16, 200), accepted.status);
     try std.testing.expectEqual(@as(usize, 2), repository.select_calls);
     try std.testing.expectEqual(@as(usize, 1), repository.update_calls);
@@ -245,7 +245,7 @@ test "PUT is partial and DELETE requires a filter" {
         .target = "/api/things?id=7",
         .content_type = "application/json",
         .body = "{\"note\":null}",
-    });
+    }, {});
     try std.testing.expectEqual(@as(u16, 200), put_response.status);
     try std.testing.expectEqualStrings("[]", put_response.body);
     try std.testing.expectEqual(Operation.update, repository.operation);
@@ -254,7 +254,7 @@ test "PUT is partial and DELETE requires a filter" {
     const delete_response = try api.handle(arena.allocator(), &repository, .{
         .method = .DELETE,
         .target = "/api/things",
-    });
+    }, {});
     try std.testing.expectEqual(@as(u16, 400), delete_response.status);
 }
 
@@ -264,26 +264,26 @@ test "bad routes, methods, query parameters and bodies map to exact statuses" {
     var api = TestApi.init(.{ .max_body_bytes = 8 });
     var repository = FakeRepository{};
 
-    const missing = try api.handle(arena.allocator(), &repository, .{ .method = .GET, .target = "/api/missing" });
+    const missing = try api.handle(arena.allocator(), &repository, .{ .method = .GET, .target = "/api/missing" }, {});
     try std.testing.expectEqual(@as(u16, 404), missing.status);
-    const method = try api.handle(arena.allocator(), &repository, .{ .method = .other, .target = "/api/things" });
+    const method = try api.handle(arena.allocator(), &repository, .{ .method = .other, .target = "/api/things" }, {});
     try std.testing.expectEqual(@as(u16, 405), method.status);
-    const duplicate = try api.handle(arena.allocator(), &repository, .{ .method = .GET, .target = "/api/things?id=1&id=2" });
+    const duplicate = try api.handle(arena.allocator(), &repository, .{ .method = .GET, .target = "/api/things?id=1&id=2" }, {});
     try std.testing.expectEqual(@as(u16, 400), duplicate.status);
-    const unknown = try api.handle(arena.allocator(), &repository, .{ .method = .GET, .target = "/api/things?wat=1" });
+    const unknown = try api.handle(arena.allocator(), &repository, .{ .method = .GET, .target = "/api/things?wat=1" }, {});
     try std.testing.expectEqual(@as(u16, 400), unknown.status);
     const unsupported = try api.handle(arena.allocator(), &repository, .{
         .method = .POST,
         .target = "/api/things",
         .body = "{}",
-    });
+    }, {});
     try std.testing.expectEqual(@as(u16, 415), unsupported.status);
     const too_large = try api.handle(arena.allocator(), &repository, .{
         .method = .POST,
         .target = "/api/things",
         .content_type = "application/json",
         .body = "012345678",
-    });
+    }, {});
     try std.testing.expectEqual(@as(u16, 413), too_large.status);
 }
 
@@ -298,21 +298,21 @@ test "mutations reject missing fields, PK updates and unsafe requests" {
         .target = "/api/things",
         .content_type = "application/json",
         .body = "{\"id\":7}",
-    });
+    }, {});
     try std.testing.expectEqual(@as(u16, 400), missing.status);
     const pk_update = try api.handle(arena.allocator(), &repository, .{
         .method = .PUT,
         .target = "/api/things?id=7",
         .content_type = "application/json",
         .body = "{\"id\":8}",
-    });
+    }, {});
     try std.testing.expectEqual(@as(u16, 400), pk_update.status);
     const empty_update = try api.handle(arena.allocator(), &repository, .{
         .method = .PUT,
         .target = "/api/things?id=7",
         .content_type = "application/json",
         .body = "{}",
-    });
+    }, {});
     try std.testing.expectEqual(@as(u16, 400), empty_update.status);
 }
 
@@ -325,7 +325,7 @@ test "repository failures are hidden behind stable HTTP errors" {
     const conflict = try api.handle(arena.allocator(), &conflict_repository, .{
         .method = .DELETE,
         .target = "/api/things?id=7",
-    });
+    }, {});
     try std.testing.expectEqual(@as(u16, 409), conflict.status);
     try std.testing.expect(std.mem.indexOf(u8, conflict.body, "constraint_conflict") != null);
 
@@ -333,7 +333,7 @@ test "repository failures are hidden behind stable HTTP errors" {
     const unavailable = try api.handle(arena.allocator(), &unavailable_repository, .{
         .method = .GET,
         .target = "/api/things",
-    });
+    }, {});
     try std.testing.expectEqual(@as(u16, 503), unavailable.status);
 }
 
@@ -351,7 +351,7 @@ test "handle owns scratch allocations and returns only the response body" {
     const response = try api.handle(std.testing.allocator, &repository, .{
         .method = .GET,
         .target = "/api/things?id=7",
-    });
+    }, {});
     defer std.testing.allocator.free(response.body);
     try std.testing.expectEqual(@as(u16, 200), response.status);
 }

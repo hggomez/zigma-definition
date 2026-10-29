@@ -35,17 +35,20 @@ El ejemplo [aida.zig](../examples/aida/src/aida.zig) declara
 `Docente = zigma.Entity(type_defs, docente_def)` y utiliza ese tipo directamente:
 
 ```zig
-pub fn validarDocente(value: Docente) DocenteValidationError!void {
+pub fn validarDocente(value: Docente, today: Fecha) DocenteValidationError!void {
     const cargo_value = value.cargo orelse return;
     const normalized_cargo = std.mem.trim(u8, cargo_value, " \t\r\n");
     if (!std.ascii.eqlIgnoreCase(normalized_cargo, "teorico")) return;
     const experiencia = value.experiencia orelse
         return error.TeoricoRequiereCincoAniosExperiencia;
     if (experiencia < 5) return error.TeoricoRequiereCincoAniosExperiencia;
+    const birth = value.fecha_nacimiento orelse return error.TeoricoRequiereFechaNacimiento;
+    if (try birth.ageOn(today) < 30) return error.TeoricoRequiereTreintaAnios;
 }
 ```
 
-La regla lee dos campos, pero recibe la entidad completa. No repite sus tipos ni su
+La regla lee tres campos y recibe la entidad completa junto al día de referencia.
+No repite sus tipos ni su
 nulabilidad fuera del contrato. `Model.Row("docentes")` devuelve exactamente `Docente`.
 
 ```zig
@@ -60,7 +63,8 @@ try aida.validarDocente(.{
     .telefono = null,
     .experiencia = 5,
     .esImportador = null,
-});
+    .fecha_nacimiento = .{ .@"año" = 1980, .mes = 1, .@"día" = 1 },
+}, .{ .@"año" = 2026, .mes = 10, .@"día" = 28 });
 ```
 
 Si `experiencia` deja de admitir null, `Docente` tendrá `i64` para ese campo y el
@@ -68,9 +72,13 @@ compilador señalará el `orelse` incompatible. Si se agrega un campo, los liter
 fila completa deberán incluirlo aunque sea ajeno a la regla y admita null.
 
 REST construye la entidad con una conversión genérica y llama al adaptador tipado;
-este delega en `validarDocente`. Los [tests](../test/aida_test.zig) conservan nueve
+este delega en `validarDocente` con el contexto de la solicitud. La regla no consulta
+el reloj: puede probarse con una fecha fija o evaluarse en compilación.
+Los [tests](../test/aida_test.zig) conservan nueve
 casos con nulos, espacios, mayúsculas y el límite de cinco años. También comprueban
-que modificar datos ajenos a la regla no cambie el resultado. El registro y su
+que modificar datos ajenos a la regla no cambie el resultado. Los
+[casos de edad](../test/docente_age_test.zig) cubren cumpleaños, bisiestos y fechas
+ausentes, inválidas o futuras. El registro y su
 relación con los metadatos `rules` se explican en [validators.md](validators.md).
 
 ## El vocabulario

@@ -662,7 +662,15 @@ async function sendJson(url, method, jsonString) {
         const response = await fetch(url, init);
         const result = await response.json().catch(() => null);
         if (!response.ok) {
-            showNetworkError(`Could not ${method} ${currentEntity.name} (${response.status})`);
+            const violation = result?.error;
+            const hasBusinessDetails = response.status === 422 &&
+                typeof violation?.message === "string" && violation.message.trim().length > 0 &&
+                typeof violation?.code === "string" && violation.code.trim().length > 0;
+            // El servidor define el mensaje público; se muestra como texto y se
+            // conservan los datos ingresados para que el usuario pueda corregirlos.
+            showNetworkError(hasBusinessDetails
+                ? `${violation.message} (${violation.code})`
+                : `Could not ${method} ${currentEntity.name} (${response.status})`);
             console.error("Server response:", result);
             return;
         }

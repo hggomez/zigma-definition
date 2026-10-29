@@ -194,11 +194,12 @@ test "AIDA seed collections and whole row business validation use concrete types
         const Seed = @typeInfo(@TypeOf(@field(system.seeds, name))).array.child;
         try std.testing.expect(Seed == aida.Model.Row(name));
     }
-    const validate: *const fn (aida.Docente) aida.DocenteValidationError!void = &aida.validarDocente;
+    const validate: *const fn (aida.Docente, aida.Fecha) aida.DocenteValidationError!void = &aida.validarDocente;
     var row: aida.Docente = system.seeds.docentes[0];
     row.cargo = "teorico";
     row.experiencia = 4;
-    try std.testing.expectError(error.TeoricoRequiereCincoAniosExperiencia, validate(row));
+    try std.testing.expectError(error.TeoricoRequiereCincoAniosExperiencia, validate(row, .{ .@"año" = 2026, .mes = 10, .@"día" = 28 }));
     row.experiencia = 5;
-    try validate(row);
+    row.fecha_nacimiento = .{ .@"año" = 1980, .mes = 1, .@"día" = 1 };
+    try validate(row, .{ .@"año" = 2026, .mes = 10, .@"día" = 28 });
 }

@@ -17,7 +17,7 @@ pub fn addSteps(
     const unit = addUnitTests(b, target, optimize, modules, aida);
     addCompileErrors(b, target, optimize, modules, unit);
     const launcher = addLauncherTests(b, aida);
-    addLocalTests(b, target, optimize, unit.all, launcher);
+    addLocalTests(b, target, optimize, modules, unit.all, launcher);
     addPostgresTests(b, target, optimize, modules, aida, liquibase_bin);
 }
 
@@ -168,6 +168,15 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     test_step.dependOn(&run_typed_validation_tests.step);
     test_step.dependOn(&run_postgres_crud_tests.step);
     test_step.dependOn(&run_aida_rest_tests.step);
+    for ([_][]const u8{ "fecha_test.zig", "fecha_codec_test.zig", "fecha_rest_test.zig", "docente_age_test.zig", "docente_age_rest_test.zig", "validation_context_test.zig" }) |file| {
+        const run_fecha_tests = addTestRun(b, target, optimize, b.fmt("test/{s}", .{file}), &.{
+            .{ .name = "zigma", .module = modules.zigma },
+            .{ .name = "aida", .module = modules.aida },
+            .{ .name = "aida_rest", .module = modules.aida_rest },
+            .{ .name = "zigma_rest", .module = modules.rest },
+        });
+        test_step.dependOn(&run_fecha_tests.step);
+    }
     test_step.dependOn(&aida.schema_guard.step);
     test_step.dependOn(&aida.schema_check.step);
 
@@ -183,7 +192,7 @@ fn addLauncherTests(b: *std.Build, aida: AidaArtifacts) *std.Build.Step {
     return test_aida_launcher_step;
 }
 
-fn addLocalTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, unit_tests: *std.Build.Step, launcher_tests: *std.Build.Step) void {
+fn addLocalTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, modules: Modules, unit_tests: *std.Build.Step, launcher_tests: *std.Build.Step) void {
     // Reutiliza las suites del consumidor sin duplicar sus módulos ni fixtures.
     const test_aida_consumer = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test-backend", "test-frontend" });
     test_aida_consumer.addArg(b.fmt("-Dtarget={s}", .{target.query.zigTriple(b.allocator) catch @panic("OOM")}));
@@ -201,6 +210,22 @@ fn addLocalTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
     test_build_commands.addFileArg(b.path("test/integration/build_commands_test.py"));
     test_build_commands.addArg(b.graph.zig_exe);
     test_local_step.dependOn(&test_build_commands.step);
+    const context_server = b.addExecutable(.{
+        .name = "context-test-server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/integration/context_server.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma_rest", .module = modules.rest },
+                .{ .name = "zigma_std_http", .module = modules.std_http },
+            },
+        }),
+    });
+    const context_test = b.addSystemCommand(&.{"python3"});
+    context_test.addFileArg(b.path("test/integration/run_context_test.py"));
+    context_test.addArtifactArg(context_server);
+    test_local_step.dependOn(&context_test.step);
 }
 
 fn addPostgresTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, modules: Modules, aida: AidaArtifacts, liquibase_bin: []const u8) void {
@@ -384,11 +409,14 @@ const compile_error_cases = [_]CompileErrorCase{
     .{ .file = "rest_codec_missing.zig", .expected = "entity 'events', field 'when': missing REST codec for domain type 'fecha'" },
     .{ .file = "rest_codec_invalid.zig", .expected = "REST codec 'text': must be a zigma_rest.Codec" },
     .{ .file = "rest_business_validator_unknown_entity.zig", .expected = "REST business validator 'missing': unknown entity" },
-    .{ .file = "rest_business_validator_invalid.zig", .expected = "REST business validator 'things': must be a zigma_rest.BusinessValidator(Model.Row(\"things\"))" },
-    .{ .file = "rest_typed_validator_wrong_entity_type.zig", .expected = "REST business validator 'things': must be a zigma_rest.BusinessValidator(Model.Row(\"things\"))" },
-    .{ .file = "rest_typed_validator_manual_row.zig", .expected = "REST business validator 'things': must be a zigma_rest.BusinessValidator(Model.Row(\"things\"))" },
+    .{ .file = "rest_business_validator_invalid.zig", .expected = "REST business validator 'things': must be a zigma_rest.BusinessValidator(Model.Row(\"things\"), Context)" },
+    .{ .file = "rest_typed_validator_wrong_entity_type.zig", .expected = "REST business validator 'things': must be a zigma_rest.BusinessValidator(Model.Row(\"things\"), Context)" },
+    .{ .file = "rest_typed_validator_manual_row.zig", .expected = "REST business validator 'things': must be a zigma_rest.BusinessValidator(Model.Row(\"things\"), Context)" },
     .{ .file = "rest_typed_validator_wrong_input.zig", .expected = at("rest_typed_validator_wrong_input.zig") },
     .{ .file = "rest_typed_validator_wrong_return.zig", .expected = at("rest_typed_validator_wrong_return.zig") },
+    .{ .file = "rest_validator_mixed_context.zig", .expected = "REST business validator 'seconds': validation context must match other validators" },
+    .{ .file = "rest_validator_wrong_context_signature.zig", .expected = "REST business validator 'firsts': must be a zigma_rest.BusinessValidator(Model.Row(\"firsts\"), Context)" },
+    .{ .file = "rest_validator_context_wrong_row.zig", .expected = "REST business validator 'firsts': must be a zigma_rest.BusinessValidator(Model.Row(\"firsts\"), Context)" },
 };
 
 // Los tests de contrato de la primera etapa también tienen el paso `test-model`.

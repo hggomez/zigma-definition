@@ -252,6 +252,10 @@ makeInput(field, value, locked)
 
 Aida registers `fecha` as `<input type="date">`. Click the cell (or the calendar glyph) to open the browser date picker. `read` convierte ISO `yyyy-mm-dd` a `{año, mes, día}` y devuelve `null` si está vacío. WASM recibe un objeto JSON o una celda vacía; `Model.Row` determina si el campo admite ausencia.
 
+WASM todavía no invoca la validación civil de `Fecha`. REST sí la utiliza para
+rechazar fechas imposibles o años fuera de 1–9999 antes de acceder al repositorio;
+véase [la API de Fecha](../DOCS.md#validación-civil-de-fecha).
+
 ---
 
 ### 3.4 GET list (`loadRows`)
@@ -414,14 +418,22 @@ Shared HTTP helper (also PUT/DELETE):
 ```
 sendJson(url, method, jsonString)
   fetch(url, { method, headers/body if jsonString != null })
-  result = await response.json()
-  status ← JSON.stringify(result)
-  console.log("Server response:", result)
+  result = await response.json()   // null si la respuesta no es JSON válido
+  if !response.ok:
+    422 con message/code válidos → status: "mensaje (código)"
+    otro caso → status: "Could not <método> <entidad> (<estado>)"
+    terminar sin limpiar controles ni recargar la tabla
   if response.ok:
+    limpiar errores de celdas y status
     if method === "POST":
       #new-row: recrear controles con initialFieldValue(field)
     loadRows()                      // §3.4 again
 ```
+
+Los detalles de negocio se muestran como texto (`textContent`), usando el mensaje
+público y el código enviados por REST. Ambos deben ser strings no vacíos. POST y
+PUT comparten este comportamiento; una respuesta inválida conserva el mensaje
+genérico y los valores ingresados quedan disponibles para corregirlos.
 
 Backend POST:
 

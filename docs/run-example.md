@@ -106,6 +106,7 @@ los tests del lanzador y los nombres públicos de comandos, sin requerir Postgre
 | `examples/aida/src/aida.zig` | Contrato de AIDA. |
 | `examples/aida/src/system.zig` | Contrato y seeds del ejemplo. |
 | `examples/aida/src/rest.zig` | Codecs y API de AIDA, compartidos con el servidor PostgreSQL. |
+| `examples/aida/src/validation_context.zig` | Obtiene el día civil por solicitud (UTC−03:00 fijo) para validar edad. |
 | `examples/aida/src/postgres.zig` | Mappings y artefactos PostgreSQL del contrato. |
 | `examples/aida/src/main.zig` | Entrada de AIDA con PostgreSQL y frontend; la raíz la ejecuta con `zig build run-aida`. |
 | `examples/aida/src/server.zig` | Backend real con Liquibase, libpq y HTTP. |
@@ -114,5 +115,11 @@ los tests del lanzador y los nombres públicos de comandos, sin requerir Postgre
 | `src/testing_backend/memory_repository.zig` | CRUD en memoria. |
 | `src/rest/std_http.zig` | Transporte HTTP compartido y CORS. |
 | `src/frontend/` | Cliente WASM y recursos de la página. |
+
+El módulo REST del consumidor publica `Api`. Si `Api.ValidationContext` no es
+`void`, también publica `ContextProvider`, inicializable con `.io`, cuyo método
+`get()` devuelve el contexto o un error. AIDA lo comparte entre el backend en
+memoria y el servidor PostgreSQL; toma la fecha una vez por solicitud. Con contexto
+`void`, el backend de pruebas usa automáticamente `std_http.EmptyContextProvider`.
 
 Para ejecutar AIDA con PostgreSQL y migraciones, consultá el [README](../README.md).

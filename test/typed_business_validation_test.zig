@@ -45,7 +45,7 @@ const Observer = struct {
         matches = true;
     }
 
-    fn validate(value: Thing) ?rest.BusinessRuleViolation {
+    fn validate(value: Thing, _: void) ?rest.BusinessRuleViolation {
         if (calls >= expected.len) {
             matches = false;
         } else {
@@ -66,7 +66,7 @@ const Observer = struct {
 };
 
 const validators = rest.defineBusinessValidators(Model, .{
-    .things = rest.BusinessValidator(Thing){ .validate = Observer.validate },
+    .things = rest.BusinessValidator(Thing, void){ .validate = Observer.validate },
 });
 const Api = rest.Api(Model, codecs, validators);
 
@@ -87,9 +87,9 @@ fn expectErrorResponse(response: rest.Response, status: u16, code: []const u8) !
 
 test "business validator input is exactly the registered concrete entity" {
     try expect(Model.Row("things") == Thing);
-    try expect(@FieldType(rest.BusinessValidator(Thing), "validate") == *const fn (Thing) ?rest.BusinessRuleViolation);
+    try expect(@FieldType(rest.BusinessValidator(Thing, void), "validate") == *const fn (Thing, void) ?rest.BusinessRuleViolation);
     Observer.reset(&.{basic});
-    try expect(validators.things.validate(basic) == null);
+    try expect(validators.things.validate(basic, {}) == null);
     try expect(Observer.calls == 1 and Observer.matches);
 }
 
@@ -122,7 +122,7 @@ test "POST supplies real scalars and Fecha while preserving textual repository p
     var api = Api.init(.{});
     const response = try api.handle(allocator, &repository, post(
         "{\"id\":7,\"label\":\"ok\",\"enabled\":false,\"note\":\"null\",\"count\":0,\"approved\":false,\"date\":{\"año\":2024,\"mes\":2,\"día\":29}}",
-    ));
+    ), {});
     defer allocator.free(response.body);
     try expect(response.status == 201);
     try expect(Observer.calls == 1 and Observer.matches);
@@ -134,7 +134,7 @@ test "POST completes omitted nullable fields before typed validation" {
     Observer.reset(&.{basic});
     var repository = Repository{};
     var api = Api.init(.{});
-    const response = try api.handle(allocator, &repository, post("{\"id\":7,\"label\":\"ok\",\"enabled\":false}"));
+    const response = try api.handle(allocator, &repository, post("{\"id\":7,\"label\":\"ok\",\"enabled\":false}"), {});
     defer allocator.free(response.body);
     try expect(response.status == 201 and Observer.calls == 1 and Observer.matches);
     try expectText("{\"id\":7,\"label\":\"ok\",\"enabled\":false,\"note\":null,\"count\":null,\"approved\":null,\"date\":null}", response.body);
@@ -147,7 +147,7 @@ test "POST returns a stable business violation without writing" {
     Observer.reset(&.{wanted});
     var repository = Repository{};
     var api = Api.init(.{});
-    const response = try api.handle(allocator, &repository, post("{\"id\":7,\"label\":\"Blocked\",\"enabled\":true}"));
+    const response = try api.handle(allocator, &repository, post("{\"id\":7,\"label\":\"Blocked\",\"enabled\":true}"), {});
     defer allocator.free(response.body);
     try expectErrorResponse(response, 422, "blocked");
     try expectText("{\"error\":{\"code\":\"blocked\",\"message\":\"An enabled thing cannot be Blocked\"}}", response.body);
@@ -168,7 +168,7 @@ test "PUT validates a changed dependency with the rest of the stored typed row" 
     Observer.reset(&.{wanted});
     var repository = Repository{ .rows = &.{cells} };
     var api = Api.init(.{});
-    const response = try api.handle(allocator, &repository, put("{\"enabled\":true}"));
+    const response = try api.handle(allocator, &repository, put("{\"enabled\":true}"), {});
     defer allocator.free(response.body);
     try expectErrorResponse(response, 422, "blocked");
     try expect(Observer.calls == 1 and Observer.matches);
@@ -188,7 +188,7 @@ test "PUT can clear nullable fields without clearing omitted values" {
         },
     };
     var api = Api.init(.{});
-    const response = try api.handle(allocator, &repository, put("{\"note\":null,\"approved\":null,\"date\":null}"));
+    const response = try api.handle(allocator, &repository, put("{\"note\":null,\"approved\":null,\"date\":null}"), {});
     defer allocator.free(response.body);
     try expect(response.status == 200 and Observer.calls == 1 and Observer.matches);
     try expect(repository.parameters_match and repository.update_calls == 1 and repository.deinit_calls == 2);
@@ -203,7 +203,7 @@ test "PUT validates all selected rows before the first write" {
     Observer.reset(&.{ first, second });
     var repository = Repository{ .rows = &.{ basic_cells, &.{ "8", "Blocked", "f", null, null, null, null } } };
     var api = Api.init(.{});
-    const response = try api.handle(allocator, &repository, put("{\"enabled\":true}"));
+    const response = try api.handle(allocator, &repository, put("{\"enabled\":true}"), {});
     defer allocator.free(response.body);
     try expectErrorResponse(response, 422, "blocked");
     try expect(Observer.calls == 2 and Observer.matches);
@@ -221,7 +221,7 @@ test "PUT assigns typed values to formerly null fields" {
     var api = Api.init(.{});
     const response = try api.handle(allocator, &repository, put(
         "{\"note\":\"null\",\"count\":0,\"approved\":false,\"date\":{\"año\":2024,\"mes\":2,\"día\":29}}",
-    ));
+    ), {});
     defer allocator.free(response.body);
     try expect(response.status == 200 and Observer.calls == 1 and Observer.matches);
     try expect(repository.update_calls == 1 and repository.deinit_calls == 2);
@@ -231,7 +231,7 @@ test "PUT with no matching rows keeps its empty success response" {
     Observer.reset(&.{});
     var repository = Repository{};
     var api = Api.init(.{});
-    const response = try api.handle(allocator, &repository, put("{\"enabled\":true}"));
+    const response = try api.handle(allocator, &repository, put("{\"enabled\":true}"), {});
     defer allocator.free(response.body);
     try expect(response.status == 200);
     try expectText("[]", response.body);
@@ -242,7 +242,7 @@ test "entities without validators do not select or run descriptive rules" {
     Observer.reset(&.{});
     var repository = Repository{ .rows = &.{basic_cells}, .empty_write_result = true };
     var api = rest.Api(Model, codecs, .{}).init(.{});
-    const response = try api.handle(allocator, &repository, put("{\"label\":\"Blocked\",\"enabled\":true}"));
+    const response = try api.handle(allocator, &repository, put("{\"label\":\"Blocked\",\"enabled\":true}"), {});
     defer allocator.free(response.body);
     try expect(response.status == 200);
     try expect(repository.select_calls == 0 and repository.update_calls == 1 and Observer.calls == 0);
@@ -253,7 +253,7 @@ test "GET and DELETE do not invoke an entity business validator" {
     var repository = Repository{ .rows = &.{basic_cells} };
     var api = Api.init(.{});
     for ([_]rest.Method{ .GET, .DELETE }) |method| {
-        const response = try api.handle(allocator, &repository, .{ .method = method, .target = "/api/things?id=7" });
+        const response = try api.handle(allocator, &repository, .{ .method = method, .target = "/api/things?id=7" }, {});
         defer allocator.free(response.body);
         try expect(response.status == 200);
     }
@@ -271,7 +271,7 @@ test "invalid stored scalars and forbidden nulls fail before the callback and up
         Observer.reset(&.{});
         var repository = Repository{ .rows = &.{cells} };
         var api = Api.init(.{});
-        const response = try api.handle(allocator, &repository, put("{\"note\":\"changed\"}"));
+        const response = try api.handle(allocator, &repository, put("{\"note\":\"changed\"}"), {});
         defer allocator.free(response.body);
         try expectErrorResponse(response, 500, "business_validation_error");
         try expect(std.mem.indexOf(u8, response.body, "secret") == null);
@@ -289,7 +289,7 @@ test "malformed repository columns and row widths keep the shape error" {
         Observer.reset(&.{});
         var repository = configuration;
         var api = Api.init(.{});
-        const response = try api.handle(allocator, &repository, put("{\"note\":null}"));
+        const response = try api.handle(allocator, &repository, put("{\"note\":null}"), {});
         defer allocator.free(response.body);
         try expectErrorResponse(response, 500, "invalid_repository_result");
         try expect(Observer.calls == 0 and repository.update_calls == 0 and repository.deinit_calls == 1);
@@ -317,7 +317,7 @@ test "codec JSON incompatible with the domain becomes a sanitized internal error
     Observer.reset(&.{});
     var repository = Repository{};
     var api = ApiWithIntegerOutput(wrongIntegerJson).init(.{});
-    const response = try api.handle(allocator, &repository, post("{\"id\":7,\"label\":\"ok\",\"enabled\":false}"));
+    const response = try api.handle(allocator, &repository, post("{\"id\":7,\"label\":\"ok\",\"enabled\":false}"), {});
     defer allocator.free(response.body);
     try expectErrorResponse(response, 500, "business_validation_error");
     try expect(repository.insert_calls == 0 and Observer.calls == 0);
@@ -327,7 +327,7 @@ test "POST propagates decoder OutOfMemory without writing or calling the rule" {
     Observer.reset(&.{});
     var repository = Repository{};
     var api = ApiWithIntegerOutput(memoryFailure).init(.{});
-    try std.testing.expectError(error.OutOfMemory, api.handle(allocator, &repository, post("{\"id\":7,\"label\":\"ok\",\"enabled\":false}")));
+    try std.testing.expectError(error.OutOfMemory, api.handle(allocator, &repository, post("{\"id\":7,\"label\":\"ok\",\"enabled\":false}"), {}));
     try expect(repository.insert_calls == 0 and Observer.calls == 0);
 }
 
@@ -335,7 +335,7 @@ test "PUT propagates decoder OutOfMemory and releases the selected result" {
     Observer.reset(&.{});
     var repository = Repository{ .rows = &.{basic_cells} };
     var api = ApiWithIntegerOutput(memoryFailure).init(.{});
-    try std.testing.expectError(error.OutOfMemory, api.handle(allocator, &repository, put("{\"note\":null}")));
+    try std.testing.expectError(error.OutOfMemory, api.handle(allocator, &repository, put("{\"note\":null}"), {}));
     try expect(repository.select_calls == 1 and repository.update_calls == 0 and repository.deinit_calls == 1 and Observer.calls == 0);
 }
 
@@ -349,12 +349,12 @@ test "AIDA REST invokes the concrete docente rule with the same public violation
         .target = "/api/docentes",
         .content_type = "application/json",
         .body = "{\"docente\":\"d1\",\"nombres\":\"Ada\",\"cargo\":\"teorico\",\"experiencia\":4}",
-    });
+    }, .{ .today = .{ .@"año" = 2026, .mes = 10, .@"día" = 28 } });
     defer allocator.free(response.body);
     try expectErrorResponse(response, 422, "teorico_requires_five_years_experience");
     try expectText("{\"error\":{\"code\":\"teorico_requires_five_years_experience\",\"message\":\"A docente with cargo 'teorico' requires at least 5 years of experiencia\"}}", response.body);
     try expect(repository.insert_calls == 0);
-    const validate: *const fn (aida.Docente) aida.DocenteValidationError!void = aida.validarDocente;
+    const validate: *const fn (aida.Docente, aida.Fecha) aida.DocenteValidationError!void = aida.validarDocente;
     try validate(.{
         .docente = "d1",
         .apellido = null,
@@ -366,5 +366,6 @@ test "AIDA REST invokes the concrete docente rule with the same public violation
         .telefono = null,
         .experiencia = 5,
         .esImportador = null,
-    });
+        .fecha_nacimiento = .{ .@"año" = 1980, .mes = 1, .@"día" = 1 },
+    }, .{ .@"año" = 2026, .mes = 10, .@"día" = 28 });
 }

@@ -13,6 +13,7 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | Framework / Model.info / tipos derivados | `src/core/model.zig`, `test/system_model_test.zig`, `test/model_consumers_test.zig` |
 | Helpers internos de nombres | `src/core/names.zig` |
 | Example system (records, entities, `Cargo`) | `examples/aida/src/aida.zig` |
+| Fecha: calendario, ISO y codecs REST | `examples/aida/src/aida.zig`, `examples/aida/src/fecha_wire.zig`, `test/fecha_test.zig`, `test/fecha_codec_test.zig`, `test/fecha_rest_test.zig`, `test/fixtures/fail_once_allocator.zig`, `test/integration/fecha_validation_review.md` |
 | Example app (`system` + seeds, own `build.zig`) | `examples/aida/` |
 | Positive tests (runtime + comptime asserts) | `test/aida_test.zig` |
 | Expected compile failures | `test/compile_errors/<case>.zig` **and** the matching entry in `compile_error_cases` in `build/tests.zig` |
@@ -25,6 +26,7 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | API REST / routing / secuencia CRUD | `src/rest/api.zig`, `src/rest/types.zig`, `test/rest_test.zig` |
 | Entrada y salida REST / codecs | `src/rest/request.zig`, `src/rest/response.zig`, `src/rest/codecs.zig`, `test/rest_test.zig` |
 | Validadores REST actuales | `src/rest/validation.zig`, `examples/aida/src/rest.zig`, `test/aida_rest_test.zig`, `test/rest_test.zig`, `test/typed_business_validation_test.zig`, `test/fixtures/validation_repository.zig` |
+| Edad de docente / contexto por solicitud | `examples/aida/src/aida.zig`, `examples/aida/src/validation_context.zig`, `examples/aida/src/rest.zig`, `src/rest/validation.zig`, `src/rest/std_http.zig`, `test/docente_age_test.zig`, `test/docente_age_rest_test.zig`, `test/validation_context_test.zig`, `test/integration/context_server.zig`, `test/integration/run_context_test.py`, `test/integration/docente_age_http.py` |
 | Backend de pruebas en memoria | `src/testing_backend/main.zig`, `src/testing_backend/memory_repository.zig`, `src/rest/std_http.zig` |
 | Comprobación HTTP del backend de pruebas | `test/integration/run_testing_backend.py`, `examples/aida/build.zig` |
 | Entrada de AIDA / arranque conjunto del backend real y frontend | `examples/aida/src/main.zig`, `test/integration/run_aida_test.py`, `build/aida.zig`, `src/frontend/api_config.js` |

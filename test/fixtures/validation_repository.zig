@@ -11,6 +11,7 @@ pub fn Repository(comptime names: []const []const u8) type {
         select_calls: usize = 0,
         insert_calls: usize = 0,
         update_calls: usize = 0,
+        delete_calls: usize = 0,
         deinit_calls: usize = 0,
         expected_parameters: ?[]const rest.FieldValue = null,
         parameters_match: bool = false,
@@ -74,6 +75,7 @@ pub fn Repository(comptime names: []const []const u8) type {
         }
 
         pub fn delete(self: *Self, allocator: std.mem.Allocator, _: []const u8, _: []const rest.FieldValue) rest.RepositoryError!Result {
+            self.delete_calls += 1;
             return self.makeResult(allocator, self.rows);
         }
     };
