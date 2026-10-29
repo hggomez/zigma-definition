@@ -10,42 +10,66 @@
 //! text (a bigint is never rounded through a JS number); null is an empty
 //! cell, a struct its fields in order joined with "-" (`fecha` shows as
 //! 2026-3-14: a display of its own for dates is pending).
+//!
+//! The look is an admin panel: every page has the same frame, a header with
+//! the system's name (linking the index), a sidebar nav with every entity in
+//! declaration order (the page's own marked aria-current="page") and the
+//! content in <main>; a fixed common.css the pages link lays it out.
 
 const std = @import("std");
 const aida = @import("aida");
 const fe = @import("frontend_generator");
 const expectEqualStrings = std.testing.expectEqualStrings;
 
-test "indexHtml: the system's name and a link per entity, in declaration order" {
+// two entities are enough for the frame: the nav lists them in this order
+const two_entities = .{ .periodos = aida.periodos, .materias = aida.materias };
+
+test "indexHtml: the frame (header, nav with a link per entity in declaration order, none current) and the system's name" {
     try expectEqualStrings(
         \\<!doctype html>
         \\<html>
         \\<head>
         \\<meta charset="utf-8">
+        \\<meta name="viewport" content="width=device-width, initial-scale=1">
         \\<title>aida</title>
+        \\<link rel="stylesheet" href="/common.css">
         \\</head>
         \\<body>
-        \\<h1>aida</h1>
+        \\<header><a class="home" href="/">aida</a></header>
+        \\<nav>
         \\<ul>
         \\<li><a href="/periodos">periodos</a></li>
         \\<li><a href="/materias">materias</a></li>
         \\</ul>
+        \\</nav>
+        \\<main>
+        \\<h1>aida</h1>
+        \\</main>
         \\</body>
         \\</html>
         \\
-    , fe.indexHtml("aida", .{ .periodos = aida.periodos, .materias = aida.materias }));
+    , fe.indexHtml("aida", two_entities));
 }
 
-test "entityHtml: a table with a column per field, its header the field's label, filled from the API" {
+test "entityHtml: the frame with its own entity current, and a table with a column per field, its header the field's label, filled from the API" {
     try expectEqualStrings(
         \\<!doctype html>
         \\<html>
         \\<head>
         \\<meta charset="utf-8">
+        \\<meta name="viewport" content="width=device-width, initial-scale=1">
         \\<title>materias</title>
+        \\<link rel="stylesheet" href="/common.css">
         \\</head>
         \\<body>
-        \\<p><a href="/">aida</a></p>
+        \\<header><a class="home" href="/">aida</a></header>
+        \\<nav>
+        \\<ul>
+        \\<li><a href="/periodos">periodos</a></li>
+        \\<li><a href="/materias" aria-current="page">materias</a></li>
+        \\</ul>
+        \\</nav>
+        \\<main>
         \\<h1>materias</h1>
         \\<table>
         \\<thead>
@@ -53,6 +77,7 @@ test "entityHtml: a table with a column per field, its header the field's label,
         \\</thead>
         \\<tbody></tbody>
         \\</table>
+        \\</main>
         \\<script type="module">
         \\import { list, cell, struct } from "/common.js";
         \\list("materias", [
@@ -63,18 +88,18 @@ test "entityHtml: a table with a column per field, its header the field's label,
         \\</body>
         \\</html>
         \\
-    , fe.entityHtml("aida", aida.type_defs, "materias", aida.materias));
+    , fe.entityHtml("aida", aida.type_defs, two_entities, "materias"));
 }
 
 test "entityHtml: a derived label (email_alternativo -> email alternativo)" {
-    const page = fe.entityHtml("aida", aida.type_defs, "docentes", aida.docentes);
+    const page = fe.entityHtml("aida", aida.type_defs, aida.entity_defs, "docentes");
     try std.testing.expect(std.mem.indexOf(u8, page,
         \\<tr><th>docente</th><th>apellido</th><th>nombres</th><th>cargo</th><th>email</th><th>email alternativo</th><th>jefe</th></tr>
     ) != null);
 }
 
 test "entityHtml: a bigint is a cell like any other value, a struct its fields joined with '-'" {
-    const page = fe.entityHtml("aida", aida.type_defs, "clases", aida.clases);
+    const page = fe.entityHtml("aida", aida.type_defs, aida.entity_defs, "clases");
     try std.testing.expect(std.mem.indexOf(u8, page,
         \\list("clases", [
         \\  (row) => cell(row.periodo),
@@ -91,4 +116,19 @@ test "common_js: reads the API keeping every number as its exact text" {
         \\  return JSON.parse(await res.text(), (key, value, context) => (typeof value === "number" ? context.source : value));
     ) != null);
     try std.testing.expect(std.mem.indexOf(u8, fe.common_js, "export async function list(entity, columns) {") != null);
+}
+
+test "common_css: the admin panel, a sidebar grid with the current entity highlighted and empty cells shown as a dash" {
+    const has = struct {
+        fn has(text: []const u8) bool {
+            return std.mem.indexOf(u8, fe.common_css, text) != null;
+        }
+    }.has;
+    // header and nav in the left column, main beside them
+    try std.testing.expect(has("grid-template-columns: 210px 1fr;"));
+    try std.testing.expect(has("main { grid-column: 2; grid-row: 1 / 3;"));
+    try std.testing.expect(has("nav a[aria-current=\"page\"] {"));
+    try std.testing.expect(has("td:empty::after { content: \"\\2014\";"));
+    // narrow screens: one column, the nav above the content
+    try std.testing.expect(has("@media (max-width: 640px) {"));
 }

@@ -504,6 +504,15 @@ frontend en 8081, cada entidad lista exactamente las filas del seed (una fila ag
 mano antes de la corrida lo hace fallar si no hubo reset) y algunas filas completas.
 `zig build example-down` lo baja (el volumen queda: `example` lo resetea igual).
 
+**Estilo "admin panel" (2026-10-29):** elegido entre cinco opciones. Todas las páginas
+comparten el marco: header con el nombre del sistema (link al índice), nav lateral con
+todas las entidades en orden de declaración (la de la página con `aria-current="page"`)
+y el contenido en `<main>`; un `common.css` fijo (`common_css` del generador, como
+`common_js`) lo diseña. `entityHtml` recibe ahora todas las entidades (para la nav). Una
+celda vacía muestra "—" por CSS (el texto sigue vacío). Specs nuevas: la hoja se sirve
+como CSS, la nav en cada página con la actual marcada, y la nav dibujada como columna a
+la izquierda del contenido (posiciones reales en el navegador).
+
 ## Próximos pasos
 
 Hito 2 cerrado: lo que sigue de esta lista queda para más adelante.

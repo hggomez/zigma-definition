@@ -50,6 +50,44 @@ test("the rows: a bigint exact, a fecha as its fields joined with '-', null as a
     .toHaveText(["e2e-test", "e2e-test", "1", "", "sin fecha"]);
 });
 
+test("every page links the shared stylesheet, and it is served as CSS", async ({ page, request }) => {
+  const css = await request.get("/common.css");
+  expect(css.status()).toBe(200);
+  expect(css.headers()["content-type"]).toMatch(/^text\/css/);
+  for (const path of ["/", ...entities.map((e) => "/" + e)]) {
+    await page.goto(path);
+    await expect(page.locator('link[rel="stylesheet"]'), path).toHaveAttribute("href", "/common.css");
+  }
+});
+
+test("every page has the sidebar with every entity, its own marked as current", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.locator("nav a")).toHaveText(entities);
+  await expect(page.locator('nav a[aria-current="page"]')).toHaveCount(0);
+  for (const entity of entities) {
+    await page.goto("/" + entity);
+    await expect(page.locator("nav a"), entity).toHaveText(entities);
+    await expect(page.locator('nav a[aria-current="page"]'), entity).toHaveText(entity);
+  }
+});
+
+test("the layout is an admin panel: the nav is drawn as a column left of the content", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/clases");
+  const nav = await page.locator("nav").boundingBox();
+  const main = await page.locator("main").boundingBox();
+  expect(nav && main).toBeTruthy();
+  // side by side: the nav ends where the content starts, and they share rows
+  expect(nav!.x + nav!.width).toBeLessThanOrEqual(main!.x);
+  expect(nav!.y).toBeLessThan(main!.y + main!.height);
+  // a column: the entity links stacked, not in a row
+  const links = page.locator("nav a");
+  const first = await links.first().boundingBox();
+  const second = await links.nth(1).boundingBox();
+  expect(second!.y).toBeGreaterThan(first!.y);
+  expect(second!.x).toBe(first!.x);
+});
+
 test("a path that is not an entity is a 404", async ({ page }) => {
   const res = await page.goto("/inexistentes");
   expect(res?.status()).toBe(404);
