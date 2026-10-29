@@ -1,5 +1,5 @@
 //! EXAMPLE: prints the generated TypeScript DML module for the aida system to
-//! stdout. `zig build ts-backend` writes this to zig-out/ts-backend/dml.ts.
+//! stdout. `zig build test-backend` writes this to backend/src/dml.ts.
 
 const std = @import("std");
 const aida = @import("aida");
@@ -12,7 +12,7 @@ const ts_backend_generator = @import("ts_backend_generator");
 const dml_module = ts_backend_generator.generateTsBackend(aida.type_defs, aida.entity_defs);
 
 // Writes to stdout, not std.debug.print (which always goes to stderr): the
-// `ts-backend` build step captures this output to a file.
+// build steps capture this output to a file.
 pub fn main(init: std.process.Init) !void {
     var buffer: [4096]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(init.io, &buffer);

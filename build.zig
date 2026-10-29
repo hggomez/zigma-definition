@@ -334,7 +334,7 @@ pub fn build(b: *std.Build) void {
     // pipes the generated aida schema into psql running inside that container. No
     // Postgres driver needed: psql runs inside the container, so the only host
     // dependency is Docker. Only the `postgres` service: the `backend` one is
-    // brought up by `http-docker`, once its server.ts is generated.
+    // brought up by `test-api`, once its server.ts is generated.
     const docker_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "postgres" });
 
     const run_print_schema_for_db = b.addRunArtifact(print_schema_exe);
@@ -350,8 +350,8 @@ pub fn build(b: *std.Build) void {
     const create_database_step = b.step("create-database", "Start Postgres via Docker, then generate and apply the aida schema");
     create_database_step.dependOn(&apply_aida_schema.step);
 
-    // `zig build ts-backend`: generate the TypeScript DML module and its test
-    // module from the aida SSOT, write both to zig-out/ts-backend/, then run
+    // `zig build test-backend`: generate the TypeScript DML module and its
+    // test module from the aida SSOT, write both into backend/src/, then run
     // the generated tests with `node --test`. Node 22.18+ runs .ts directly
     // and the generated tests only use node:test / node:assert, so there is
     // no npm step.
@@ -384,8 +384,7 @@ pub fn build(b: *std.Build) void {
     const dml_test_ts = b.addRunArtifact(print_ts_backend_tests_exe).captureStdOut(.{});
 
     // The generated files are written into the committed backend/ package
-    // (gitignored there) so the hand-written integration test can import
-    // ./dml.ts and Node resolves it.
+    // (gitignored there): the backend image is built from that directory.
     const write_ts_backend = b.addUpdateSourceFiles();
     write_ts_backend.addCopyFileToSource(dml_ts, "backend/src/dml.ts");
     write_ts_backend.addCopyFileToSource(dml_test_ts, "backend/src/dml.test.ts");
@@ -394,59 +393,10 @@ pub fn build(b: *std.Build) void {
     run_ts_backend_node_tests.setCwd(b.path("backend"));
     run_ts_backend_node_tests.step.dependOn(&write_ts_backend.step);
 
-    const ts_backend_step = b.step("ts-backend", "Generate the aida TypeScript DML module + tests into backend/, then run the pure tests with node");
-    ts_backend_step.dependOn(&run_ts_backend_node_tests.step);
+    const test_backend_step = b.step("test-backend", "Generate the aida TypeScript DML module + tests into backend/, then run the pure tests with node");
+    test_backend_step.dependOn(&run_ts_backend_node_tests.step);
 
-    // `zig build ts-backend-db`: bring up the container and apply the schema
-    // (same steps as `create-database`), `npm install` in backend/, regenerate
-    // dml.ts, then run test/db_backend_integration_test.zig - a Zig test that
-    // drives the generated builders through Node against the real database.
-    // Not on `test_step` (needs Docker + Node).
-    const npm = if (@import("builtin").os.tag == .windows) "npm.cmd" else "npm";
-    const npm_install = b.addSystemCommand(&.{ npm, "install", "--no-audit", "--no-fund" });
-    npm_install.setCwd(b.path("backend"));
-
-    const db_backend_integration_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/db_backend_integration_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const run_db_backend_integration_tests = b.addRunArtifact(db_backend_integration_tests);
-    run_db_backend_integration_tests.has_side_effects = true;
-    run_db_backend_integration_tests.step.dependOn(&write_ts_backend.step);
-    run_db_backend_integration_tests.step.dependOn(&npm_install.step);
-    run_db_backend_integration_tests.step.dependOn(&apply_aida_schema.step);
-
-    const ts_backend_db_step = b.step("ts-backend-db", "Generate, then run the DML integration test against the docker-compose Postgres");
-    ts_backend_db_step.dependOn(&run_db_backend_integration_tests.step);
-
-    // `zig build backend-docker`: the backend in its own container. Regenerate
-    // dml.ts into backend/ (generated on the host: no Zig in the image), apply
-    // the aida schema, build the `backend` image, then run
-    // test/backend_docker_test.zig - a Zig test that runs the generated
-    // builders inside that container against the `postgres` service. Not on
-    // `test_step` (needs Docker).
-    const build_backend_image = b.addSystemCommand(&.{ "docker", "compose", "build", "backend" });
-    build_backend_image.step.dependOn(&write_ts_backend.step);
-
-    const backend_docker_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/backend_docker_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const run_backend_docker_tests = b.addRunArtifact(backend_docker_tests);
-    run_backend_docker_tests.has_side_effects = true;
-    run_backend_docker_tests.step.dependOn(&build_backend_image.step);
-    run_backend_docker_tests.step.dependOn(&apply_aida_schema.step);
-
-    const backend_docker_step = b.step("backend-docker", "Build the backend image and run the generated DML inside it against the docker-compose Postgres");
-    backend_docker_step.dependOn(&run_backend_docker_tests.step);
-
-    // `zig build http-docker`: the generated HTTP server as the backend's
+    // `zig build test-api`: the generated HTTP server as the backend's
     // long-running process. Regenerate dml.ts + server.ts into backend/, apply
     // the aida schema, build the image, bring the backend up (waiting for its
     // healthcheck), then run test/http_docker_test.zig - a Zig test that
@@ -486,10 +436,10 @@ pub fn build(b: *std.Build) void {
     run_http_docker_tests.has_side_effects = true;
     run_http_docker_tests.step.dependOn(&backend_up.step);
 
-    const http_docker_step = b.step("http-docker", "Generate the HTTP server, run it in the backend container and request it from the host");
-    http_docker_step.dependOn(&run_http_docker_tests.step);
+    const test_api_step = b.step("test-api", "Generate the HTTP server, run it in the backend container and request it from the host");
+    test_api_step.dependOn(&run_http_docker_tests.step);
 
-    // `zig build frontend-e2e`: the generated frontend in a headless browser.
+    // `zig build test-e2e`: the generated frontend in a headless browser.
     // Regenerate dml.ts + server.ts into backend/ and the frontend into
     // frontend/public (gitignored), apply the aida schema, build the images,
     // bring the frontend up (and the backend with it, waiting for both
@@ -532,10 +482,10 @@ pub fn build(b: *std.Build) void {
     run_frontend_e2e_tests.has_side_effects = true;
     run_frontend_e2e_tests.step.dependOn(&frontend_up.step);
 
-    const frontend_e2e_step = b.step("frontend-e2e", "Generate the frontend, serve it in its container and test it in a headless browser (Playwright, in a container)");
-    frontend_e2e_step.dependOn(&run_frontend_e2e_tests.step);
+    const test_e2e_step = b.step("test-e2e", "Generate the frontend, serve it in its container and test it in a headless browser (Playwright, in a container)");
+    test_e2e_step.dependOn(&run_frontend_e2e_tests.step);
 
-    // `zig build rules-wasm`: compile the rules of the test system to one
+    // `zig build test-rules-wasm`: compile the rules of the test system to one
     // wasm32 module (src/rules_wasm.zig with test/test_system.zig as its
     // "system") and run test/rules_wasm_node_test.zig, a Zig test that loads
     // it with Node's built-in WebAssembly and calls the rules under the
@@ -621,9 +571,9 @@ pub fn build(b: *std.Build) void {
     });
     const run_rules_ts_node_tests = b.addRunArtifact(rules_ts_node_tests);
 
-    const rules_wasm_step = b.step("rules-wasm", "Compile the test system's rules to wasm32, generate its rules.ts, and test both from Node");
-    rules_wasm_step.dependOn(&run_rules_wasm_node_tests.step);
-    rules_wasm_step.dependOn(&run_rules_ts_node_tests.step);
+    const test_rules_wasm_step = b.step("test-rules-wasm", "Compile the test system's rules to wasm32, generate its rules.ts, and test both from Node");
+    test_rules_wasm_step.dependOn(&run_rules_wasm_node_tests.step);
+    test_rules_wasm_step.dependOn(&run_rules_ts_node_tests.step);
 
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
@@ -659,4 +609,20 @@ pub fn build(b: *std.Build) void {
         case_obj.expect_errors = .{ .contains = case.expected };
         test_step.dependOn(&case_obj.step);
     }
+
+    // `zig build test-all`: `test`, then every test that needs Node or
+    // Docker, one after another, each in its own nested `zig build` process.
+    // New nodes only: an arrow added to the shared nodes (write_ts_backend,
+    // apply_aida_schema, ...) would also be there for every other step. One
+    // process at a time, so the stack tests never overlap on the shared
+    // containers; the first failure stops the chain.
+    const test_all_step = b.step("test-all", "Run test, then every Node/Docker test, one after another");
+    var previous: *std.Build.Step = test_step;
+    for ([_][]const u8{ "test-backend", "test-api", "test-e2e", "test-rules-wasm" }) |name| {
+        const nested = b.addSystemCommand(&.{ b.graph.zig_exe, "build", name });
+        nested.setName(b.fmt("zig build {s}", .{name}));
+        nested.step.dependOn(previous);
+        previous = &nested.step;
+    }
+    test_all_step.dependOn(previous);
 }

@@ -5,7 +5,7 @@
 //! the RuleResult, the field-by-field serializer (extra properties stay out
 //! of the JSON) and bigint crossing exactly.
 //!
-//! Run with `zig build rules-wasm`, which generates rules.ts, puts it next to
+//! Run with `zig build test-rules-wasm`, which generates rules.ts, puts it next to
 //! the compiled module and passes the path of rules.ts here. Not part of
 //! `zig build test` (needs Node).
 

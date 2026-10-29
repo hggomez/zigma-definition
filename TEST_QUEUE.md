@@ -19,13 +19,14 @@ Hito 1 (base de datos) completo, ver `GOALS.md`. Queda una limitación conocida:
   `$n` y un valor por columna; orden de `values` = orden de columnas, independiente del
   orden de claves del objeto de entrada.
 * Contra Postgres real (la base es el oráculo, ya no string-assert). Hecho: insert→
-  selectByPk ida y vuelta (`periodos`). Falta: `update` toca solo las columnas nombradas,
+  selectByPk ida y vuelta (`periodos`; ese test se quitó el 2026-10-29: lo cubre
+  `zig build test-api`). Falta: `update` toca solo las columnas nombradas,
   `delete` y después selectByPk → vacío, violación de uk (`materias.denominacion`) y de fk
   mapeadas a error de dominio, `fecha` ida y vuelta por su columna de tipo compuesto (hoy
   se rompe: `pg` recibe el objeto crudo), un campo `bigint` (`i64`, p. ej. `clases.orden`)
   y uno con `DOMAIN` (rechazo de un valor fuera del intervalo de Zig), entidad de pk
   compuesta (`inscripciones`, necesita `cursos`+`alumnos` antes por las fks).
-* `apply_aida_schema` (usado por `create-database` y `ts-backend-db`) no es idempotente:
+* `apply_aida_schema` (usado por `create-database`, `test-api` y `test-e2e`) no es idempotente:
   el DDL es `CREATE DOMAIN` / `CREATE TYPE` / `CREATE TABLE` sin `IF NOT EXISTS`, así que
   re-correrlo sobre una base ya creada tira `type "x" already exists` / `relation "x"
   already exists` (psql sigue igual, exit 0, pero ensucia la salida, y el test corre contra
@@ -60,7 +61,7 @@ Hito 1 (base de datos) completo, ver `GOALS.md`. Queda una limitación conocida:
 * `rules_wasm.run` nativo (`test/rules_wasm_test.zig`): pasa → `""`, cada error de dominio,
   `"InvalidInput"` (no JSON, campo faltante, campo de más, string en entero, `1.5`, `null`),
   rango entero de `i64`; sin leaks (testing allocator).
-* `zig build rules-wasm` contra el `.wasm` real desde Node: el contrato a mano
+* `zig build test-rules-wasm` contra el `.wasm` real desde Node: el contrato a mano
   (`test/rules_wasm_node_test.zig`, incluida la entrada vacía y 10.000 llamadas sin crecer
   la memoria) y el `rules.ts` generado (`test/rules_ts_node_test.zig`).
 * `ts_rules_generator`: texto exacto de `ruleFn` (cada tipo de campo, `bigint` dentro de un
@@ -78,7 +79,7 @@ Hito 1 (base de datos) completo, ver `GOALS.md`. Queda una limitación conocida:
 * Tipos TS y samples de los tests generados derivados del tipo de Zig de cada dominio
   (`tsTypeOf` vía `type_defs`); dominio que no está en `type_defs` → no compila
   (`ts_type_not_in_type_defs.zig`). Reemplaza a `ts_type_defs` / `ts_sample_defs`.
-* `zig build ts-backend`: genera `dml.ts` + `dml.test.ts` y corre `node --test`.
+* `zig build test-backend`: genera `dml.ts` + `dml.test.ts` y corre `node --test`.
 
 ## Hechos (referencia rápida, no repetir)
 

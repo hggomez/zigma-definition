@@ -29,10 +29,14 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `test/compile_errors/*.zig`: fragmentos que **deben fallar** la compilación; `build.zig`
   los compila con `expect_errors` (el paso tiene éxito solo si el error coincide) y los
   cuelga del step `test`. La lista de casos con su mensaje esperado está en `build.zig`.
-* `zig build test` corre todo: tests de runtime y casos de no-compila.
+* `zig build test` corre los tests de Zig: tests de runtime y casos de no-compila (sin Node
+  ni Docker). `zig build test-all` corre `test` y después, de a uno y cada uno en su propio
+  proceso `zig build`, los que necesitan Node o Docker: `test-backend` (`dml.ts` con `node
+  --test`), `test-api` (el servidor en su contenedor), `test-e2e` (Playwright) y
+  `test-rules-wasm`. Cada uno se puede correr suelto.
 * `src/rules.zig` (`defineRules`, re-exportado por `zigma`), `src/rules_wasm.zig` (las reglas
   de un sistema compiladas a un `.wasm`) y `src/ts_rules_generator.zig` (`rules.ts`); sus
-  tests usan `test/test_system.zig`, un sistema propio de prueba. `zig build rules-wasm`
+  tests usan `test/test_system.zig`, un sistema propio de prueba. `zig build test-rules-wasm`
   prueba el `.wasm` y el `rules.ts` desde Node (fuera de `zig build test`).
 
 ## Decisiones de diseño

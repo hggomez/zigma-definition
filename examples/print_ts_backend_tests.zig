@@ -1,6 +1,6 @@
 //! EXAMPLE: prints the generated TypeScript test module for the aida DML
-//! module to stdout. `zig build ts-backend` writes this to
-//! zig-out/ts-backend/dml.test.ts and runs it with `node --test`.
+//! module to stdout. `zig build test-backend` writes this to
+//! backend/src/dml.test.ts and runs it with `node --test`.
 
 const std = @import("std");
 const aida = @import("aida");

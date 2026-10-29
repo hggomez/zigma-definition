@@ -1,5 +1,5 @@
 //! EXAMPLE: prints the generated HTTP server (server.ts) of the aida system to
-//! stdout. `zig build http-docker` writes it to backend/src/server.ts, next to
+//! stdout. `zig build test-api` writes it to backend/src/server.ts, next to
 //! dml.ts. For now it serves the list of every entity (GET /api/<entity>): the
 //! HTTP layer grows from there, one operation at a time.
 

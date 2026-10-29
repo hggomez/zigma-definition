@@ -142,7 +142,7 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
 * `src/rules.zig`: `defineRules` (re-exportado por `zigma`). `src/rules_wasm.zig` y
   `src/ts_rules_generator.zig`: las reglas de un sistema compiladas a WASM y su `rules.ts`.
 * `test/test_system.zig`: un sistema propio de prueba con reglas (salas y reservas), para los
-  tests de las reglas. `zig build rules-wasm` lo compila a WASM y lo prueba desde Node.
+  tests de las reglas. `zig build test-rules-wasm` lo compila a WASM y lo prueba desde Node.
 
 ## Forma de trabajo
 

@@ -6,7 +6,7 @@
 //! instance there, call the rule, unpack `ptr << 32 | len` and read the
 //! string.
 //!
-//! Run with `zig build rules-wasm`, which compiles the module and passes its
+//! Run with `zig build test-rules-wasm`, which compiles the module and passes its
 //! path here. Not part of `zig build test` (needs Node).
 
 const std = @import("std");

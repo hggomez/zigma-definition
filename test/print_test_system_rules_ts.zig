@@ -1,5 +1,5 @@
 //! Prints the generated rules.ts of the test system (test/test_system.zig) to
-//! stdout. `zig build rules-wasm` writes it next to the system's compiled
+//! stdout. `zig build test-rules-wasm` writes it next to the system's compiled
 //! rules, as rules.ts + rules.wasm, for test/rules_ts_node_test.zig.
 
 const std = @import("std");

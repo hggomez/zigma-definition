@@ -23,7 +23,7 @@
 //! `orden` is 2^53 + 1 and another one without `fecha`. It requests the API
 //! from the host with Node's fetch, and removes the rows afterwards.
 //!
-//! Run with `zig build http-docker`, which regenerates dml.ts + server.ts
+//! Run with `zig build test-api`, which regenerates dml.ts + server.ts
 //! into backend/, applies the aida schema, builds the image and brings the
 //! backend up (waiting for its healthcheck). Not part of `zig build test`
 //! (needs Docker + Node).

@@ -473,6 +473,16 @@ llamadas sin crecer la memoria) y el `rules.ts` generado al lado del `.wasm`
 las reglas de aida (`validarCargo` es todavía una función suelta, y `cargo` no tiene
 entidad); el `.wasm` y `rules.ts` de aida en el backend.
 
+## Steps de build: renombre y `test-all` (2026-10-29)
+
+Los nombres de steps de las entradas anteriores son los de su momento. Desde el
+2026-10-29: `ts-backend` → `test-backend`, `http-docker` → `test-api`, `frontend-e2e` →
+`test-e2e`, `rules-wasm` → `test-rules-wasm`; `ts-backend-db` y `backend-docker` (con
+`test/db_backend_integration_test.zig` y `test/backend_docker_test.zig`) se quitaron: su
+ida y vuelta de `periodos` contra Postgres la cubre `test-api` (CRUD de las 11 entidades
+con el backend en su contenedor). Nuevo `zig build test-all`: `test` y después los otros,
+de a uno, cada uno en un `zig build` anidado.
+
 ## Próximos pasos
 
 Hito 2 cerrado: lo que sigue de esta lista queda para más adelante.

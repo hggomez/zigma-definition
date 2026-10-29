@@ -1,5 +1,5 @@
 //! EXAMPLE: writes the generated frontend of the aida system into the
-//! directory given as the first argument (`zig build frontend-e2e` passes
+//! directory given as the first argument (`zig build test-e2e` passes
 //! frontend/public): index.html, common.js and one page per entity
 //! (<entity>.html, served at /<entity>).
 

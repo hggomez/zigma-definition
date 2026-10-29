@@ -8,7 +8,7 @@
 //! and another one without `fecha`), runs the Playwright suite with
 //! `docker compose run --rm e2e`, and removes the rows afterwards.
 //!
-//! Run with `zig build frontend-e2e`, which regenerates dml.ts, server.ts and
+//! Run with `zig build test-e2e`, which regenerates dml.ts, server.ts and
 //! the frontend, applies the aida schema, builds the images and brings the
 //! frontend up (and the backend with it). Not part of `zig build test` (needs
 //! Docker).
