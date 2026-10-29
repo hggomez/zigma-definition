@@ -24,7 +24,12 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 ## Estructura
 
 * `src/zigma.zig`: el framework descriptor (módulo `zigma`). No conoce ningún sistema concreto.
-* `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
+* `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`), y
+  `examples/aida_seed.sql`, sus filas de ejemplo. En `examples/` va solo el sistema: lo
+  generado sale de `src/generate.zig`, genérico, que `build.zig` compila con el sistema
+  como módulo `"system"` (`generate schema | dml | dml-tests | server | frontend DIR |
+  rules-ts`); cada artefacto exige lo que el sistema declara (`name`, `type_defs`,
+  `entity_defs`, `rule_defs`).
 * `test/aida_test.zig`: los tests positivos (runtime y asserts comptime).
 * `test/compile_errors/*.zig`: fragmentos que **deben fallar** la compilación; `build.zig`
   los compila con `expect_errors` (el paso tiene éxito solo si el error coincide) y los

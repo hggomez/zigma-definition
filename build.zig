@@ -66,6 +66,42 @@ const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }
     .{ .file = "ts_server_struct_text_field.zig", .expected = "field 'nombre' of type 'lugar': text inside a composite type is not read yet" },
 };
 
+/// The generator modules src/generate.zig imports.
+const Generators = struct {
+    sql: *std.Build.Module,
+    ts_backend: *std.Build.Module,
+    ts_server: *std.Build.Module,
+    frontend: *std.Build.Module,
+    ts_rules: *std.Build.Module,
+};
+
+/// The generator of `system` (src/generate.zig with it as "system").
+fn addGenerate(
+    b: *std.Build,
+    name: []const u8,
+    system: *std.Build.Module,
+    generators: Generators,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Step.Compile {
+    return b.addExecutable(.{
+        .name = name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/generate.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "system", .module = system },
+                .{ .name = "sql_generator", .module = generators.sql },
+                .{ .name = "ts_backend_generator", .module = generators.ts_backend },
+                .{ .name = "ts_server_generator", .module = generators.ts_server },
+                .{ .name = "frontend_generator", .module = generators.frontend },
+                .{ .name = "ts_rules_generator", .module = generators.ts_rules },
+            },
+        }),
+    });
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -312,19 +348,22 @@ pub fn build(b: *std.Build) void {
     });
     const run_frontend_generator_tests = b.addRunArtifact(frontend_generator_tests);
 
-    const print_schema_exe = b.addExecutable(.{
-        .name = "print_schema",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/print_schema.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "aida", .module = aida_mod },
-                .{ .name = "sql_generator", .module = sql_generator_mod },
-            },
-        }),
-    });
-    const run_print_schema = b.addRunArtifact(print_schema_exe);
+    // The generator of a system (src/generate.zig): generic, it writes what
+    // the framework generates for the module it gets as "system"; each step
+    // runs it with what to generate (`schema`, `dml`, `frontend DIR`, ...).
+    // One per system: aida here (the system the stack runs), the test system
+    // for test-rules-wasm.
+    const generators = Generators{
+        .sql = sql_generator_mod,
+        .ts_backend = ts_backend_generator_mod,
+        .ts_server = ts_server_generator_mod,
+        .frontend = frontend_generator_mod,
+        .ts_rules = ts_rules_generator_mod,
+    };
+    const generate_exe = addGenerate(b, "generate", aida_mod, generators, target, optimize);
+
+    const run_print_schema = b.addRunArtifact(generate_exe);
+    run_print_schema.addArg("schema");
     const print_schema_step = b.step("print-schema", "Print the CREATE TABLE DDL generated for the aida system");
     print_schema_step.dependOn(&run_print_schema.step);
 
@@ -337,7 +376,8 @@ pub fn build(b: *std.Build) void {
     // brought up by `test-api`, once its server.ts is generated.
     const docker_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "postgres" });
 
-    const run_print_schema_for_db = b.addRunArtifact(print_schema_exe);
+    const run_print_schema_for_db = b.addRunArtifact(generate_exe);
+    run_print_schema_for_db.addArg("schema");
     const aida_schema_sql = run_print_schema_for_db.captureStdOut(.{});
 
     const apply_aida_schema = b.addSystemCommand(&.{
@@ -355,33 +395,12 @@ pub fn build(b: *std.Build) void {
     // the generated tests with `node --test`. Node 22.18+ runs .ts directly
     // and the generated tests only use node:test / node:assert, so there is
     // no npm step.
-    const print_ts_backend_exe = b.addExecutable(.{
-        .name = "print_ts_backend",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/print_ts_backend.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "aida", .module = aida_mod },
-                .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
-            },
-        }),
-    });
-    const print_ts_backend_tests_exe = b.addExecutable(.{
-        .name = "print_ts_backend_tests",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/print_ts_backend_tests.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "aida", .module = aida_mod },
-                .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
-            },
-        }),
-    });
-
-    const dml_ts = b.addRunArtifact(print_ts_backend_exe).captureStdOut(.{});
-    const dml_test_ts = b.addRunArtifact(print_ts_backend_tests_exe).captureStdOut(.{});
+    const run_generate_dml = b.addRunArtifact(generate_exe);
+    run_generate_dml.addArg("dml");
+    const dml_ts = run_generate_dml.captureStdOut(.{});
+    const run_generate_dml_tests = b.addRunArtifact(generate_exe);
+    run_generate_dml_tests.addArg("dml-tests");
+    const dml_test_ts = run_generate_dml_tests.captureStdOut(.{});
 
     // The generated files are written into the committed backend/ package
     // (gitignored there): the backend image is built from that directory.
@@ -401,19 +420,9 @@ pub fn build(b: *std.Build) void {
     // the aida schema, build the image, bring the backend up (waiting for its
     // healthcheck), then run test/http_docker_test.zig - a Zig test that
     // requests the API from the host. Not on `test_step` (needs Docker + Node).
-    const print_ts_server_exe = b.addExecutable(.{
-        .name = "print_ts_server",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/print_ts_server.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "aida", .module = aida_mod },
-                .{ .name = "ts_server_generator", .module = ts_server_generator_mod },
-            },
-        }),
-    });
-    const server_ts = b.addRunArtifact(print_ts_server_exe).captureStdOut(.{});
+    const run_generate_server = b.addRunArtifact(generate_exe);
+    run_generate_server.addArg("server");
+    const server_ts = run_generate_server.captureStdOut(.{});
     const write_ts_server = b.addUpdateSourceFiles();
     write_ts_server.addCopyFileToSource(server_ts, "backend/src/server.ts");
 
@@ -466,20 +475,8 @@ pub fn build(b: *std.Build) void {
     // healthchecks), then run test/frontend_e2e_test.zig - a Zig test that
     // seeds rows and runs the Playwright suite in the e2e service. Not on
     // `test_step` (needs Docker).
-    const print_frontend_exe = b.addExecutable(.{
-        .name = "print_frontend",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("examples/print_frontend.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "aida", .module = aida_mod },
-                .{ .name = "frontend_generator", .module = frontend_generator_mod },
-            },
-        }),
-    });
-    const write_frontend = b.addRunArtifact(print_frontend_exe);
-    write_frontend.addArg("frontend/public");
+    const write_frontend = b.addRunArtifact(generate_exe);
+    write_frontend.addArgs(&.{ "frontend", "frontend/public" });
     write_frontend.has_side_effects = true;
 
     const build_frontend_images = b.addSystemCommand(&.{ "docker", "compose", "--profile", "e2e", "build", "backend", "frontend", "e2e" });
@@ -615,19 +612,10 @@ pub fn build(b: *std.Build) void {
     // Then the generated rules.ts of the test system, next to its compiled
     // rules as rules.wasm (rules.ts loads ./rules.wasm), in a generated
     // directory: test/rules_ts_node_test.zig imports it from Node.
-    const print_test_system_rules_ts_exe = b.addExecutable(.{
-        .name = "print_test_system_rules_ts",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/print_test_system_rules_ts.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "test_system", .module = test_system_mod },
-                .{ .name = "ts_rules_generator", .module = ts_rules_generator_mod },
-            },
-        }),
-    });
-    const test_system_rules_ts = b.addRunArtifact(print_test_system_rules_ts_exe).captureStdOut(.{});
+    const generate_test_system_exe = addGenerate(b, "generate_test_system", test_system_mod, generators, target, optimize);
+    const run_generate_rules_ts = b.addRunArtifact(generate_test_system_exe);
+    run_generate_rules_ts.addArg("rules-ts");
+    const test_system_rules_ts = run_generate_rules_ts.captureStdOut(.{});
     const test_system_rules_dir = b.addWriteFiles();
     const test_system_rules_ts_path = test_system_rules_dir.addCopyFile(test_system_rules_ts, "rules.ts");
     _ = test_system_rules_dir.addCopyFile(test_system_rules_wasm.getEmittedBin(), "rules.wasm");

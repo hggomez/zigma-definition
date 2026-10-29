@@ -513,6 +513,19 @@ celda vacía muestra "—" por CSS (el texto sigue vacío). Specs nuevas: la hoj
 como CSS, la nav en cada página con la actual marcada, y la nav dibujada como columna a
 la izquierda del contenido (posiciones reales en el navegador).
 
+## Un solo generador genérico (2026-10-29)
+
+En `examples/` quedan solo `aida.zig` y `aida_seed.sql`. Los seis drivers a mano
+(`examples/print_schema.zig`, `print_ts_backend.zig`, `print_ts_backend_tests.zig`,
+`print_ts_server.zig`, `print_frontend.zig` y `test/print_test_system_rules_ts.zig`; las
+entradas anteriores los nombran) se reemplazan por `src/generate.zig`: importa el sistema
+como `"system"` (como `src/rules_wasm.zig`) y recibe qué generar (`schema`, `dml`,
+`dml-tests`, `server`, `frontend DIR`, `rules-ts`). Cada artefacto se ofrece si el sistema
+declara lo que necesita (si no, un mensaje y código 1). `build.zig` lo compila una vez por
+sistema: aida y el sistema de prueba. El nombre del sistema lo declara él mismo
+(`pub const name = "aida";` en `aida.zig`). Las salidas generadas quedaron idénticas byte
+a byte. La infraestructura con nombres de aida (`docker-compose.yml`) queda para después.
+
 ## Próximos pasos
 
 Hito 2 cerrado: lo que sigue de esta lista queda para más adelante.

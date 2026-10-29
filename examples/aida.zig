@@ -3,6 +3,8 @@
 const std = @import("std");
 const zigma = @import("zigma");
 
+pub const name = "aida";
+
 pub const Fecha = struct { @"año": u16, mes: u8, @"día": u8 };
 
 pub const type_defs = zigma.defineTypes(zigma.merge(.{ zigma.common_type_defs, .{
