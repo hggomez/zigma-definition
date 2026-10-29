@@ -19,8 +19,8 @@ Hito 1 (base de datos) completo, ver `GOALS.md`. Queda una limitación conocida:
   `$n` y un valor por columna; orden de `values` = orden de columnas, independiente del
   orden de claves del objeto de entrada.
 * Contra Postgres real (la base es el oráculo, ya no string-assert). Hecho: insert→
-  selectByPk ida y vuelta (`periodos`; ese test se quitó el 2026-10-29: lo cubre
-  `zig build test-api`). Falta: `update` toca solo las columnas nombradas,
+  selectByPk ida y vuelta (`periodos`; desde el 2026-10-29 lo cubre `zig build test-backend-db`: CRUD de las
+  11 entidades sin HTTP). Falta: `update` toca solo las columnas nombradas,
   `delete` y después selectByPk → vacío, violación de uk (`materias.denominacion`) y de fk
   mapeadas a error de dominio, `fecha` ida y vuelta por su columna de tipo compuesto (hoy
   se rompe: `pg` recibe el objeto crudo), un campo `bigint` (`i64`, p. ej. `clases.orden`)

@@ -32,7 +32,9 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `zig build test` corre los tests de Zig: tests de runtime y casos de no-compila (sin Node
   ni Docker). `zig build test-all` corre `test` y después, de a uno y cada uno en su propio
   proceso `zig build`, los que necesitan Node o Docker: `test-backend` (`dml.ts` con `node
-  --test`), `test-api` (el servidor en su contenedor), `test-e2e` (Playwright) y
+  --test`), `test-backend-db` (`dml.ts` contra Postgres desde el contenedor del backend, con
+  los valores que le pasa el servidor, sin HTTP), `test-api` (el servidor en su
+  contenedor), `test-e2e` (Playwright) y
   `test-rules-wasm`. Cada uno se puede correr suelto.
 * `src/rules.zig` (`defineRules`, re-exportado por `zigma`), `src/rules_wasm.zig` (las reglas
   de un sistema compiladas a un `.wasm`) y `src/ts_rules_generator.zig` (`rules.ts`); sus

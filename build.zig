@@ -439,6 +439,26 @@ pub fn build(b: *std.Build) void {
     const test_api_step = b.step("test-api", "Generate the HTTP server, run it in the backend container and request it from the host");
     test_api_step.dependOn(&run_http_docker_tests.step);
 
+    // `zig build test-backend-db`: the generated DML against the database
+    // without the HTTP layer, with the values server.ts hands it: same image
+    // as test-api (built by the same node), the aida schema applied, then
+    // test/backend_db_test.zig - a Zig test that runs the builders inside the
+    // backend container. Not on `test_step` (needs Docker).
+    const backend_db_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/backend_db_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_backend_db_tests = b.addRunArtifact(backend_db_tests);
+    run_backend_db_tests.has_side_effects = true;
+    run_backend_db_tests.step.dependOn(&build_backend_image_with_server.step);
+    run_backend_db_tests.step.dependOn(&apply_aida_schema.step);
+
+    const test_backend_db_step = b.step("test-backend-db", "Run the generated DML inside the backend container against Postgres, with the values of test-api, without HTTP");
+    test_backend_db_step.dependOn(&run_backend_db_tests.step);
+
     // `zig build test-e2e`: the generated frontend in a headless browser.
     // Regenerate dml.ts + server.ts into backend/ and the frontend into
     // frontend/public (gitignored), apply the aida schema, build the images,
@@ -618,7 +638,7 @@ pub fn build(b: *std.Build) void {
     // containers; the first failure stops the chain.
     const test_all_step = b.step("test-all", "Run test, then every Node/Docker test, one after another");
     var previous: *std.Build.Step = test_step;
-    for ([_][]const u8{ "test-backend", "test-api", "test-e2e", "test-rules-wasm" }) |name| {
+    for ([_][]const u8{ "test-backend", "test-backend-db", "test-api", "test-e2e", "test-rules-wasm" }) |name| {
         const nested = b.addSystemCommand(&.{ b.graph.zig_exe, "build", name });
         nested.setName(b.fmt("zig build {s}", .{name}));
         nested.step.dependOn(previous);

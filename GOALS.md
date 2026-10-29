@@ -483,6 +483,15 @@ ida y vuelta de `periodos` contra Postgres la cubre `test-api` (CRUD de las 11 e
 con el backend en su contenedor). Nuevo `zig build test-all`: `test` y después los otros,
 de a uno, cada uno en un `zig build` anidado.
 
+Para recuperar la granularidad, nuevo `zig build test-backend-db`
+(`test/backend_db_test.zig`): el mismo flujo de datos que `test-api` por debajo de
+`server.ts`, sin HTTP. Desde el contenedor del backend, `dml.ts` contra Postgres para las
+11 entidades (insert, select por pk, select all, update, delete) con los valores que el
+servidor le pasa (texto, bigint de JS, `fecha` como literal `"(año,mes,día)"`, null) y las
+filas como `pg` se las devuelve (bigint como texto decimal, `fecha` como `"(…)"`). La
+traducción TS ↔ Postgres sigue en `server.ts`, no en `dml.ts`. En `test-all` va entre
+`test-backend` y `test-api`.
+
 ## Próximos pasos
 
 Hito 2 cerrado: lo que sigue de esta lista queda para más adelante.
