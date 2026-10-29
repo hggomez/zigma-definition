@@ -492,6 +492,18 @@ filas como `pg` se las devuelve (bigint como texto decimal, `fecha` como `"(…)
 traducción TS ↔ Postgres sigue en `server.ts`, no en `dml.ts`. En `test-all` va entre
 `test-backend` y `test-api`.
 
+## Stack de ejemplo para revisar el frontend (2026-10-29)
+
+`zig build example` levanta un segundo stack, separado del de los tests (proyecto compose
+`zigma-example`, `docker-compose.example.yml`: contenedor `zigma_example_postgres`, puertos
+8081 / 3001 / 5433, volumen propio por el nombre del proyecto). En cada corrida resetea la
+base (`DROP SCHEMA public CASCADE`, el DDL generado, `examples/aida_seed.sql`: tres filas
+falsas por entidad, `docente-1`, `materia-1`, …, con los casos borde: fk reflexiva, clase
+sin `fecha`, `orden` 2^53 + 1) y termina con `test/example_stack_test.zig`: por el
+frontend en 8081, cada entidad lista exactamente las filas del seed (una fila agregada a
+mano antes de la corrida lo hace fallar si no hubo reset) y algunas filas completas.
+`zig build example-down` lo baja (el volumen queda: `example` lo resetea igual).
+
 ## Próximos pasos
 
 Hito 2 cerrado: lo que sigue de esta lista queda para más adelante.

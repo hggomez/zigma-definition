@@ -36,6 +36,12 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   los valores que le pasa el servidor, sin HTTP), `test-api` (el servidor en su
   contenedor), `test-e2e` (Playwright) y
   `test-rules-wasm`. Cada uno se puede correr suelto.
+* `zig build example`: un segundo stack (proyecto compose `zigma-example`,
+  `docker-compose.example.yml` encima de `docker-compose.yml`: frontend en 8081, backend en
+  3001, Postgres en 5433) con las filas falsas de `examples/aida_seed.sql`, para revisar el
+  frontend a mano. Cada corrida resetea su base (esquema + seed) y termina con
+  `test/example_stack_test.zig`; queda corriendo hasta `zig build example-down`. No es un
+  test: no está en `test-all`.
 * `src/rules.zig` (`defineRules`, re-exportado por `zigma`), `src/rules_wasm.zig` (las reglas
   de un sistema compiladas a un `.wasm`) y `src/ts_rules_generator.zig` (`rules.ts`); sus
   tests usan `test/test_system.zig`, un sistema propio de prueba. `zig build test-rules-wasm`

@@ -1,0 +1,24 @@
+# The example stack: docker-compose.yml with this file on top, as its own
+# compose project, to browse the generated frontend with fake rows
+# (examples/aida_seed.sql) while the test stack keeps its own:
+#
+#   docker compose -p zigma-example -f docker-compose.yml -f docker-compose.example.yml ...
+#
+# `zig build example` brings it up and resets its database; `zig build
+# example-down` stops it. The project name keeps its containers, network and
+# volume apart from the test stack's; only the fixed container name and the
+# published ports would collide, so they are replaced here (`!override`: a
+# plain list would be appended to the base file's).
+services:
+  postgres:
+    container_name: zigma_example_postgres
+    ports: !override
+      - "5433:5432"
+
+  backend:
+    ports: !override
+      - "3001:3000"
+
+  frontend:
+    ports: !override
+      - "8081:80"

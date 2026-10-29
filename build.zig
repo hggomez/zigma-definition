@@ -505,6 +505,62 @@ pub fn build(b: *std.Build) void {
     const test_e2e_step = b.step("test-e2e", "Generate the frontend, serve it in its container and test it in a headless browser (Playwright, in a container)");
     test_e2e_step.dependOn(&run_frontend_e2e_tests.step);
 
+    // `zig build example`: a second copy of the stack (compose project
+    // zigma-example, docker-compose.example.yml on top of docker-compose.yml:
+    // frontend on 8081, backend on 3001, Postgres on 5433) with the fake rows
+    // of examples/aida_seed.sql, to browse the frontend by hand. Regenerate
+    // the backend and the frontend (the same nodes as the tests), build the
+    // images, bring the frontend up (and the backend and Postgres with it),
+    // reset the database on every run (drop the schema, apply the generated
+    // DDL, load the seed), then check it with test/example_stack_test.zig.
+    // The stack keeps running until `zig build example-down`. Not on
+    // `test_step` nor `test-all` (needs Docker + Node, and it is not a test).
+    const example_compose = [_][]const u8{ "docker", "compose", "-p", "zigma-example", "-f", "docker-compose.yml", "-f", "docker-compose.example.yml" };
+    const example_psql = [_][]const u8{ "docker", "exec", "-i", "zigma_example_postgres", "psql", "-U", "aida", "-d", "aida", "-v", "ON_ERROR_STOP=1", "-q" };
+
+    const build_example_images = b.addSystemCommand(&example_compose);
+    build_example_images.addArgs(&.{ "build", "backend", "frontend" });
+    build_example_images.step.dependOn(&write_ts_backend.step);
+    build_example_images.step.dependOn(&write_ts_server.step);
+    build_example_images.step.dependOn(&write_frontend.step);
+
+    const example_up = b.addSystemCommand(&example_compose);
+    example_up.addArgs(&.{ "up", "-d", "--wait", "frontend" });
+    example_up.step.dependOn(&build_example_images.step);
+
+    const reset_example_db = b.addSystemCommand(&example_psql);
+    reset_example_db.addArgs(&.{ "-c", "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" });
+    reset_example_db.step.dependOn(&example_up.step);
+
+    const apply_example_schema = b.addSystemCommand(&example_psql);
+    apply_example_schema.setStdIn(.{ .lazy_path = aida_schema_sql });
+    apply_example_schema.step.dependOn(&reset_example_db.step);
+
+    const load_example_seed = b.addSystemCommand(&example_psql);
+    load_example_seed.setStdIn(.{ .lazy_path = b.path("examples/aida_seed.sql") });
+    load_example_seed.step.dependOn(&apply_example_schema.step);
+
+    const example_stack_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/example_stack_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_example_stack_tests = b.addRunArtifact(example_stack_tests);
+    run_example_stack_tests.has_side_effects = true;
+    run_example_stack_tests.step.dependOn(&load_example_seed.step);
+
+    const example_step = b.step("example", "Bring up the example stack (frontend on 8081) with the fake aida rows, then check it");
+    example_step.dependOn(&run_example_stack_tests.step);
+
+    // `zig build example-down`: stop and remove the example stack's
+    // containers and network. The volume stays: `example` resets it anyway.
+    const example_down = b.addSystemCommand(&example_compose);
+    example_down.addArg("down");
+    const example_down_step = b.step("example-down", "Stop and remove the example stack");
+    example_down_step.dependOn(&example_down.step);
+
     // `zig build test-rules-wasm`: compile the rules of the test system to one
     // wasm32 module (src/rules_wasm.zig with test/test_system.zig as its
     // "system") and run test/rules_wasm_node_test.zig, a Zig test that loads
