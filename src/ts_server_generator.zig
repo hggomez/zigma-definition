@@ -11,8 +11,8 @@
 //! bigint is an exact JSON number (`JSON.rawJSON` on pg's string, never
 //! through a JS number) and a struct is an object read by `decode<Domain>`
 //! (numbers, bigints and booleans inside; text inside a composite is quoted
-//! and escaped, so it is not read yet). A nullable field (not in the pk) that
-//! needs a conversion keeps null.
+//! and escaped, and is a compile error). A nullable field (not in the pk)
+//! that needs a conversion keeps null.
 //!
 //! Operations, for every entity: the list (GET /api/<entity>, no query
 //! string), one row (GET /api/<entity>?<full pk>: the object, or a JSON 404)
@@ -20,15 +20,14 @@
 //! string must be exactly the pk (`readPk`; a struct is one parameter per
 //! field, `fecha.año=…`), and each value must fit its type (`pk<Entity>`:
 //! text as is, an integer as decimal digits inside its Zig interval, a struct
-//! sent to Postgres as the composite's literal `(…,…)`); else a JSON 400. A
-//! delete Postgres rejects (a referenced row) is, for now, the generic 500:
-//! pk/uk/fk violations are handled together later.
-//! Create (POST /api/<entity>, the row as a JSON body: 201 without a body) for
-//! the entities whose fields are all text; a body that is not a row of the
-//! entity (`readBody`) is a JSON 400, a duplicate pk the generic 500. Update
-//! (PUT /api/<entity>?<full pk>, the fields outside the pk as a JSON body: 204,
-//! or a JSON 404) for the entities with text fields and some field outside
-//! the pk; the full row is written (an absent nullable field is null).
+//! sent to Postgres as the composite's literal `(…,…)`); else a JSON 400.
+//! Create (POST /api/<entity>, the row as a JSON body: 201 without a body);
+//! a body that is not a row of the entity (`readBody`, then `row<Entity>`) is
+//! a JSON 400. Update (PUT /api/<entity>?<full pk>, the fields outside the pk
+//! as a JSON body: 204, or a JSON 404) for the entities with some field
+//! outside the pk; the full row is written (an absent nullable field is null).
+//! A Postgres rejection (a duplicate pk, a referenced row) is the generic 500:
+//! pk/uk/fk violations are not mapped to domain errors.
 
 const std = @import("std");
 const zigma = @import("zigma");

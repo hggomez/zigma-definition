@@ -101,6 +101,22 @@ pub fn addFramework(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     };
 }
 
+/// The framework's modules as a dependency on this package registered them
+/// (its `build` always calls `addFramework`), for a package that depends on
+/// this one: test/build.zig.
+pub fn frameworkOf(dep: *std.Build.Dependency) Framework {
+    return .{
+        .zigma = dep.module("zigma"),
+        .zig_type_map_sql = dep.module("zig_type_map_sql"),
+        .sql_generator = dep.module("sql_generator"),
+        .zig_type_map_ts = dep.module("zig_type_map_ts"),
+        .ts_backend_generator = dep.module("ts_backend_generator"),
+        .ts_server_generator = dep.module("ts_server_generator"),
+        .frontend_generator = dep.module("frontend_generator"),
+        .ts_rules_generator = dep.module("ts_rules_generator"),
+    };
+}
+
 /// A system described with zigma (its SSOT file), as a module.
 pub fn addSystemModule(b: *std.Build, framework: Framework, source: std.Build.LazyPath, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Module {
     return b.createModule(.{
@@ -297,13 +313,16 @@ pub fn build(b: *std.Build) void {
     const up_step = b.step("up", "Bring the system's stack up (frontend on 8081) with a fresh database and the seed rows if given (-Dsystem, -Dseed)");
     const down_step = b.step("down", "Stop and remove the system's stack (-Dsystem)");
 
+    // The framework's modules (`zigma`, the generators) are registered with or
+    // without a system: a package that depends on this one imports them.
+    const framework = addFramework(b, target, optimize);
+
     const path = system_path orelse {
         const fail = b.addFail("no system: pass its SSOT file with -Dsystem=<path>, e.g. -Dsystem=examples/<name>.zig");
         for ([_]*std.Build.Step{ print_schema_step, create_database_step, up_step, down_step }) |step| step.dependOn(&fail.step);
         return;
     };
 
-    const framework = addFramework(b, target, optimize);
     const system = addSystemModule(b, framework, b.path(path), target, optimize);
     const generated = addGenerated(b, b, "", addGenerate(b, "generate", system, framework, target, optimize));
     const instance = Compose.instance(generated);

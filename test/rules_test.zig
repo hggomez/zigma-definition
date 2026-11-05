@@ -1,7 +1,7 @@
 //! The rules of a system: domain validations written once in Zig and
 //! declared with `zigma.defineRules`, so that generators can find them. The
 //! negative cases are the expected compile errors in
-//! test/compile_errors/rules_*.zig, driven by build.zig.
+//! test/compile_errors/rules_*.zig, driven by test/build.zig.
 //!
 //! The system here is a small one of its own, built only from zigma (no
 //! aida): rooms and their bookings, test/test_system.zig.

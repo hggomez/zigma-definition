@@ -1,7 +1,7 @@
-//! Tests for DDL (CREATE TABLE) generation from zigma EntityInfo, driving the
-//! implementation of `sql_generator.zig`. Fixtures reuse `aida` entities once they
-//! exercise a pattern the vocabulary already has (composite pk, uk, fks);
-//! ad-hoc fixtures are defined here only for the minimal base-format cases.
+//! Tests of the DDL generation from zigma EntityInfo (`sql_generator.zig`).
+//! Fixtures are `aida` entities when one exercises the pattern under test
+//! (composite pk, uk, fks), ad-hoc entities for the minimal base-format cases
+//! and to isolate one feature, and the full aida schema at the end.
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -61,8 +61,8 @@ test "maps each field to the SQL type that corresponds to it, not just the first
     , varias_ddl);
 }
 
-// cosa and varias are independent (no fk between them): fk clauses are a
-// later step, this one only checks the multi-entity aggregation.
+// cosa and varias are independent (no fk between them): this only checks
+// the multi-entity aggregation; fks are tested on their own below.
 const dos_entidades = zigma.defineEntities(.{ .cosa = cosa, .varias = varias });
 const dos_entidades_ddl = sql.schemaSql(types, dos_entidades);
 
@@ -110,8 +110,7 @@ test "maps every primitive domain type of the system to SQL through its Zig type
     , con_todos_los_tipos_ddl);
 }
 
-// aida.alumnos has no fks/uks: isolates NOT NULL from the other pending
-// clauses, so this test won't need updating again once fks/uks land.
+// aida.alumnos has no fks/uks: isolates NOT NULL from the other clauses.
 const alumnos_info = zigma.completeEntity(aida.alumnos);
 const alumnos_ddl = sql.createTableSql(aida.type_defs, "alumnos", alumnos_info);
 
@@ -127,7 +126,7 @@ test "NOT NULL for nullable: false fields, omitted for the nullable: true defaul
     , alumnos_ddl);
 }
 
-// Ad-hoc (not an aida entity with fks) so this stays isolated from FK work.
+// Ad-hoc (not an aida entity with fks), to isolate the composite pk.
 const combinacion = zigma.defineEntity(.{
     .pk = .{ "a", "b" },
     .fields = zigma.record(zigma.common_type_defs, .{
@@ -151,7 +150,7 @@ test "PRIMARY KEY lists every pk field, in order, for a composite pk" {
 }
 
 // aida.materias has a uk and no fks: isolates UNIQUE (and exercises NOT
-// NULL again, on denominacion) from FK work.
+// NULL again, on denominacion) from the fks.
 const materias_info = zigma.completeEntity(aida.materias);
 const materias_ddl = sql.createTableSql(aida.type_defs, "materias", materias_info);
 
@@ -166,8 +165,8 @@ test "UNIQUE from uks" {
     , materias_ddl);
 }
 
-// Ad-hoc pair (not aida.cursos): keeps this isolated to just "fk with
-// matching source/target names", instead of aida.cursos' three fks at once.
+// Ad-hoc pair (not aida.cursos): isolates "fk with matching source/target
+// names", instead of aida.cursos' three fks at once.
 const padre = zigma.defineEntity(.{
     .pk = .{"padre"},
     .fields = zigma.record(zigma.common_type_defs, .{
@@ -196,9 +195,8 @@ test "FOREIGN KEY when the source and target field are named the same" {
     , hijo_ddl);
 }
 
-// Reflexive fk with a renamed source field (like aida.docentes.jefe), but
-// ad-hoc so this test doesn't also depend on docentes having no other
-// unimplemented feature in play.
+// Reflexive fk with a renamed source field (like aida.docentes.jefe), ad-hoc
+// to isolate it from the other fields of docentes.
 const persona = zigma.defineEntity(.{
     .pk = .{"persona"},
     .fks = .{ .jefe = .{ .entity = "persona", .fields = .{ .jefe = "persona" } } },
@@ -260,10 +258,11 @@ test "two distinct fks to the same target entity do not overwrite each other" {
 // A genuine cycle between two distinct entities (not reflexive): nodo_a has
 // a fk to nodo_b and nodo_b has a fk to nodo_a. Wrapped in defineEntities to
 // also confirm zigma's own global fk check accepts the cycle. schemaSql
-// emits nodo_a (which references nodo_b) before nodo_b is defined: SQLite
-// does not require the referenced table to exist yet at CREATE TABLE time,
-// only at DML time, so inline FOREIGN KEY clauses in declaration order are
-// fine as-is - no reordering or ALTER TABLE ADD CONSTRAINT needed.
+// emits the tables in declaration order with inline FOREIGN KEY clauses, so
+// nodo_a references nodo_b before nodo_b is created: the test checks the
+// generated text. Postgres requires the referenced table to exist at CREATE
+// TABLE time, so this DDL, as emitted, does not apply to Postgres (aida has
+// no cycle between distinct entities).
 const nodo_a = zigma.defineEntity(.{
     .pk = .{"a"},
     .fks = .{ .b = .{ .entity = "nodo_b", .fields = .{ .b = "b" } } },

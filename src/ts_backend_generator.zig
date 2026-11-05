@@ -378,8 +378,8 @@ fn entityBuilderTests(comptime type_defs: anytype, comptime name: []const u8, co
 }
 
 /// The whole `.ts` module for a system: every builder of every entity of
-/// `entity_defs` (as produced by `zigma.defineEntity`/`defineEntities`, not
-/// yet completed), in declaration order, blank-line separated. The `schemaSql`
+/// `entity_defs` (as produced by `zigma.defineEntity`/`defineEntities`, before
+/// `completeEntity`), in declaration order, blank-line separated. The `schemaSql`
 /// of the TypeScript side. No header, for parity with `sql_generator`.
 pub fn generateTsBackend(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     @setEvalBranchQuota(100000);

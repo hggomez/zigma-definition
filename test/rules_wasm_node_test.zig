@@ -2,12 +2,12 @@
 //! from Node: what the native test (rules_wasm_test.zig) cannot reach, i.e.
 //! the exports by name, `alloc`, the packing of the result and that each call
 //! frees its input. The script below is the TS half of the contract written by
-//! hand (what rules.ts will generate): ask `alloc` for room, write the JSON
+//! hand (what the generated rules.ts does): ask `alloc` for room, write the JSON
 //! instance there, call the rule, unpack `ptr << 32 | len` and read the
 //! string.
 //!
-//! Run with `zig build test-rules-wasm`, which compiles the module and passes its
-//! path here. Not part of `zig build test` (needs Node).
+//! Run with `zig build --build-file test/build.zig test-rules-wasm`, which compiles the module
+//! and passes its path here. Not part of `test` (needs Node).
 
 const std = @import("std");
 const build_options = @import("build_options");

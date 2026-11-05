@@ -4,7 +4,9 @@ Port a Zig del módulo `system-design` (TypeScript): la parte descriptiva del fr
 SSOTIGAD (Single Source Of Truth Implies Good Application Design). Provee el vocabulario
 para describir sistemas (tipos de dominio, entidades, campos, pks, uks, fks) de modo que
 generadores automáticos puedan derivar tablas, endpoints, pantallas, serializadores y
-validadores. Este módulo cubre **solo la parte descriptiva**: no genera nada.
+validadores. El vocabulario (`src/zigma.zig`) es **solo la parte descriptiva**: no genera
+nada. Los generadores que lo consumen viven al lado (`src/*_generator.zig`,
+`src/generate.zig`) y no conocen ningún sistema concreto.
 
 La referencia semántica es el repo `system-design` (hermano de este): la convención
 Def/Info, los nombres ya elegidos y las decisiones de diseño están documentados en su
@@ -20,6 +22,9 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   TypeScript.
 * Código e identificadores en inglés (los nombres de dominio del ejemplo aida quedan en
   castellano, igual que en el repo TypeScript). Este archivo y los planes, en castellano.
+* Los comentarios del código describen el código actual y su propósito, no su historia (ni
+  "antes", ni "por ahora", ni "más adelante"): lo pendiente va en `GOALS.md` /
+  `TEST_QUEUE.md`.
 
 ## Estructura
 
@@ -36,7 +41,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   compose `zigma-<nombre>`, `docker-compose.instance.yml` encima de `docker-compose.yml`:
   frontend en 8081, backend en 3001, Postgres en 5433) y resetea su base (esquema + seed
   si hay); queda corriendo hasta `zig build down -Dsystem=...`. También `print-schema` y
-  `create-database`. Sin `-Dsystem` los pasos fallan con un mensaje. Expone como `pub fn`
+  `create-database`. Sin `-Dsystem` los pasos fallan con un mensaje; los módulos del
+  framework se registran igual (para un paquete que dependa de este). Expone como `pub fn`
   el cableado (módulos del framework, generador, archivos generados, stacks de compose)
   que reusan los tests.
 * Los nombres de la infra salen del sistema: `generate env` escribe `.env` (gitignoreado,
@@ -45,7 +51,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   por el servicio (`docker compose exec -T postgres`) con el `POSTGRES_USER` /
   `POSTGRES_DB` del contenedor.
 * `test/build.zig` (+ `test/build.zig.zon`): los tests, con aida como ejemplo. Es un
-  paquete propio que depende del raíz (`.path = ".."`) y reusa sus `pub fn` pasándoles el
+  paquete propio que depende del raíz (`.path = ".."`), toma sus módulos como cualquier
+  paquete que dependa de él (`frameworkOf`) y reusa sus `pub fn` pasándoles el
   builder del raíz; no puede estar junto a `build.zig`: dos build scripts en el mismo
   directorio comparten el runner cacheado (el segundo recibe los pasos del primero). Se
   corre **desde la raíz** (los paths de los errores de compilación esperados son relativos

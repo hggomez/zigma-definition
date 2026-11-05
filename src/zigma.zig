@@ -3,7 +3,7 @@
 //! type, the Info side of a Def) are derived from those values with comptime
 //! functions, so the fields are written only once.
 //!
-//! Naming convention (inherited from the TypeScript system-design module):
+//! Naming convention (the one of the TypeScript system-design module):
 //! a Def is what the human writes (only what is semantically needed, the
 //! rest has defaults); an Info is the Def completed with every default made
 //! explicit. Both are plain serializable values: special behaviors are
@@ -213,7 +213,7 @@ fn lastPartWith(comptime Parts: type, comptime name: []const u8) [:0]const u8 {
 }
 
 /// The type of `merge(parts)`: field names in first-appearance order, the
-/// type (and later the value) of a repeated field comes from the last part
+/// type (and the value) of a repeated field comes from the last part
 /// that has it, like the spread of object literals in TypeScript.
 pub fn Merged(comptime Parts: type) type {
     const names = mergedFieldNames(Parts);

@@ -1,8 +1,8 @@
-//! Tests for the generation of server.ts, the HTTP layer of the TS backend,
-//! driving `ts_server_generator.zig`. Plain Node (`node:http`, no framework);
-//! the server is generated from the SSOT like dml.ts, with an explicit route
-//! per entity and operation. The API lives under /api/<entity>; the pk (and
-//! later the filters) goes in the query string. Every response is JSON: a
+//! Tests of the generation of server.ts, the HTTP layer of the TS backend
+//! (`ts_server_generator.zig`). Plain Node (`node:http`, no framework); the
+//! server is generated from the SSOT like dml.ts, with an explicit route per
+//! entity and operation. The API lives under /api/<entity>; the pk goes in
+//! the query string. Every response is JSON: a
 //! list is a bare array, an error is `{ "error": ... }`.
 //!
 //! Each row is encoded field by field from the SSOT (`encode<Entity>`), so
@@ -11,8 +11,8 @@
 //! - a bigint is an exact JSON number: `JSON.rawJSON` on pg's string (never
 //!   through a JS number, which rounds above 2^53);
 //! - a struct is an object, read from the composite's text form by
-//!   `decode<Domain>`, its fields converted by their type (only numbers,
-//!   bigints and booleans for now: text inside a composite has quoting);
+//!   `decode<Domain>`, its fields converted by their type (numbers, bigints
+//!   and booleans: text inside a composite has quoting, a compile error);
 //! - a string, a number or a boolean goes as pg gives it;
 //! - a nullable field (not in the pk) that needs a conversion keeps null.
 //!
@@ -41,8 +41,8 @@
 //! literal). A nullable field (outside the pk) may be null or absent (taken as
 //! null), the others are required; anything else is a 400 naming the field
 //! (`fecha.mes` inside a struct). A Postgres rejection (a duplicate pk, a
-//! referenced row) is, for now, the generic 500: pk/uk/fk violations are
-//! handled together later.
+//! referenced row) is the generic 500: pk/uk/fk violations are not mapped to
+//! domain errors.
 
 const std = @import("std");
 const zigma = @import("zigma");

@@ -80,7 +80,7 @@ fn fail(comptime format: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-// `text` to stdout, then `end` ("\n" or ""): the bytes each artifact always had.
+// `text` to stdout, then `end` ("\n" or ""): the exact bytes of each artifact.
 fn print(io: std.Io, text: ?[]const u8, comptime end: []const u8, comptime missing: []const u8) !void {
     const t = text orelse return fail("the system declares no {s}\n", .{missing});
     var buffer: [4096]u8 = undefined;

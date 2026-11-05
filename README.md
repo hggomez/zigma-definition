@@ -15,7 +15,10 @@ implementaciones on-the-fly pueden derivar los scripts de creación de tablas, l
 CRUD con su capa de base de datos, las pantallas del frontend, los serializadores en ambos
 sentidos, los validadores de tipo, etc.
 
-Este módulo cubre solo la parte descriptiva de los sistemas: no genera nada por sí mismo.
+El vocabulario (`src/zigma.zig`) cubre solo la parte descriptiva: no genera nada por sí
+mismo. Al lado viven los generadores que lo consumen (`src/*_generator.zig`,
+`src/generate.zig`): a partir de un sistema descripto derivan el esquema de Postgres, la
+interfaz de DML y el servidor HTTP en TypeScript, el frontend y las reglas compiladas a WASM.
 
 ## Convención de nombres: Def e Info
 
@@ -126,38 +129,62 @@ de otras:
 * `docentes` tiene una fk reflexiva (`jefe` → `docente`, el jefe de cátedra es otro docente),
   y `mesas` tiene dos fks distintas a `docentes` (`presidente` y `vocal`).
 
-Los tests en `test/zigma_test.zig` importan estas definiciones y verifican, para cada tramo del
+Los tests en `test/zigma_test.zig` usan estas definiciones y verifican, para cada tramo del
 vocabulario, tanto los casos positivos (en runtime y con `comptime std.debug.assert`) como los
 rechazos esperados en compilación, que viven aparte como fragmentos en `test/compile_errors/`
 (el equivalente de los `// @ts-expect-error` del repo TypeScript).
 
+## Crear una instancia
+
+Una instancia es un sistema descripto con el framework, corriendo con todo lo que se genera
+de él: Postgres con su esquema, el backend (`dml.ts` + `server.ts`) y el frontend, cada uno en
+su contenedor. `build.zig` recibe el sistema por línea de comandos (necesita Docker):
+
+```sh
+zig build up   -Dsystem=examples/aida.zig -Dseed=examples/aida_seed.sql   # frontend en http://localhost:8081
+zig build down -Dsystem=examples/aida.zig
+zig build print-schema -Dsystem=examples/aida.zig                         # el DDL, a stdout
+```
+
+`-Dseed` es opcional (sin él la base queda vacía, con el esquema). `up` resetea la base en
+cada corrida.
+
 ## Estructura
 
-* `src/zigma.zig`: el framework descriptor (módulo `zigma`); no conoce ningún sistema
-  concreto.
-* `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
-* `test/zigma_test.zig`: los tests positivos.
-* `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
-  error esperado listado en `build.zig`.
-* `src/rules.zig`: `defineRules` (re-exportado por `zigma`). `src/rules_wasm.zig` y
-  `src/ts_rules_generator.zig`: las reglas de un sistema compiladas a WASM y su `rules.ts`.
-* `test/test_system.zig`: un sistema propio de prueba con reglas (salas y reservas), para los
-  tests de las reglas. `zig build test-rules-wasm` lo compila a WASM y lo prueba desde Node.
+* `src/zigma.zig`: el vocabulario (módulo `zigma`); no conoce ningún sistema concreto.
+* `src/rules.zig`: `defineRules` (re-exportado por `zigma`).
+* `src/sql_generator.zig`, `src/ts_backend_generator.zig`, `src/ts_server_generator.zig`,
+  `src/frontend_generator.zig`, `src/ts_rules_generator.zig`: los generadores (DDL, `dml.ts`,
+  `server.ts`, frontend, `rules.ts`), con los mapeos de tipos de Zig a Postgres y a TS
+  (`src/zig_type_map_*.zig`).
+* `src/generate.zig`: el programa que escribe lo generado para un sistema; `src/rules_wasm.zig`:
+  las reglas de un sistema compiladas a WASM.
+* `examples/aida.zig`: el sistema de alumnos; `examples/aida_seed.sql`: sus filas de ejemplo.
+* `build.zig`: crear una instancia (ver arriba).
+* `backend/`, `frontend/`, `e2e/`, `docker-compose.yml`, `docker-compose.instance.yml`: la
+  infraestructura de los contenedores, sin nombres de ningún sistema (salen de `.env`, que
+  escribe el build).
+* `test/`: los tests, un paquete propio (`test/build.zig`) con aida como ejemplo y
+  `test/test_system.zig` (salas y reservas) para las reglas; `test/compile_errors/*.zig` son
+  los fragmentos que deben fallar la compilación, con su mensaje esperado en `test/build.zig`.
 
-## Forma de trabajo
+## Tests
 
 Enfoque TDD, avanzando de a pasos chicos: primero el test que muestra el problema, después la
 implementación mínima que lo hace pasar. Los tests son fuertes: además de los positivos,
-prueban los rechazos esperados como casos de "no compila".
+prueban los rechazos esperados como casos de "no compila". Se corren desde la raíz:
 
-`zig build test` corre todo: tests de runtime y casos de no-compila.
+```sh
+zig build --build-file test/build.zig test       # runtime y no-compila (sin Node ni Docker)
+zig build --build-file test/build.zig test-all   # test, y después los que usan Node o Docker
+```
 
 ## Estado
 
 En etapa de diseño. Sigue, en Zig, los pasos de
 [system-definition](https://github.com/ari-dc-uba-ar/system-definition) (actualmente en su
-versión 0.1.1); no incluye todavía el equivalente del test de snapshot en formato TOON de ese
-repo, que depende de una librería sin equivalente en Zig.
+versión 0.1.1); no incluye el equivalente del test de snapshot en formato TOON de ese repo,
+que depende de una librería sin equivalente en Zig.
 
 ## Instalación
 
@@ -172,7 +199,8 @@ const zigma = b.dependency("zigma_definition", .{}).module("zigma");
 exe.root_module.addImport("zigma", zigma);
 ```
 
-El paquete también exporta `aida`, descripto en `examples/aida.zig`.
+El paquete también exporta los módulos de los generadores (`sql_generator`,
+`ts_backend_generator`, `ts_server_generator`, `frontend_generator`, `ts_rules_generator`).
 
 ## Licencia
 

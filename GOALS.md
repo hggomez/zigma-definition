@@ -1,540 +1,163 @@
 # Objetivo de esta rama (`lucas-branch`)
 
-A partir de una definición de sistema hecha con el framework `zigma` (`src/zigma.zig`),
-generar y hacer correr, de punta a punta:
+A partir de un sistema descripto con el framework `zigma` (`src/zigma.zig`), generar y hacer
+correr, de punta a punta:
 
-1. **Base de datos**: esquema (tablas, pks, uks, fks) derivado de las `EntityInfo` del
-   sistema.
-2. **Backend**: endpoints CRUD sobre esa base de datos, derivados de las mismas
+1. **Base de datos**: el esquema de Postgres (tablas, pks, uks, fks) derivado de las
+   `EntityInfo` del sistema.
+2. **Backend**: la interfaz de DML y los endpoints CRUD sobre esa base, derivados de las
+   mismas definiciones.
+3. **Frontend**: las pantallas para operar esas entidades, también derivadas de las
    definiciones.
-3. **Frontend**: pantallas para operar esas entidades, también derivadas de las
-   definiciones.
 
-Todo generado (o servido on-the-fly) a partir de la única fuente de verdad: las
-definiciones en `src/zigma.zig` más un sistema concreto. El sistema de prueba es
-`examples/aida.zig`: cada paso debe poder verse funcionando corriendo aida, no solo pasar
-tests.
+Todo sale de la única fuente de verdad: el vocabulario de `src/zigma.zig` más un sistema
+concreto. El sistema de ejemplo es `examples/aida.zig`: cada paso se ve funcionando
+corriendo aida (`zig build up -Dsystem=examples/aida.zig -Dseed=examples/aida_seed.sql`),
+no solo pasando tests.
 
-## Forma de trabajo (heredada de CLAUDE.md, aplicada acá)
+## Forma de trabajo
 
-* TDD, pasos chicos: primero el test que muestra el problema, mostrar los rojos, esperar
-  la revisión del programador antes de corregir.
-* Además de tests, en cada hito relevante correr aida de verdad (levantar el server /
-  abrir el frontend / lo que corresponda a ese paso) para ver el resultado.
+* TDD, pasos chicos: primero el test que muestra el problema, mostrar los rojos, esperar la
+  revisión del programador antes de corregir.
+* En cada paso relevante, correr aida de verdad (levantar la instancia, abrir el frontend)
+  para ver el resultado.
 * Acordar el paso siguiente con el programador antes de programarlo.
 
-## Nota: trabajo previo relacionado
+## Estado
 
-`origin/frontend` (no mergeada a `main`) ya tiene una implementación exploratoria en esta
-misma dirección: `src/http/main.zig` (backend HTTP), `src/json.zig` (capa JSON),
-`src/frontend/` (HTML/JS que postea una entidad), más un reordenamiento de
-`examples/aida.zig` en `examples/aida/`. Decisión: **no partimos de esa rama ni la
-mergeamos**; arrancamos de `main` con nuestro propio enfoque TDD. Si en algún punto
-conviene revisar cómo resolvió algo esa rama (parseo de celdas por tipo, alta/baja por pk
-completa, etc.), se consulta puntualmente, no se hereda el código.
+### Base de datos (`src/sql_generator.zig`)
 
-## Progreso
+* `schemaSql(type_defs, entity_defs)`: el DDL del sistema como string comptime. Primero un
+  `CREATE DOMAIN` por cada entero angosto que usan sus columnas, después un `CREATE TYPE` por
+  cada dominio struct, después un `CREATE TABLE` por entidad, en orden de declaración.
+* El tipo SQL de cada columna sale del tipo de Zig de su dominio (`zig_type_map_sql.sqlTypeOf`):
+  `bool` → `BOOLEAN`, `[]const u8` → `TEXT`, un entero → el entero de Postgres más chico que
+  contiene su intervalo, con un `DOMAIN` (`zig_u8`) que lo restringe al intervalo de Zig
+  cuando el de Postgres es más ancho (`i64` → `BIGINT`, sin dominio).
+* Un dominio struct (`fecha`) es un tipo compuesto con su nombre, y cada columna struct lleva
+  un `CHECK` `<entidad>_<columna>_complete` (el struct entero o `NULL`: los atributos de un
+  compuesto no pueden ser `NOT NULL`).
+* Cada tabla: `NOT NULL` para `nullable: false` y para la pk, `PRIMARY KEY`, un `UNIQUE` por
+  uk, un `FOREIGN KEY` por fk (renombradas, reflexivas, dos a la misma entidad).
 
-Hito 1 (base de datos) completo. Se eligió generar el esquema como DDL en comptime
-(strings), porque encaja con TDD (los tests son asserts sobre el string generado, sin
-conexión viva) y no acopla el framework a ningún driver. Al principio apuntaba a SQLite y
-el "ver corriendo" era solo imprimir el DDL; el destino terminó siendo **Postgres vía
-Docker** (ver "Hito 1 completo" más abajo). Los puntos que siguen están en orden
-cronológico: los primeros describen el mapeo de tipos a mano, reemplazado después en la
-rama `type-translation` (último punto).
+### Backend TypeScript (`backend/`, servicio `backend`)
 
-* `build.zig.zon`: `minimum_zig_version` actualizado a `0.17.0-dev.1778+767d25269` (la
-  build que estaba cacheada localmente; el pin anterior, `0.17.0-dev.1282+c0f9b51d8`, ya
-  no está disponible para descargar). `zig build test` funciona en esta máquina.
-* Nuevo módulo `sql_generator` (`src/sql_generator.zig`, wireado en `build.zig`, tests en
-  `test/sql_generator_test.zig`): genera `CREATE TABLE` a partir de `EntityInfo`.
-  * `createTableSql(sql_types, name, entity_info)`: columnas con su tipo SQL (mapeo
-    `sql_types` aportado por el sistema, igual que `type_defs`), `NOT NULL` para
-    `nullable: false`, `PRIMARY KEY`, `UNIQUE` por cada uk, `FOREIGN KEY` por cada fk
-    (incluye fks renombradas, reflexivas, dos fks a la misma entidad, y fks cíclicas
-    entre dos entidades distintas).
-  * `schemaSql(sql_types, entity_defs)`: un `CREATE TABLE` por entidad, en orden de
-    declaración, para sistemas con más de una entidad.
-  * `examples/aida.zig` tiene ahora `aida.sql_type_defs` (mapeo de sus 5 tipos de
-    dominio a SQL; `fecha`, respaldado por un struct anidado, mapea igual que
-    cualquier otro tipo — una sola columna opaca, `sql_generator.zig` no mira el `Type`
-    de Zig subyacente).
-  * Todos los tests en verde, incluido un caso "no compila"
-    (`test/compile_errors/sql_unknown_type_mapping.zig`): un tipo de dominio sin
-    entrada en `sql_types` da `@compileError` con mensaje propio.
-  * **Reemplazado** en la rama `type-translation`: las firmas son ahora
-    `createTableSql(type_defs, name, entity)` y `schemaSql(type_defs, entity_defs)`,
-    `aida.sql_type_defs` y `sql_unknown_type_mapping.zig` ya no existen, y `fecha` es un
-    tipo compuesto (ver el último punto).
-* Corregido: las columnas de la pk fuerzan `NOT NULL` sin importar el `nullable` del
-  campo (`isPkField` en `columnClause`, `src/sql_generator.zig`). SQL estándar lo
-  implica para la pk; SQLite es la excepción y no lo fuerza salvo declaración
-  explícita. Fixture `combinacion` (pk `a`,`b`, sin `nullable: false` explícito) prueba
-  el caso; se actualizaron además los demás fixtures del archivo de test, que sin
-  saberlo estaban documentando el comportamiento con bug.
-* Test del esquema completo de aida: `schemaSql(aida.sql_type_defs, aida.entity_defs)`
-  sobre las 11 entidades, un `CREATE TABLE` por entidad en orden de declaración
-  (`test/sql_generator_test.zig`). Generar el DDL de las 11 juntas en una sola
-  evaluación comptime superó la cuota default de branches (1000); se subió a 10000 con
-  `@setEvalBranchQuota` al principio de `schemaSql`.
-* "Ver corriendo" de este hito: `examples/print_schema.zig` (nuevo ejecutable, step
-  `zig build print-schema` en `build.zig`) imprime a stdout el DDL completo de aida.
-  Confirmado corriendo: las 11 tablas salen con sus fks (incluida la reflexiva de
-  `docentes.jefe` y las dos a `docentes` desde `mesas`), pks compuestas y `NOT NULL`
-  correcto.
-* **Hito 1 completo**: el DDL corre contra un Postgres real, no solo se imprime.
-  Decisión: **Postgres vía Docker**, sin driver de Postgres para Zig — `psql` corre
-  *dentro* del contenedor, así que la única dependencia del host es Docker. El patrón
-  se tomó (no se heredó el código) de `origin/example-database-connection`, una rama
-  exploratoria no mergeada que ya lo había resuelto así.
-  * `docker-compose.yml`: un servicio `postgres:16` (`zigma_aida_postgres`, db/user/pass
-    `aida`), con `healthcheck` (`pg_isready`) para que el arranque sea determinístico.
-  * `build.zig`, step `zig build create-database`: corre `docker compose up -d --wait`
-    (bloquea hasta que el healthcheck pasa — sin esto, `docker exec` podía llegar antes
-    de que Postgres estuviera listo para aceptar conexiones), captura el stdout de
-    `print_schema` (`captureStdOut`) y lo pipea a
-    `docker exec -i zigma_aida_postgres psql -U aida -d aida` (`setStdIn`).
-  * Bug encontrado y corregido en el camino: `examples/print_schema.zig` usaba
-    `std.debug.print`, que en Zig **siempre** escribe a stderr, nunca a stdout —
-    `captureStdOut` capturaba un string vacío. Al principio pasó desapercibido porque
-    una corrida vieja había dejado cacheado un resultado previo; se detectó por un
-    `failed command` espurio en la salida de `zig build`, se confirmó pidiendo
-    `\dt`/`\d` directo a Postgres (las tablas no coincidían con lo esperado hasta
-    corregirlo). Se reescribió con la interfaz nueva de Zig 0.17
-    (`std.process.Init.io`, `std.Io.File.stdout().writer(io, &buffer)`,
-    `stdout.print(...)` + `stdout.flush()`), que sí escribe a stdout.
-  * Confirmado de punta a punta con `docker compose down -v` (reset completo) seguido
-    de `zig build create-database`: las 11 tablas se crean limpias, con sus fks, pks
-    compuestas y `NOT NULL` correctos (verificado con `psql -c "\dt"` y `\d docentes`).
-* Rama `type-translation`: el tipo SQL de cada columna sale del tipo de Zig de su dominio
-  (el generador recibe el `type_defs` del sistema y pasa por `zig_type_map_sql.sqlTypeOf`),
-  reemplaza a la tabla a mano `aida.sql_type_defs`. Un entero más angosto que su entero de
-  Postgres va con un `DOMAIN` (`zig_u8`) que lo restringe al intervalo de Zig; `integer`
-  (`i64`) es `BIGINT`. Un dominio respaldado por un struct (`fecha`) es un tipo compuesto
-  con el nombre del dominio (`CREATE TYPE fecha AS (año zig_u16, mes zig_u8, día zig_u8)`),
-  y cada columna struct lleva un `CHECK` `<entidad>_<columna>_complete` (el struct entero o
-  `NULL`: los atributos de un compuesto no pueden ser `NOT NULL`). Un struct dentro de un
-  struct todavía no compila (el interno no tiene dominio ni nombre). Aplicado a mano contra
-  Postgres: el esquema entra entero, y una `fecha` incompleta, `mes = 300` o `año = -1` se
-  rechazan. Falta el lado TS ↔ Postgres (cómo `dml.ts` manda y lee un `fecha`).
-  * El "no compila" de un dominio que no está en `type_defs` es ahora
-    `sql_type_not_in_type_defs.zig` (`"type 'fecha' is not in type_defs"`). El test del
-    esquema completo de aida vive en `test/sql_generator_aida_test.zig`.
-  * Confirmado de punta a punta (2026-10-22) con `docker compose down -v` seguido de
-    `zig build ts-backend-db`: sobre una base vacía el esquema entra sin errores
-    (2 `CREATE DOMAIN`, 1 `CREATE TYPE`, 11 `CREATE TABLE`) y el test de integración pasa.
+* **`dml.ts`** (`src/ts_backend_generator.zig`): por entidad, hasta cinco builders que
+  devuelven `{ text, values }` (lo que recibe `pool.query` de `pg`): `insert<E>`,
+  `select<E>ByPk`, `selectAll<E>`, `update<E>` (de fila completa; solo si la entidad tiene
+  campos fuera de la pk) y `delete<E>`. El tipo TS de cada campo sale del tipo de Zig de su
+  dominio (`zig_type_map_ts.tsTypeOf`). En el `WHERE` de la pk, una columna struct se compara
+  con el parámetro casteado a su compuesto (`"fecha" = $3::fecha`): `pg` manda los parámetros
+  sin tipo y Postgres no sabe leer el texto de un compuesto anónimo.
+* **`dml.test.ts`**, generado también: por builder, un test que lo llama con un argumento
+  de ejemplo tipado y chequea que devuelve `{ text, values }`.
+* **`server.ts`** (`src/ts_server_generator.zig`): Node puro (`node:http`) y `pg`, una ruta
+  explícita por entidad y operación, bajo `/api/<entidad>`:
+  * `GET` sin query string: la lista (un array JSON pelado); `GET ?<pk completa>`: la fila, o
+    404 JSON.
+  * `DELETE ?<pk completa>`: 204 sin cuerpo, o 404 JSON.
+  * `POST`, la fila como cuerpo JSON: 201 sin cuerpo.
+  * `PUT ?<pk completa>`, los campos fuera de la pk como cuerpo: 204, o 404 JSON; de fila
+    completa (un campo nullable ausente se escribe `null`). Solo para las entidades con algún
+    campo fuera de la pk.
+  * El query string tiene que ser exactamente la pk (un struct, un parámetro por campo:
+    `fecha.año=…`) y cada valor tiene que entrar en su tipo; un cuerpo tiene solo los campos
+    de la entidad, cada uno por su tipo (un nullable puede faltar). Si no, 400 JSON que nombra
+    el campo.
+  * Cada campo conserva su tipo del SSOT en el JSON: un `bigint` es un número JSON exacto
+    (`JSON.rawJSON` sobre el texto que da `pg`; nunca pasa por un `number`), un struct es un
+    objeto (`fecha` → `{ "año", "mes", "día" }`), leído del texto del compuesto. Un cuerpo se
+    lee en el mismo formato (`readBody` guarda el texto exacto de cada número).
+  * Respuestas siempre JSON salvo 201/204: un error es `{ "error": ... }` (404 sin ruta, 500
+    ante una excepción, que se loguea).
 
-## Hito 2 (backend): estado y decisiones
+### Frontend (`frontend/`, servicio `frontend`)
 
-**Cerrado (2026-10-22).** Hecho: la interfaz de DML generada (`dml.ts`) con sus tests y su
-integración contra Postgres, las reglas de dominio de Zig corriendo desde TS vía WASM
-(`rules.ts` / `rules.wasm`), el cliente de Postgres decidido (`pg`) y el backend en su propio
-contenedor de `docker-compose`. **Queda para más adelante** (decisión del programador):
-
-* la capa HTTP (endpoints CRUD) y si usar framework o Node puro: hasta entonces el servicio
-  `backend` no tiene proceso de larga duración;
-* las reglas de aida: cuándo se aplica una regla, `validarCargo` declarada con
-  `defineRules`, su `rules.ts` / `rules.wasm` en la imagen;
-* la traducción de valores TS ↔ Postgres (`fecha`, `bigint`) y los casos de integración que
-  faltan (ver "Falta" más abajo y `TEST_QUEUE.md`);
-* volver a aplicar el esquema sobre una base existente (`already exists`).
-
-### Progreso
-
-Primera capa del backend TS: la **interfaz de DML sobre la base**, generada desde el SSOT
-igual que el DDL (`sql_generator.zig` → DDL; ahora `ts_backend_generator.zig` → TS).
-
-* Nuevo módulo `ts_backend_generator` (`src/ts_backend_generator.zig`, wireado en
-  `build.zig`, tests en `test/ts_backend_generator_test.zig`): de cada `EntityInfo` genera
-  hasta cinco *builders* parametrizados, cada uno devuelve `{ text, values }` (la forma que
-  toma una query de `pg`): `insert<E>`, `select<E>ByPk`, `selectAll<E>`, `update<E>` (solo
-  si la entidad tiene columnas fuera de la pk — si no, no hay nada que `SET`), `delete<E>`.
-  * pk compuesta → `WHERE "a" = $1 AND "b" = $2`; en `update`, los placeholders del `WHERE`
-    siguen después de los del `SET`.
-  * `update` es de fila completa (todas las columnas no-pk en el `SET`), no un patch
-    parcial: así sigue siendo un template estático como los demás. El patch parcial, si se
-    quiere, es otro builder aparte más adelante.
-  * El tipo TS de cada campo sale del tipo de Zig de su dominio: el generador recibe el
-    `type_defs` del sistema y pasa por `zig_type_map_ts.tsTypeOf` (rama `type-translation`,
-    reemplaza a las tablas a mano `ts_type_defs` / `ts_sample_defs` que tenía aida).
-* El generador **también genera los tests TS** (`generateTsBackendTests`): por cada builder,
-  el test #1 (arma un argumento de ejemplo tipado, llama al builder, chequea que no tira y
-  devuelve `{ text, values }`). Correrlos en Node es lo que prueba que el TS emitido
-  parsea, tipa y ejecuta — la capa que un string-assert de Zig no alcanza.
-* `build.zig`, step `zig build ts-backend`: genera `dml.ts` + `dml.test.ts` del sistema
-  aida en `zig-out/ts-backend/` y corre los tests con `node --test`. Node 22.18+ corre
-  `.ts` directo y los tests solo usan `node:test` / `node:assert`, así que no hay paso de
-  npm. Confirmado de punta a punta: 52 builders (11 entidades), 52 tests en verde.
-* `zig build test` sigue sin depender de Node (45/45): los casos de string-assert del
-  generador viven ahí; `ts-backend` es un step aparte.
-* **Primer test de integración contra Postgres real, en verde**: `backend/` es ahora un
-  paquete Node versionado (hand-written: `package.json` con `pg`; `dml.ts` / `dml.test.ts`
-  se generan adentro y están gitignoreados). El test de integración es un **test de Zig**,
-  `test/db_backend_integration_test.zig`, al lado de los otros: corre `node
-  --input-type=module -e` con un script que importa los builders generados y `pg`, hace
-  `insertPeriodos` → `selectPeriodosByPk` ida y vuelta por la base y limpia con
-  `deletePeriodos`; el test de Zig chequea el exit code y que imprima `ROUNDTRIP_OK`.
-  `zig build ts-backend-db` lo cuelga después de: levantar el contenedor, aplicar el
-  esquema (mismos steps que `create-database`), `npm install`, regenerar `dml.ts`. No está
-  en `zig build test` (necesita Docker + Node). Los builders todavía devuelven
-  `{ text, values }` y el script los corre con `pool.query(text, values)` directo; no hay
-  capa de ejecución todavía (aparece cuando un segundo test la necesite).
-* **El backend en su propio contenedor** (2026-10-22): servicio `backend` en
-  `docker-compose.yml`, junto a `postgres`. `backend/Dockerfile` es `FROM node:22.19.0-alpine`
-  (fijado) + `npm ci` con el `package-lock.json` versionado + copia de `src/`: el código
-  generado (`dml.ts`) lo escribe `zig build` en el host, **no hay Zig en la imagen** (sin
-  riesgo de que desaparezca de las descargas la versión dev fijada). El servicio no tiene
-  proceso de larga duración (todavía no hay capa HTTP): el código del backend corre a
-  demanda con `docker compose run --rm backend node ...`, y llega a Postgres por el nombre
-  del servicio (`DATABASE_URL=postgres://aida:aida@postgres:5432/aida`, `depends_on`
-  postgres sano). Por eso el `docker compose up -d --wait` del build levanta solo
-  `postgres` (el `backend` terminaría enseguida y `--wait` lo tomaría como falla).
-  * Test: `zig build backend-docker` regenera `dml.ts`, aplica el esquema, construye la
-    imagen y corre `test/backend_docker_test.zig`, un test de Zig que ejecuta dentro del
-    contenedor insert → selectByPk → delete de `periodos` y chequea que `DATABASE_URL`
-    nombre al servicio `postgres` (no `localhost`): en el host solo corre Docker. Fuera de
-    `zig build test` (necesita Docker).
-  * La primera corrida tardó más de 10 minutos (probablemente la descarga de la imagen de
-    Node y el primer build; no se confirmó); las siguientes, segundos.
-
-**Falta** para completar la interfaz de DML: más casos de integración (update toca solo lo
-nombrado, delete→selectByPk vacío, violación de uk/fk como error de dominio, entidad de pk
-compuesta), y la traducción de valores TS ↔ Postgres: hoy `insertClases` pasa el objeto
-`{ año, mes, día }` crudo a la columna de tipo compuesto `fecha` (`pg` lo stringify a
-`"[object Object]"`; hay que serializarlo al literal del compuesto y parsearlo al leer), y
-los campos `bigint` (`i64`) y los enteros con `DOMAIN` todavía no pasan por ningún test de
-integración (el único hoy es `periodos`, una sola columna de texto).
-Después: el resto del backend (endpoints HTTP). El interop TS → Zig para las reglas de
-dominio ya está hecho (ver "Reglas de dominio: interop TS → Zig (WASM)" más abajo).
-
-### Decisiones previas
-
-**Decisión de esta sesión, reemplaza lo que sigue**: el backend no se escribe en Zig. Se
-genera en **TypeScript (Node)**, y corre como su propio servicio en `docker-compose.yml`
-(un contenedor `backend` junto al de `postgres`, mismo patrón: la aplicación generada
-corriendo como servicio, no un contenedor de desarrollo/build para compilar Zig). Motivo:
-portabilidad (no atar el desarrollo a un toolchain nativo por SO) y no reinventar en Zig
-lo que ya existe maduro en el ecosistema Node para HTTP/Postgres.
-
-El backend en TypeScript necesita poder invocar funciones de dominio escritas en Zig (por
-ejemplo `validarCargo`) sin reescribirlas: esas reglas viven en la única fuente de verdad
-(las definiciones `zigma`/`aida` en Zig), así que hace falta un mecanismo de interop
-TS → Zig. **Decidido: WASM** (ver "Reglas de dominio: interop TS → Zig (WASM)" más
-abajo). Las opciones que se evaluaron:
-
-* **C ABI**: Zig exporta funciones (`export fn ... callconv(.c)`) a una lib compartida
-  (`.so`/`.dll`), invocada desde Node con una librería tipo `koffi` (FFI sin escribir un
-  addon nativo). Más directo, pero la lib queda atada a la plataforma/arquitectura donde
-  se compiló — no es problema si el contenedor del backend siempre la compila en su
-  propio build Linux.
-* **WASM**: Zig compila a `wasm32`, corrido por el `WebAssembly` que Node ya trae (no
-  hacen falta bindings de `wasmtime`/`wasmer`). Más portable (no atado a la plataforma del
-  contenedor), pero pasar datos complejos (structs, strings) es más manual — hay que
-  serializar contra la memoria lineal del módulo.
-* En cualquiera de los dos casos: las funciones de `zigma` son comptime/genéricas, y no
-  hay generics en un ABI C ni en WASM. Hace falta un paso de build que monomorfice
-  exports concretos para el sistema específico (aida) — un export por función de
-  validación/regla de negocio, no una función genérica reusable entre sistemas.
-
-**Decisión (2026-10-22): el cliente de Postgres del backend TS es `pg`** (node-postgres).
-Ya estaba en `backend/package.json` para el test de integración, y el código generado está
-armado alrededor de su API: cada builder de `dml.ts` devuelve `{ text, values }`, que es lo
-que recibe `pool.query(text, values)`. Consecuencias a tener en cuenta en la traducción de
-valores TS ↔ Postgres: `pg` devuelve `BIGINT` como string por defecto (no `bigint`) y un
-tipo compuesto como su forma de texto (`"(2026,3,14)"`); las conversiones se registran por
-tipo. Se descartó cambiar a otro cliente (`postgres.js`, con otra API: templates
-`` sql`...` `` en vez de `{ text, values }`), que obligaría a cambiar lo que genera el
-generador.
-
-**Ya no aplica** (era para un backend en Zig, descartado por la decisión de arriba):
-
-* La investigación de `libpq` (driver de Postgres para Zig) — el cliente de Postgres pasa
-  a ser responsabilidad de TypeScript (decidido: `pg`, ver arriba).
-* La decisión de `std.http.Server` — el servidor HTTP pasa a ser Node/TypeScript
-  (framework a elegir, o ninguno si se arranca con Node puro).
-
-Queda documentado abajo el detalle de esa investigación (linkeo de `libpq`, forma de
-`std.http.Server`, evaluación de `pg.zig`) como contexto histórico, por si en algún punto
-conviene retomarlo — pero no es el plan actual.
-
-### Contexto histórico (backend en Zig, superado)
-
-Lo que se había acordado en la sesión anterior, cuando el plan todavía era un backend
-enteramente en Zig:
-
-* **Orden del hito, decidido**: primero backend↔DB, recién después backend↔frontend.
-  Concretamente: lograr que código del backend hable con Postgres y probarlo con tests
-  (TDD, sin servidor HTTP de por medio todavía) *antes* de tocar `std.http.Server`. El
-  HTTP queda pospuesto — no es el próximo paso.
-* **Driver de Postgres: `libpq` directo, no un paquete Zig de terceros.** Decisión
-  tomada (se descarta investigar/probar `pg.zig`, tanto el original de `karlseguin`
-  como el fork de `lalinsky` sobre `std.Io` — quedan documentados más abajo por si en
-  algún momento conviene reconsiderarlos, pero no son el plan). `libpq` es la librería
-  C oficial de Postgres: hay que ligarla desde Zig vía `@cImport`/`translate-c`. Más
-  trabajo de wireo que un paquete Zig ya armado, pero sin depender de que un proyecto
-  de terceros persiga el ritmo de los dev builds de Zig — motivo ya discutido al
-  comparar las opciones (ver más abajo).
-  * **Todavía sin investigar** (queda para la próxima sesión, antes de escribir
-    código): cómo se linkea `libpq` desde `build.zig` (`linkSystemLibrary("pq")`,
-    dónde vive la lib/headers en Windows — probablemente hace falta la instalación de
-    PostgreSQL o solo el cliente, `libpq-dev` en Linux), forma de las funciones de la
-    C API (`PQconnectdb`, `PQexecParams` para queries parametrizadas, `PQgetvalue`/
-    `PQntuples`/`PQnfields` para leer resultados, `PQclear`/`PQfinish` para liberar) y
-    cómo se ven esas funciones ya traducidas por `translate-c` en Zig.
-* **HTTP: `std.http.Server` directo, sin framework.** Decisión tomada, pero pospuesta
-  (ver arriba). Investigado (`std/http/Server.zig` de nuestro toolchain pineado, no de
-  blogs de otras versiones): es deliberadamente bajo nivel —
-  `http.Server.init(in: *Reader, out: *Writer)` sobre una conexión de
-  `std.net.Server.accept()`, `server.receiveHead()` devuelve un `Request` con
-  `.head.method` / `.head.target` (path crudo), y `request.respond(body, options)`
-  para contestar. **No** trae router, ni path params, ni parseo de JSON — eso lo
-  escribimos nosotros. Motivo de la decisión: el "router" que necesitamos no es un DSL
-  de rutas a mano (`router.get("/alumnos/:id", ...)` estilo `http.zig`/`httpz` de
-  karlseguin) sino un dispatch genérico derivado de `entity_defs` (nombre de entidad +
-  verbo CRUD → handler), en línea con cómo ya se derivó `sql_generator` de
-  `EntityInfo`. Un framework de rutas está pensado para el caso que NO tenemos (rutas
-  escritas a mano una por una).
-* **Investigado pero descartado por ahora — paquetes `pg.zig` (cliente nativo del
-  protocolo de Postgres, sin libpq)**, documentado por si se reconsidera:
-  * `karlseguin/pg.zig` (el original): apunta a Zig 0.16.0 en `master`. Pool
-    (`pg.Pool`), queries parametrizadas (`pool.query("... where power > $1", .{9000})`),
-    filas tipadas (`row.get(i32, 0)`) y mapeo a struct por nombre de columna
-    (`row.to()`). TLS marcado experimental, necesita OpenSSL. Es estricto: no hace
-    coerción de tipos.
-  * `lalinsky/pg.zig` (fork activo, commits recientes): reescrito para la interfaz
-    `std.Io` nueva de Zig — la misma que usamos recién para arreglar el bug de stdout
-    en `print_schema.zig` (`std.Io.Threaded` / `init.io`). Reemplaza OpenSSL por
-    `tls.zig` para que TLS funcione bajo `std.Io`. Misma forma de pool/query/row que
-    el original, más `error.Timeout` en `acquire()`.
-  * Ninguno de los dos fija `minimum_zig_version` en su `build.zig.zon`.
-
-## Hito 3: capa HTTP (y después frontend)
-
-El hito 3 arranca por la capa HTTP del backend, que el frontend va a necesitar.
-
-**Decisiones.**
-* Node puro (`node:http`), sin framework; cliente de Postgres `pg`.
-* `server.ts` **generado** desde el SSOT, como `dml.ts` y `rules.ts`, con una ruta explícita
-  por entidad y operación (`src/ts_server_generator.zig`).
-* API bajo `/api/<entidad>`; la pk (y más adelante los filtros) va en el **query string**.
-* Todas las respuestas son JSON: una lista es un array pelado, un error es
-  `{ "error": ... }` (404 sin ruta, 500 ante una excepción, que se loguea).
-* Cada fila se codifica campo por campo desde el SSOT, **en `server.ts`**: un `bigint` es
-  un número JSON exacto (`JSON.rawJSON` sobre el string exacto que da `pg`; ni por un
-  `number` ni como string), un struct es un objeto leído de la forma de texto del tipo
-  compuesto (`fecha` → `{ "año", "mes", "día" }`). Texto o un struct dentro de un
-  compuesto: no compila todavía.
-* El servidor es el proceso de larga duración del servicio `backend` (puerto 3000, con
-  healthcheck). Test: `zig build http-docker` (pide la API desde el host).
-
-**Hecho.**
-* `GET /api/<entidad>` (listar) para las 11 entidades de aida.
-* `GET /api/<entidad>?<pk completa>` (una fila): el objeto, o 404 JSON, para **las 11
-  entidades**. Un query string que no es exactamente la pk es 400 JSON (`unknown parameter`,
-  `repeated parameter`, `missing pk field`). Cada valor se lee por su tipo (`pk<Entidad>`):
-  texto tal cual; un entero como dígitos decimales dentro del intervalo de su tipo de Zig
-  (exacto, como `bigint`; si no, 400 `field '…' must be an integer in min..max`); un struct
-  como un parámetro por campo (`fecha.año=2026&fecha.mes=3&fecha.día=14`), cada uno con su
-  rango, y mandado a Postgres como el literal del compuesto `(2026,3,14)`.
-  * Hallazgo: `pg` manda los parámetros sin tipo, y al comparar una columna compuesta con
-    uno Postgres lo toma como compuesto anónimo (`record`), cuyo texto no sabe leer
-    (`input of anonymous composite types is not implemented`). Por eso en `dml.ts` el
-    `WHERE` de la pk castea las columnas struct a su tipo compuesto (`"fecha" = $3::fecha`).
-    `INSERT` y `SET` toman el tipo de la columna: no hace falta.
-* `DELETE /api/<entidad>?<pk completa>` (baja): 204 **sin cuerpo** (la única respuesta que no
-  es JSON), o 404 JSON si no había fila con esa pk; sin la pk completa es 400 JSON, así que
-  nunca borra más de una fila. Para las 11 entidades (la pk se lee igual que en el `GET`). Borrar una fila referenciada por
-  otras (un `periodo` con `cursos`) lo rechaza Postgres y es, por ahora, el 500 genérico:
-  decidido manejar todas las violaciones de pk/uk/fk juntas, más adelante (se evaluó un 500
-  con mensaje `referenced by <tabla>` o un 409, y se descartó por ahora).
-* `POST /api/<entidad>` (alta), la fila como cuerpo JSON: 201 **sin cuerpo**, para **las 11
-  entidades**. El cuerpo va en el mismo formato que las respuestas: un `bigint` como número
-  JSON exacto (`readBody` guarda el texto exacto de cada número, nunca pasa por un `number`
-  de JS) y una `fecha` como `{ "año", "mes", "día" }`. Tiene que ser un objeto JSON con solo
-  los campos de la entidad (`row<Entidad>`), cada uno leído por su tipo: string, boolean,
-  entero dentro del intervalo de su tipo de Zig (lo chequea el servidor), struct como objeto
-  con exactamente sus campos (`read<Dominio>`, mandado a Postgres como el literal del
-  compuesto). Un campo nullable (y fuera de la pk) puede venir `null` o faltar (se toma como
-  `null`), los demás son obligatorios; si no, 400 JSON que nombra el campo (`fecha.mes`
-  dentro de un struct): `body is not valid JSON`, `body must be a JSON object`,
-  `unknown field`, `missing field`, `must not be null`, `must be a string`,
-  `must be a boolean`, `must be an integer in min..max`, `must be an object`. Una pk
-  duplicada es, por ahora, el 500 genérico. Un query string en un `POST` se ignora (no se
-  decidió otra cosa).
-  * Los tipos de `dml.ts` no reflejan `nullable` (`insertDocentes` declara `cargo: string`):
-    `server.ts` le pasa `string | null`, que en runtime funciona (`pg` manda `NULL`) pero un
-    `tsc` rechazaría. Misma limitación de `zigma` que en `TEST_QUEUE.md`.
-* `PUT /api/<entidad>?<pk completa>` (modificación), los campos fuera de la pk como cuerpo
-  JSON: 204 **sin cuerpo**, o 404 JSON si no había fila con esa pk (no se crea nada). Para las
-  entidades con algún campo fuera de la pk (en aida, 9: `periodos` e `inscripciones` son todo
-  pk, no hay nada que modificar). El cuerpo se lee como en el `POST`, con solo los campos
-  fuera de la pk (`set<Entidad>`). Es de fila completa (`update<E>` de `dml.ts`): un campo
-  nullable que el cuerpo no trae se escribe `null`. La pk solo va en el query string: un
-  campo de la pk en el cuerpo es `unknown field` (400).
-
-**Plan: las operaciones que faltan, empezando por `periodos`.** En este orden:
-1. ~~**Una fila:** `GET /api/periodos?periodo=…`.~~ Hecho. Trae la lectura del query string (la pk
-   completa, convertida al tipo de cada campo) y los errores de entrada.
-2. ~~**Baja:** `DELETE /api/periodos?periodo=…`.~~ Hecho. Reusa la lectura de la pk del paso 1.
-3. ~~**Alta:** `POST /api/periodos`, cuerpo JSON.~~ Hecho. Trae la lectura del cuerpo y la pregunta de
-   qué pasa con una pk duplicada (ligada a los errores de dominio de pk/uk/fk, pendientes).
-
-`periodos` no tiene modificación (su único campo es la pk: no hay nada que `SET`); el `PUT`
-aparece con otra entidad (por ejemplo `materias`), después de estos tres pasos. Hecho.
-
-### Frontend: en curso (próximo paso)
-
-**Decidido (2026-10-22).**
-* Generado desde el SSOT, como `server.ts` (`src/frontend_generator.zig`): HTML + JS planos,
-  sin framework ni paso de build.
-* Contenedor propio: servicio `frontend` (nginx `1.28.0-alpine`, puerto 8080) que sirve las
-  páginas generadas (`frontend/public`, gitignoreado, lo escribe `zig build` en el host) y
-  hace proxy de `/api/` al `backend` (mismo origen: sin CORS).
+* Generado por `src/frontend_generator.zig`: HTML + JS planos, sin framework ni paso de
+  build, servidos por nginx, que hace proxy de `/api/` al backend (mismo origen: sin CORS).
 * Una página por entidad, su URL espeja la de la API (`/docentes` muestra lo que da
-  `GET /api/docentes`; nginx mapea `/docentes` a `docentes.html`), más un índice.
-* Primer paso: **navegar y listar** (solo lectura). Encabezados = los labels del SSOT; cada
-  número como su texto exacto (un `bigint` nunca pasa por un `number`); `null` = celda vacía;
-  un struct = sus campos unidos con `-` (`fecha` se ve `2026-3-14`: **pendiente** una
-  visualización propia para fechas, ligada al tipo fecha del framework sobre `DATE`).
-* Tests: nativos (texto exacto de lo generado, en `zig build test`) y **end to end con
-  Playwright en un contenedor** (servicio `e2e`, imagen `mcr.microsoft.com/playwright:v1.63.0-noble`
-  y `@playwright/test` 1.63.0, perfil `e2e`), con `zig build frontend-e2e`.
+  `GET /api/docentes`), más un índice. Las páginas navegan y listan (solo lectura): una
+  tabla con una columna por campo (encabezado: su label), cada número como su texto exacto,
+  `null` como celda vacía (se ve "—"), un struct como sus campos unidos con `-`.
+* Estilo admin panel: header con el nombre del sistema (link al índice), nav lateral con
+  todas las entidades (la actual marcada) y el contenido en `<main>`, con un `common.css`
+  fijo.
 
-**Hecho:** el generador (`indexHtml`, `entityHtml`, `common_js`) con sus tests nativos en
-verde; `examples/print_frontend.zig` escribe el frontend de aida en `frontend/public` (en
-Windows los argumentos se leen con `iterateAllocator`); `frontend/Dockerfile` +
-`frontend/nginx.conf`; servicios `frontend` y `e2e` en `docker-compose.yml`; la suite de
-Playwright (`e2e/tests/frontend.spec.ts`) y su test de Zig (`test/frontend_e2e_test.zig`).
+### Reglas de dominio (`src/rules.zig`, `src/rules_wasm.zig`, `src/ts_rules_generator.zig`)
 
-**`zig build frontend-e2e` en verde (2026-10-23):** las 6 specs de Playwright pasan. Hicieron
-falta dos arreglos: el healthcheck del `frontend` pide `http://127.0.0.1/` (el `wget` de
-busybox resuelve `localhost` a `::1` y nginx escucha solo IPv4) y `try_files` suma `$uri/`
-(sin eso `/` daba 404 en vez del índice). Requiere Docker Desktop corriendo; la primera
-corrida baja la imagen de Playwright (unos 2 GB, conviene en segundo plano).
+* `zigma.defineRules(type_defs, .{ .nombre = .{ .record = ..., .rule = ... } })`: una regla es
+  siempre una validación, que toma exactamente `RecordInstanceType(type_defs, record)` y
+  devuelve `error{...}!void`. El record va explícito porque el tipo del parámetro perdió lo
+  que necesita un generador (los dominios, `nullable`); `defineRules` chequea que coincidan.
+* Un `.wasm` por sistema, con un export por regla (por comptime, sin generar texto Zig) más
+  `alloc`. Contrato: entrada, la instancia como JSON UTF-8 en memoria pedida con `alloc`;
+  salida, un string empaquetado `ptr << 32 | len`: `""` si pasa, el nombre del error de Zig
+  si la regla la rechaza, `"InvalidInput"` si el JSON no es una instancia del record.
+* `rules.ts`, generado: carga `./rules.wasm` al importarse y expone cada regla tipada, con
+  resultado `{ ok: true } | { ok: false; error: E }` y un serializador campo por campo (solo
+  los campos del parámetro; `bigint` como número JSON exacto). Confía en los tipos TS de su
+  argumento: validar datos de afuera es trabajo del que llama.
+* Probado con `test/test_system.zig` (salas y reservas).
 
-**Próximo paso:** verlo a mano en el navegador (`http://localhost:8080`); quizás una spec
-que abra `/` (hoy solo lo cubre el healthcheck). Después, los pasos siguientes del frontend
-(una fila, baja, alta y modificación con formularios).
+### Build e infraestructura
 
-## Reglas de dominio: interop TS → Zig (WASM)
+* `build.zig` crea una instancia: `up` / `down` / `print-schema` / `create-database` con
+  `-Dsystem=<ssot>` y, opcional, `-Dseed=<sql>`. No nombra ningún sistema.
+* `src/generate.zig` escribe lo generado para el sistema que recibe como `"system"`
+  (`schema`, `dml`, `dml-tests`, `server`, `frontend DIR`, `rules-ts`, `env`), a stdout o a
+  un directorio; el build lo copia a `backend/src/`, `frontend/public/` y `.env`
+  (gitignoreados).
+* Los nombres de la infraestructura salen del sistema: `.env` tiene `SYSTEM_NAME=<name>` y
+  los compose lo interpolan (contenedor, usuario y base de Postgres, volumen, proyecto de la
+  instancia `zigma-<name>`). `psql` corre dentro del servicio `postgres` con el usuario y la
+  base del contenedor.
+* Dos stacks que no chocan: el de los tests (`docker-compose.yml` solo: 8080 / 3000 / 5432)
+  y el de la instancia (`docker-compose.instance.yml` encima: 8081 / 3001 / 5433).
+* Los tests son un paquete propio, `test/build.zig`, que reusa las `pub fn` de `build.zig`;
+  ver `CLAUDE.md` para los pasos.
 
-Las reglas de dominio se escriben una vez en Zig y el backend TS las corre compiladas a
-WASM. Hecho en la rama `type-translation`, probado con un sistema propio de prueba
-(`test/test_system.zig`: salas y reservas, sin aida, que no se tocó).
+## Decisiones
 
-**Declaración (`zigma.defineRules`, `src/rules.zig`).** Las reglas de un sistema se
-declaran con `zigma.defineRules(type_defs, .{ .checkBooking = .{ .record = booking, .rule
-= checkBooking } })`: la key es el nombre de la regla. Una regla es **siempre una
-validación**: toma exactamente `RecordInstanceType(type_defs, record)` y devuelve
-`error{...}!void`. El record va explícito porque el tipo del parámetro (el struct
-derivado) perdió lo que necesita un generador (los tipos de dominio, `nullable`, de qué
-record viene); `defineRules` chequea que los dos coincidan. Rechazos: 10 casos "no
-compila" (`test/compile_errors/rules_*`).
+* **El DDL es un string generado en comptime**, no una conexión: los tests son asserts sobre
+  el texto, y el framework no queda atado a ningún driver.
+* **Postgres vía Docker, sin driver para Zig**: `psql` corre dentro del contenedor, así que
+  la única dependencia del host para la base es Docker.
+* **El backend se genera en TypeScript (Node), no en Zig**: portabilidad (sin atar el
+  desarrollo a un toolchain nativo por sistema operativo) y el ecosistema maduro de Node para
+  HTTP y Postgres. Corre en su propio contenedor; el código generado se escribe en el host,
+  así que no hay Zig en la imagen.
+* **Cliente de Postgres: `pg`**: el código generado está armado sobre su API (`{ text, values }`
+  para `pool.query`). `pg` devuelve un `BIGINT` como string y un compuesto como su texto
+  (`"(2026,3,14)"`); `server.ts` hace la traducción a JSON.
+* **Las reglas de Zig se corren desde TS compiladas a WASM** (el `WebAssembly` que Node ya
+  trae), no por una lib nativa con C ABI: el `.wasm` no queda atado a la plataforma donde se
+  compiló. Como las funciones de `zigma` son genéricas, el build monomorfiza un export por
+  regla de cada sistema.
+* **HTTP con Node puro, sin framework**: las rutas no se escriben a mano, se generan desde
+  `entity_defs` (una por entidad y operación); un framework de rutas resuelve el caso que no
+  tenemos.
+* **API**: la pk va en el query string; todas las respuestas son JSON salvo los 201/204 sin
+  cuerpo.
+* **Frontend plano** (HTML + JS sin framework ni build), servido por nginx; **e2e con
+  Playwright en un contenedor** (servicio `e2e`, imagen `mcr.microsoft.com/playwright` a la
+  misma versión que `@playwright/test`).
+* **El sistema se pasa por línea de comandos** y los nombres de la infraestructura salen de
+  su `name`: fuera de su SSOT, su seed y los tests, ningún archivo nombra a un sistema.
 
-**El módulo WASM (`src/rules_wasm.zig`).** Genérico: exporta las reglas del módulo que
-`build.zig` le da como `"system"`, con `@export` en un loop comptime (sin generar texto
-Zig). **Un `.wasm` por sistema**, con un export por regla, con el nombre de la regla, más
-`alloc`. Contrato con el que llama:
-* entrada: la instancia del record como JSON UTF-8, escrita en memoria pedida con `alloc`;
-  el export recibe puntero y largo, y la libera;
-* salida: un string empaquetado `ptr << 32 | len`: `""` si pasa, el nombre del error de Zig
-  si la regla la rechaza, `"InvalidInput"` si el JSON no es una instancia del record
-  (`std.json` parsea al tipo exacto: campo faltante o de más, tipo incorrecto, fuera de
-  rango, `null` → `"InvalidInput"`). Los strings de resultado son constantes: no se liberan.
-* Hallazgos: `alloc(0)` daba la dirección `0xFFFFFFFF`, que no es memoria, así que una
-  entrada vacía rompía del lado que llama; ahora devuelve un byte estático y el export
-  libera solo entradas no vacías. `rdynamic` (que conserva los exports) también exporta
-  `__stack_pointer`: se acepta como artefacto del build, porque la lista exacta
-  (`export_symbol_names`) obligaría a repetir los nombres de las reglas en `build.zig`.
+## Pendiente
 
-**`rules.ts`, generado (`src/ts_rules_generator.zig`).** La mitad TS del contrato. Carga
-`./rules.wasm` (al lado suyo) una vez, al importarse, y expone cada regla tipada:
-* parámetro: el tipo TS del parámetro de la regla (`tsTypeOf`), el mismo tipo que parsea
-  WASM;
-* resultado: `RuleResult<E> = { ok: true } | { ok: false; error: E }`, con `E` los nombres de
-  error de Zig (ordenados: el orden que da el compilador no es estable) más
-  `"InvalidInput"`;
-* serializador campo por campo: solo los campos del parámetro van al JSON (TS deja pasar
-  objetos con propiedades de más, como una fila entera, que WASM rechazaría), y un `bigint`
-  como número JSON exacto (`JSON.rawJSON`; `JSON.stringify` tira con un `bigint`).
-* `rules.ts` **confía en los tipos TS** de su argumento: datos sin tipar en runtime (un
-  `bigint` faltante o con un string) pueden hacer tirar al serializador antes de llegar a
-  WASM. Validar datos de afuera es trabajo del que llama.
-
-**Tests.** Nativos en `zig build test` (`run` del módulo WASM con el testing allocator, y el
-texto exacto de `rules.ts`); contra el `.wasm` real desde Node en `zig build rules-wasm`
-(necesita Node, fuera de `zig build test`): el contrato escrito a mano
-(`test/rules_wasm_node_test.zig`: exports, `alloc`, empaquetado, rango de `i64`, 10.000
-llamadas sin crecer la memoria) y el `rules.ts` generado al lado del `.wasm`
-(`test/rules_ts_node_test.zig`: `RuleResult`, propiedades de más, `bigint` exacto incluido
-2^53 + 1).
-
-**Falta:** cuándo se aplica una regla (qué la dispara: tarea para más adelante); declarar
-las reglas de aida (`validarCargo` es todavía una función suelta, y `cargo` no tiene
-entidad); el `.wasm` y `rules.ts` de aida en el backend.
-
-## Steps de build: renombre y `test-all` (2026-10-29)
-
-Los nombres de steps de las entradas anteriores son los de su momento. Desde el
-2026-10-29: `ts-backend` → `test-backend`, `http-docker` → `test-api`, `frontend-e2e` →
-`test-e2e`, `rules-wasm` → `test-rules-wasm`; `ts-backend-db` y `backend-docker` (con
-`test/db_backend_integration_test.zig` y `test/backend_docker_test.zig`) se quitaron: su
-ida y vuelta de `periodos` contra Postgres la cubre `test-api` (CRUD de las 11 entidades
-con el backend en su contenedor). Nuevo `zig build test-all`: `test` y después los otros,
-de a uno, cada uno en un `zig build` anidado.
-
-Para recuperar la granularidad, nuevo `zig build test-backend-db`
-(`test/backend_db_test.zig`): el mismo flujo de datos que `test-api` por debajo de
-`server.ts`, sin HTTP. Desde el contenedor del backend, `dml.ts` contra Postgres para las
-11 entidades (insert, select por pk, select all, update, delete) con los valores que el
-servidor le pasa (texto, bigint de JS, `fecha` como literal `"(año,mes,día)"`, null) y las
-filas como `pg` se las devuelve (bigint como texto decimal, `fecha` como `"(…)"`). La
-traducción TS ↔ Postgres sigue en `server.ts`, no en `dml.ts`. En `test-all` va entre
-`test-backend` y `test-api`.
-
-## Stack de ejemplo para revisar el frontend (2026-10-29)
-
-`zig build example` levanta un segundo stack, separado del de los tests (proyecto compose
-`zigma-example`, `docker-compose.example.yml`: contenedor `zigma_example_postgres`, puertos
-8081 / 3001 / 5433, volumen propio por el nombre del proyecto). En cada corrida resetea la
-base (`DROP SCHEMA public CASCADE`, el DDL generado, `examples/aida_seed.sql`: tres filas
-falsas por entidad, `docente-1`, `materia-1`, …, con los casos borde: fk reflexiva, clase
-sin `fecha`, `orden` 2^53 + 1) y termina con `test/example_stack_test.zig`: por el
-frontend en 8081, cada entidad lista exactamente las filas del seed (una fila agregada a
-mano antes de la corrida lo hace fallar si no hubo reset) y algunas filas completas.
-`zig build example-down` lo baja (el volumen queda: `example` lo resetea igual).
-
-**Estilo "admin panel" (2026-10-29):** elegido entre cinco opciones. Todas las páginas
-comparten el marco: header con el nombre del sistema (link al índice), nav lateral con
-todas las entidades en orden de declaración (la de la página con `aria-current="page"`)
-y el contenido en `<main>`; un `common.css` fijo (`common_css` del generador, como
-`common_js`) lo diseña. `entityHtml` recibe ahora todas las entidades (para la nav). Una
-celda vacía muestra "—" por CSS (el texto sigue vacío). Specs nuevas: la hoja se sirve
-como CSS, la nav en cada página con la actual marcada, y la nav dibujada como columna a
-la izquierda del contenido (posiciones reales en el navegador).
-
-## Un solo generador genérico (2026-10-29)
-
-En `examples/` quedan solo `aida.zig` y `aida_seed.sql`. Los seis drivers a mano
-(`examples/print_schema.zig`, `print_ts_backend.zig`, `print_ts_backend_tests.zig`,
-`print_ts_server.zig`, `print_frontend.zig` y `test/print_test_system_rules_ts.zig`; las
-entradas anteriores los nombran) se reemplazan por `src/generate.zig`: importa el sistema
-como `"system"` (como `src/rules_wasm.zig`) y recibe qué generar (`schema`, `dml`,
-`dml-tests`, `server`, `frontend DIR`, `rules-ts`). Cada artefacto se ofrece si el sistema
-declara lo que necesita (si no, un mensaje y código 1). `build.zig` lo compila una vez por
-sistema: aida y el sistema de prueba. El nombre del sistema lo declara él mismo
-(`pub const name = "aida";` en `aida.zig`). Las salidas generadas quedaron idénticas byte
-a byte. La infraestructura con nombres de aida (`docker-compose.yml`) queda para después.
-
-## Próximos pasos
-
-Hito 2 cerrado: lo que sigue de esta lista queda para más adelante.
-
-Hecho: el `backend` como servicio propio en `docker-compose.yml` (ver el progreso del
-hito 2) y el cliente de Postgres (`pg`, ver "Decisiones previas").
-
-1. Elegir framework HTTP, si hace falta (o arrancar con Node puro), y la capa HTTP: con ella
-   el servicio `backend` pasa a tener un proceso de larga duración.
-2. Reglas: definir cuándo se aplica una regla y llevar las de aida (`validarCargo`) al
-   backend con `rules.ts` / `rules.wasm` (en la imagen, generados en el host como `dml.ts`).
-3. Traducción de valores TS ↔ Postgres (`fecha`, `bigint`), ver "Falta" en el hito 2.
+* **Frontend**: una fila, baja, alta y modificación con formularios (próximo paso: mostrar
+  una fila). Una visualización propia para fechas, ligada a un tipo fecha del framework sobre
+  `DATE`.
+* **Errores de dominio de pk/uk/fk**: hoy una violación (pk duplicada, fila referenciada) es
+  el 500 genérico; mapearlas a errores de dominio con constraints nombradas desde el SSOT.
+  Referencia de un intento: commit `5fad670` en `lucas-branch-first-attempt`.
+* **Reglas**: cuándo se aplica una regla (ver `PREGUNTAS.md`); declarar las de aida
+  (`validarCargo` es una función suelta y `cargo` no tiene entidad) y llevar su `.wasm` y
+  `rules.ts` al backend.
+* **`nullable` en los tipos**: `RecordInstanceType` y los tipos de `dml.ts` no lo reflejan (un
+  campo nullable es `T`, no `?T` / `T | null`); ver `TEST_QUEUE.md`.
+* **Texto dentro de un compuesto** y **un struct dentro de un struct**: no compilan.
+* **Fks cíclicas entre entidades distintas**: el DDL las emite en línea, en orden de
+  declaración, y Postgres exige que la tabla referenciada exista (haría falta `ALTER TABLE
+  ... ADD CONSTRAINT` al final).

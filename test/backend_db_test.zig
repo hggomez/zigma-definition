@@ -17,9 +17,9 @@
 //! plain SQL before and after, so the cleanup does not depend on the code
 //! under test.
 //!
-//! Run with `zig build test-backend-db`, which regenerates dml.ts (and
-//! server.ts) into backend/, applies the aida schema and builds the backend
-//! image. Not part of `zig build test` (needs Docker).
+//! Run with `zig build --build-file test/build.zig test-backend-db`, which regenerates dml.ts
+//! (and server.ts) into backend/, applies the schema and builds the backend
+//! image. Not part of `test` (needs Docker).
 
 const std = @import("std");
 

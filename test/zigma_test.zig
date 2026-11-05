@@ -1,6 +1,7 @@
-//! Port of aida-test.ts. The positive cases live here; the negative cases
-//! (the @ts-expect-error ones of the TypeScript version) are the expected
-//! compile errors in test/compile_errors, driven by build.zig.
+//! The tests of the vocabulary of zigma, with aida as the example system.
+//! The positive cases live here; the negative cases (the equivalent of the
+//! @ts-expect-error ones of the TypeScript version) are the expected compile
+//! errors in test/compile_errors, driven by test/build.zig.
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -86,7 +87,7 @@ test "completes preserving the field set, and derives the label from the name" {
     comptime {
         // the completion preserves the field set (no more, no less), and
         // every field is a full FieldInfo (label, nullable and description
-        // are no longer optional)
+        // are not optional)
         std.debug.assert(fieldNames(@TypeOf(cargo_info)).len == 4);
         std.debug.assert(!@hasField(@TypeOf(cargo_info), "inexistente"));
         std.debug.assert(@FieldType(@TypeOf(cargo_info), "cargo") == zigma.FieldInfo);

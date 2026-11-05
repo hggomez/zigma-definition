@@ -2,12 +2,11 @@
 //! long-running process of the `backend` service of docker-compose.yml, and
 //! called over HTTP from the host: GET /api/<entity> lists the rows of the real
 //! database as a bare JSON array, for every entity of aida; with the full pk in
-//! the query string it returns that row (or a JSON 404), for the entities whose
-//! pk is text only, and DELETE with the full pk removes it (204, or a JSON 404
-//! when it was not there); a query string that is not exactly the pk is a JSON
-//! 400; POST with the row as a JSON body creates it (201), for the entities
-//! whose fields are all text, and a body that is not a row of the entity is a
-//! JSON 400; PUT with the pk in the query string and the other fields as a
+//! the query string it returns that row (or a JSON 404), and DELETE with the
+//! full pk removes it (204, or a JSON 404 when it was not there); a query
+//! string that is not exactly the pk is a JSON 400; POST with the row as a
+//! JSON body creates it (201), and a body that is not a row of the entity is
+//! a JSON 400; PUT with the pk in the query string and the other fields as a
 //! JSON body updates the row (204, or a JSON 404 when it was not there); a
 //! body takes a bigint as an exact JSON number and a fecha as an object, each
 //! checked against its type (a JSON 400 naming the field); an unknown path is
@@ -23,10 +22,10 @@
 //! `orden` is 2^53 + 1 and another one without `fecha`. It requests the API
 //! from the host with Node's fetch, and removes the rows afterwards.
 //!
-//! Run with `zig build test-api`, which regenerates dml.ts + server.ts
-//! into backend/, applies the schema, builds the image and brings the
-//! backend up (waiting for its healthcheck). Not part of `zig build test`
-//! (needs Docker + Node).
+//! Run with `zig build --build-file test/build.zig test-api`, which regenerates dml.ts +
+//! server.ts into backend/, applies the schema, builds the image and brings
+//! the backend up (waiting for its healthcheck). Not part of `test` (needs
+//! Docker + Node).
 
 const std = @import("std");
 
@@ -139,7 +138,7 @@ const script =
     \\assert.equal(res.status, 400);
     \\assert.deepEqual(await res.json(), { error: "missing pk field 'periodo'" });
     \\// a row other rows reference (the periodo of a curso): Postgres rejects
-    \\// it; for now the generic 500 (pk/uk/fk violations, all together: later)
+    \\// it: the generic 500 (pk/uk/fk violations are not domain errors)
     \\res = await fetch(base + '/api/periodos?periodo=http-docker-test', { method: 'DELETE' });
     \\assert.equal(res.status, 500);
     \\assert.deepEqual(await res.json(), { error: 'internal error' });
@@ -208,7 +207,7 @@ const script =
     \\  assert.equal(res.status, 400, body);
     \\  assert.deepEqual(await res.json(), { error }, body);
     \\}
-    \\// a duplicate pk: Postgres rejects it; for now the generic 500
+    \\// a duplicate pk: Postgres rejects it: the generic 500
     \\res = await fetch(base + '/api/periodos', { method: 'POST', body: JSON.stringify({ periodo: 'http-docker-test' }) });
     \\assert.equal(res.status, 500);
     \\assert.deepEqual(await res.json(), { error: 'internal error' });

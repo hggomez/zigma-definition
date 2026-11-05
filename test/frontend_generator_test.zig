@@ -1,15 +1,15 @@
-//! Tests for the generation of the frontend, driving `frontend_generator.zig`:
+//! Tests of the generation of the frontend (`frontend_generator.zig`):
 //! plain HTML + JS (no framework, no build step), generated from the SSOT like
 //! server.ts. One page per entity, its URL mirroring the API (/docentes shows
 //! what GET /api/docentes returns), plus an index of the entities and a fixed
 //! common.js the pages share.
 //!
-//! First step: navigate and list (read only). Each entity page is a table: a
+//! The pages navigate and list (read only). Each entity page is a table: a
 //! column per field, its header the field's label (from the FieldInfo), and a
 //! cell per value as the JSON response has it, every number kept as its exact
 //! text (a bigint is never rounded through a JS number); null is an empty
 //! cell, a struct its fields in order joined with "-" (`fecha` shows as
-//! 2026-3-14: a display of its own for dates is pending).
+//! 2026-3-14).
 //!
 //! The look is an admin panel: every page has the same frame, a header with
 //! the system's name (linking the index), a sidebar nav with every entity in

@@ -37,7 +37,7 @@ pub const SqlType = union(SqlKind) {
     /// a struct: a Postgres composite type with one attribute per field. The
     /// composite has no name here (the Zig type has no SQL name): the
     /// generator names it after the domain. A field cannot be a struct itself
-    /// (nested structs have no SQL mapping yet).
+    /// (nested structs have no SQL mapping).
     composite: []const SqlField,
 };
 

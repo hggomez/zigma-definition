@@ -1,6 +1,7 @@
 //! A small system of its own (rooms and bookings, no aida) with rules, for
-//! the tests of the rules WASM module: build.zig gives it to that module as
-//! its "system" (a system module exposes `type_defs` and `rule_defs`).
+//! the tests of the rules: rules_test.zig and ts_rules_generator_test.zig
+//! import it, and test/build.zig gives it to the rules WASM module as its
+//! "system" (a system module exposes `type_defs` and `rule_defs`).
 
 const zigma = @import("zigma");
 

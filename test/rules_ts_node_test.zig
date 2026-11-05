@@ -1,13 +1,13 @@
 //! The generated rules.ts of the test system, run from Node against the
 //! system's real rules.wasm, next to it (rules.ts loads ./rules.wasm): the
-//! whole path the backend will use, with no hand-written half of the
+//! whole path a backend uses, with no hand-written half of the
 //! contract. What it adds over rules_wasm_node_test.zig: the typed functions,
 //! the RuleResult, the field-by-field serializer (extra properties stay out
 //! of the JSON) and bigint crossing exactly.
 //!
-//! Run with `zig build test-rules-wasm`, which generates rules.ts, puts it next to
-//! the compiled module and passes the path of rules.ts here. Not part of
-//! `zig build test` (needs Node).
+//! Run with `zig build --build-file test/build.zig test-rules-wasm`, which generates rules.ts,
+//! puts it next to the compiled module and passes the path of rules.ts here.
+//! Not part of `test` (needs Node).
 
 const std = @import("std");
 const build_options = @import("build_options");

@@ -1,8 +1,8 @@
-//! Tests for TypeScript DML entry-point generation from zigma EntityInfo,
-//! driving the implementation of `ts_backend_generator.zig`. Same fixture
-//! conventions as `sql_generator_test.zig`: ad-hoc entities for the minimal
-//! base-format cases, `aida` entities once a test exercises a pattern the
-//! vocabulary already has (composite pk, fks, every domain type, ...).
+//! Tests of the TypeScript DML generation from zigma EntityInfo
+//! (`ts_backend_generator.zig`). Same fixture conventions as
+//! `sql_generator_test.zig`: ad-hoc entities for the minimal base-format
+//! cases, `aida` entities when one exercises the pattern under test
+//! (composite pk, fks, every domain type, ...).
 
 const std = @import("std");
 const zigma = @import("zigma");

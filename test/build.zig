@@ -110,8 +110,9 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const root = b.dependency("zigma_definition", .{}).builder;
-    const fw = instance.addFramework(root, target, optimize);
+    const dep = b.dependency("zigma_definition", .{ .target = target, .optimize = optimize });
+    const root = dep.builder;
+    const fw = instance.frameworkOf(dep);
 
     // The example system of the tests.
     const aida_mod = instance.addSystemModule(root, fw, root.path("examples/aida.zig"), target, optimize);
@@ -119,7 +120,7 @@ pub fn build(b: *std.Build) void {
     // tests of defineRules and of the rules WASM module.
     const test_system_mod = instance.addSystemModule(b, fw, b.path("test_system.zig"), target, optimize);
 
-    // `zig build test`: the tests of the framework (runtime and expected
+    // `test`: the tests of the framework (runtime and expected
     // compile errors), no Node nor Docker.
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     const unit_tests = [_]struct { source: []const u8, imports: []const Import }{
@@ -207,7 +208,7 @@ pub fn build(b: *std.Build) void {
     const test_stack = instance.Compose.testStack(generated);
     const apply_schema = test_stack.applySchema(root);
 
-    // `zig build test-backend`: the generated DML module and its generated
+    // `test-backend`: the generated DML module and its generated
     // tests, written into backend/src/, run with `node --test`. Node 22.18+
     // runs .ts directly and the generated tests only use node:test /
     // node:assert, so there is no npm step.
@@ -223,7 +224,7 @@ pub fn build(b: *std.Build) void {
     build_backend_image.step.dependOn(generated.write_ts_backend);
     build_backend_image.step.dependOn(generated.write_ts_server);
 
-    // `zig build test-api`: the generated HTTP server as the backend's
+    // `test-api`: the generated HTTP server as the backend's
     // long-running process (up, waiting for its healthcheck), the schema
     // applied, then test/http_docker_test.zig requests the API from the host.
     const backend_up = test_stack.run(root, &.{ "up", "-d", "--wait", "backend" });
@@ -234,7 +235,7 @@ pub fn build(b: *std.Build) void {
     const test_api_step = b.step("test-api", "Generate the HTTP server, run it in the backend container and request it from the host");
     test_api_step.dependOn(&run_http_docker_tests.step);
 
-    // `zig build test-backend-db`: the generated DML against the database
+    // `test-backend-db`: the generated DML against the database
     // without the HTTP layer, with the values server.ts hands it: the same
     // image as test-api, the schema applied, then test/backend_db_test.zig
     // runs the builders inside the backend container.
@@ -244,7 +245,7 @@ pub fn build(b: *std.Build) void {
     const test_backend_db_step = b.step("test-backend-db", "Run the generated DML inside the backend container against Postgres, with the values of test-api, without HTTP");
     test_backend_db_step.dependOn(&run_backend_db_tests.step);
 
-    // `zig build test-e2e`: the generated frontend in a headless browser.
+    // `test-e2e`: the generated frontend in a headless browser.
     // Build the images, bring the frontend up (and the backend with it,
     // waiting for both healthchecks), the schema applied, then
     // test/frontend_e2e_test.zig seeds rows and runs the Playwright suite in
@@ -261,7 +262,7 @@ pub fn build(b: *std.Build) void {
     const test_e2e_step = b.step("test-e2e", "Generate the frontend, serve it in its container and test it in a headless browser (Playwright, in a container)");
     test_e2e_step.dependOn(&run_frontend_e2e_tests.step);
 
-    // `zig build test-example`: what `zig build up -Dsystem=examples/aida.zig
+    // `test-example`: what `zig build up -Dsystem=examples/aida.zig
     // -Dseed=examples/aida_seed.sql` leaves running (the instance stack,
     // project zigma-aida, 8081), checked by test/example_stack_test.zig. The
     // stack keeps running until `zig build down -Dsystem=examples/aida.zig`.
@@ -270,7 +271,7 @@ pub fn build(b: *std.Build) void {
     const test_example_step = b.step("test-example", "Bring the aida instance up (frontend on 8081) with its seed rows, then check it");
     test_example_step.dependOn(&run_example_stack_tests.step);
 
-    // `zig build test-rules-wasm`: compile the rules of the test system to one
+    // `test-rules-wasm`: compile the rules of the test system to one
     // wasm32 module (src/rules_wasm.zig with test/test_system.zig as its
     // "system") and run test/rules_wasm_node_test.zig, a Zig test that loads
     // it with Node's built-in WebAssembly and calls the rules under the
@@ -334,7 +335,7 @@ pub fn build(b: *std.Build) void {
     test_rules_wasm_step.dependOn(&run_rules_wasm_node_tests.step);
     test_rules_wasm_step.dependOn(&run_rules_ts_node_tests.step);
 
-    // `zig build test-all`: `test`, then every test that needs Node or
+    // `test-all`: `test`, then every test that needs Node or
     // Docker, one after another, each in its own nested `zig build` process
     // with this build file. New nodes only: an arrow added to the shared
     // nodes (write_ts_backend, apply_schema, ...) would also be there for

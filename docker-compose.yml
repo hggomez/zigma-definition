@@ -72,7 +72,7 @@ services:
 
 # A key is not interpolated, so the system's name goes in `name`; with the
 # project in front, as compose names a volume by default, each project (the
-# test stack, zigma-example) keeps its own.
+# test stack, the instance's zigma-<name>) keeps its own.
 volumes:
   pgdata:
     name: ${COMPOSE_PROJECT_NAME}_zigma_${SYSTEM_NAME}_pgdata

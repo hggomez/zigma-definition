@@ -1,7 +1,9 @@
--- The fake rows of the example stack (`zig build example`): obviously fake
+-- The fake rows of the aida instance (`zig build up -Dsystem=examples/aida.zig
+-- -Dseed=examples/aida_seed.sql`): obviously fake
 -- values (`docente-1`, `materia-1`, ...), three per entity, parents first
 -- (fks). Loaded on a freshly reset database, after the generated schema.
--- test/example_stack_test.zig checks that exactly these rows are listed.
+-- test/example_stack_test.zig (`test-example`) checks that exactly these rows
+-- are listed.
 --
 -- Edge cases worth looking at in the frontend: docente-2 and docente-3 have
 -- docente-1 as `jefe` (the reflexive fk); a clase without `fecha`; an `orden`

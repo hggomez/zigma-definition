@@ -1,5 +1,5 @@
 //! The rules of a system compiled to one WASM module. Generic: it exports the
-//! rules of whatever module `build.zig` gives it as "system" (which exposes
+//! rules of whatever module the build gives it as "system" (which exposes
 //! `rule_defs`, declared with `zigma.defineRules`), one export per rule,
 //! named like the rule.
 //!

@@ -3,12 +3,11 @@
 //! mirroring the API (/docentes shows what GET /api/docentes returns), an
 //! index of the entities, and a fixed `common_js` the pages share.
 //!
-//! First step: navigate and list (read only). Each entity page is a table: a
+//! The pages navigate and list (read only). Each entity page is a table: a
 //! column per field, its header the field's label (from the FieldInfo), and a
 //! cell per value as the JSON response has it, every number kept as its exact
 //! text (a bigint is never rounded through a JS number); null is an empty
-//! cell, a struct its fields in order joined with "-" (a display of its own
-//! for dates is pending).
+//! cell, a struct its fields in order joined with "-".
 //!
 //! The look is an admin panel: every page has the same frame, a header with
 //! the system's name (linking the index), a sidebar nav with every entity in

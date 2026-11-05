@@ -38,7 +38,7 @@ test "the frontend on 8081 is the one of the zigma-aida project" {
 }
 
 // An ES module run on the host with `node --input-type=module -e`: requests
-// the example frontend (and the API behind its /api proxy). Every JSON number
+// the instance's frontend (and the API behind its /api proxy). Every JSON number
 // is read as its exact text (2^53 + 1 is not a JS number). Prints EXAMPLE_OK
 // when every assert holds.
 const script =

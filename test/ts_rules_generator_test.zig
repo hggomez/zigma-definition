@@ -1,5 +1,5 @@
-//! Tests for the generation of rules.ts, the TS half of the rules WASM
-//! contract (src/rules_wasm.zig), driving `ts_rules_generator.zig`. rules.ts
+//! Tests of the generation of rules.ts, the TS half of the rules WASM
+//! contract (src/rules_wasm.zig), by `ts_rules_generator.zig`. rules.ts
 //! loads ./rules.wasm (next to it) once, on import, and exposes each rule of
 //! the system typed:
 //! - its parameter, the TS type of the rule's parameter (`tsTypeOf`), the same

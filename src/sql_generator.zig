@@ -98,9 +98,8 @@ fn isPkField(comptime pk: anytype, comptime name: []const u8) bool {
     return false;
 }
 
-/// Pk columns are always `NOT NULL` regardless of `field.nullable`: standard
-/// SQL implies it for the pk, but SQLite is the exception and does not
-/// enforce it unless declared explicitly.
+/// Pk columns are always `NOT NULL` regardless of `field.nullable`: a pk
+/// value is never null, and the DDL says so explicitly.
 fn columnClause(comptime type_defs: anytype, comptime pk: anytype, comptime name: []const u8, comptime field: anytype) []const u8 {
     const base = name ++ " " ++ columnText(type_defs, field.type);
     return if (field.nullable and !isPkField(pk, name)) base else base ++ " NOT NULL";
@@ -174,7 +173,7 @@ pub fn createTableSql(comptime type_defs: anytype, comptime name: []const u8, co
 }
 
 /// Generates the whole schema of `entity_defs` (as produced by
-/// `zigma.defineEntity`/`zigma.defineEntities`, not yet completed): first one
+/// `zigma.defineEntity`/`zigma.defineEntities`, before `completeEntity`): first one
 /// `CREATE DOMAIN` per narrow integer type its columns (or the fields of
 /// their composites) use; then one `CREATE TYPE` per struct domain its
 /// columns use - each once, in order of first appearance; then one
