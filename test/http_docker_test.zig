@@ -24,7 +24,7 @@
 //! from the host with Node's fetch, and removes the rows afterwards.
 //!
 //! Run with `zig build test-api`, which regenerates dml.ts + server.ts
-//! into backend/, applies the aida schema, builds the image and brings the
+//! into backend/, applies the schema, builds the image and brings the
 //! backend up (waiting for its healthcheck). Not part of `zig build test`
 //! (needs Docker + Node).
 
@@ -32,7 +32,7 @@ const std = @import("std");
 
 fn psql(sql: []const u8) !void {
     const result = try std.process.run(std.testing.allocator, std.testing.io, .{
-        .argv = &.{ "docker", "exec", "zigma_aida_postgres", "psql", "-U", "aida", "-d", "aida", "-v", "ON_ERROR_STOP=1", "-c", sql },
+        .argv = &.{ "docker", "compose", "exec", "-T", "postgres", "sh", "-c", "exec psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" \"$@\"", "psql", "-v", "ON_ERROR_STOP=1", "-c", sql },
         .stdout_limit = .limited(1 << 20),
         .stderr_limit = .limited(1 << 20),
     });

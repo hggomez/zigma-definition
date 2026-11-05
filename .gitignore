@@ -8,3 +8,4 @@ backend/src/server.ts
 frontend/public/
 e2e/node_modules/
 e2e/test-results/
+.env

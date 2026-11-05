@@ -1,9 +1,9 @@
 {
-  "name": "aida-backend",
+  "name": "zigma-backend",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Generated TypeScript DML interface for the aida system (SSOT: examples/aida.zig).",
+  "description": "The backend of the system: the TypeScript DML and HTTP server generated from its SSOT, with pg.",
   "dependencies": {
     "pg": "^8.13.1"
   }

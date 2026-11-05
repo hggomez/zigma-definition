@@ -1,17 +1,22 @@
+# The names of the stack come from the system: SYSTEM_NAME is read from .env,
+# which `zig build` writes from the system's `name` (`generate env`) before
+# any compose step. Without it compose stops with the message below.
+x-system-name: &system-name ${SYSTEM_NAME:?no SYSTEM_NAME - run a zig build step first, it writes .env}
+
 services:
   postgres:
     image: postgres:16
-    container_name: zigma_aida_postgres
+    container_name: zigma_${SYSTEM_NAME}_postgres
     environment:
-      POSTGRES_USER: aida
-      POSTGRES_PASSWORD: aida
-      POSTGRES_DB: aida
+      POSTGRES_USER: *system-name
+      POSTGRES_PASSWORD: *system-name
+      POSTGRES_DB: *system-name
     ports:
       - "5432:5432"
     volumes:
-      - zigma_aida_pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aida -d aida"]
+      test: ["CMD-SHELL", "pg_isready -U ${SYSTEM_NAME} -d ${SYSTEM_NAME}"]
       interval: 2s
       timeout: 2s
       retries: 15
@@ -25,7 +30,7 @@ services:
     build: ./backend
     command: ["node", "src/server.ts"]
     environment:
-      DATABASE_URL: postgres://aida:aida@postgres:5432/aida
+      DATABASE_URL: postgres://${SYSTEM_NAME}:${SYSTEM_NAME}@postgres:5432/${SYSTEM_NAME}
       PORT: "3000"
     ports:
       - "3000:3000"
@@ -65,5 +70,9 @@ services:
       BASE_URL: http://frontend
     profiles: ["e2e"]
 
+# A key is not interpolated, so the system's name goes in `name`; with the
+# project in front, as compose names a volume by default, each project (the
+# test stack, zigma-example) keeps its own.
 volumes:
-  zigma_aida_pgdata:
+  pgdata:
+    name: ${COMPOSE_PROJECT_NAME}_zigma_${SYSTEM_NAME}_pgdata

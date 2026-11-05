@@ -351,34 +351,48 @@ pub fn build(b: *std.Build) void {
 
     const run_print_schema = b.addRunArtifact(generate_exe);
     run_print_schema.addArg("schema");
-    const print_schema_step = b.step("print-schema", "Print the CREATE TABLE DDL generated for the aida system");
+    const print_schema_step = b.step("print-schema", "Print the CREATE TABLE DDL generated for the system");
     print_schema_step.dependOn(&run_print_schema.step);
 
     // `zig build create-database`: starts the Postgres container (docker-compose.yml)
     // if it isn't running, waits for it to be ready (the `--wait` flag blocks on the
     // container's healthcheck, so this is race-free even on first-time init), and
-    // pipes the generated aida schema into psql running inside that container. No
+    // pipes the generated schema into psql running inside that container. No
     // Postgres driver needed: psql runs inside the container, so the only host
     // dependency is Docker. Only the `postgres` service: the `backend` one is
     // brought up by `test-api`, once its server.ts is generated.
+    // `.env` at the root (gitignored), read by every `docker compose`: the
+    // system's name as SYSTEM_NAME, which docker-compose.yml interpolates
+    // into its container, database and volume names. Every compose step
+    // depends on it.
+    const run_generate_env = b.addRunArtifact(generate_exe);
+    run_generate_env.addArg("env");
+    const write_env = b.addUpdateSourceFiles();
+    write_env.addCopyFileToSource(run_generate_env.captureStdOut(.{}), ".env");
+
     const docker_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "postgres" });
+    docker_up.step.dependOn(&write_env.step);
 
     const run_print_schema_for_db = b.addRunArtifact(generate_exe);
     run_print_schema_for_db.addArg("schema");
-    const aida_schema_sql = run_print_schema_for_db.captureStdOut(.{});
+    const schema_sql = run_print_schema_for_db.captureStdOut(.{});
 
-    const apply_aida_schema = b.addSystemCommand(&.{
-        "docker", "exec", "-i", "zigma_aida_postgres",
-        "psql",   "-U",   "aida", "-d", "aida",
-    });
-    apply_aida_schema.setStdIn(.{ .lazy_path = aida_schema_sql });
-    apply_aida_schema.step.dependOn(&docker_up.step);
+    // psql inside the postgres service, as the user and on the database the
+    // container was created with (its POSTGRES_USER / POSTGRES_DB, which
+    // docker-compose.yml takes from SYSTEM_NAME): no name of the system here.
+    // The arguments after it go to psql ("$@"). `exec -T`: stdin without a
+    // TTY, so a schema can be piped in.
+    const psql_in_postgres = [_][]const u8{ "exec", "-T", "postgres", "sh", "-c", "exec psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" \"$@\"", "psql" };
 
-    const create_database_step = b.step("create-database", "Start Postgres via Docker, then generate and apply the aida schema");
-    create_database_step.dependOn(&apply_aida_schema.step);
+    const apply_schema = b.addSystemCommand(&([_][]const u8{ "docker", "compose" } ++ psql_in_postgres));
+    apply_schema.setStdIn(.{ .lazy_path = schema_sql });
+    apply_schema.step.dependOn(&docker_up.step);
+
+    const create_database_step = b.step("create-database", "Start Postgres via Docker, then generate and apply the schema");
+    create_database_step.dependOn(&apply_schema.step);
 
     // `zig build test-backend`: generate the TypeScript DML module and its
-    // test module from the aida SSOT, write both into backend/src/, then run
+    // test module from the SSOT, write both into backend/src/, then run
     // the generated tests with `node --test`. Node 22.18+ runs .ts directly
     // and the generated tests only use node:test / node:assert, so there is
     // no npm step.
@@ -399,12 +413,12 @@ pub fn build(b: *std.Build) void {
     run_ts_backend_node_tests.setCwd(b.path("backend"));
     run_ts_backend_node_tests.step.dependOn(&write_ts_backend.step);
 
-    const test_backend_step = b.step("test-backend", "Generate the aida TypeScript DML module + tests into backend/, then run the pure tests with node");
+    const test_backend_step = b.step("test-backend", "Generate the TypeScript DML module + tests into backend/, then run the pure tests with node");
     test_backend_step.dependOn(&run_ts_backend_node_tests.step);
 
     // `zig build test-api`: the generated HTTP server as the backend's
     // long-running process. Regenerate dml.ts + server.ts into backend/, apply
-    // the aida schema, build the image, bring the backend up (waiting for its
+    // the schema, build the image, bring the backend up (waiting for its
     // healthcheck), then run test/http_docker_test.zig - a Zig test that
     // requests the API from the host. Not on `test_step` (needs Docker + Node).
     const run_generate_server = b.addRunArtifact(generate_exe);
@@ -414,12 +428,13 @@ pub fn build(b: *std.Build) void {
     write_ts_server.addCopyFileToSource(server_ts, "backend/src/server.ts");
 
     const build_backend_image_with_server = b.addSystemCommand(&.{ "docker", "compose", "build", "backend" });
+    build_backend_image_with_server.step.dependOn(&write_env.step);
     build_backend_image_with_server.step.dependOn(&write_ts_backend.step);
     build_backend_image_with_server.step.dependOn(&write_ts_server.step);
 
     const backend_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "backend" });
     backend_up.step.dependOn(&build_backend_image_with_server.step);
-    backend_up.step.dependOn(&apply_aida_schema.step);
+    backend_up.step.dependOn(&apply_schema.step);
 
     const http_docker_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -437,7 +452,7 @@ pub fn build(b: *std.Build) void {
 
     // `zig build test-backend-db`: the generated DML against the database
     // without the HTTP layer, with the values server.ts hands it: same image
-    // as test-api (built by the same node), the aida schema applied, then
+    // as test-api (built by the same node), the schema applied, then
     // test/backend_db_test.zig - a Zig test that runs the builders inside the
     // backend container. Not on `test_step` (needs Docker).
     const backend_db_tests = b.addTest(.{
@@ -450,14 +465,14 @@ pub fn build(b: *std.Build) void {
     const run_backend_db_tests = b.addRunArtifact(backend_db_tests);
     run_backend_db_tests.has_side_effects = true;
     run_backend_db_tests.step.dependOn(&build_backend_image_with_server.step);
-    run_backend_db_tests.step.dependOn(&apply_aida_schema.step);
+    run_backend_db_tests.step.dependOn(&apply_schema.step);
 
     const test_backend_db_step = b.step("test-backend-db", "Run the generated DML inside the backend container against Postgres, with the values of test-api, without HTTP");
     test_backend_db_step.dependOn(&run_backend_db_tests.step);
 
     // `zig build test-e2e`: the generated frontend in a headless browser.
     // Regenerate dml.ts + server.ts into backend/ and the frontend into
-    // frontend/public (gitignored), apply the aida schema, build the images,
+    // frontend/public (gitignored), apply the schema, build the images,
     // bring the frontend up (and the backend with it, waiting for both
     // healthchecks), then run test/frontend_e2e_test.zig - a Zig test that
     // seeds rows and runs the Playwright suite in the e2e service. Not on
@@ -467,13 +482,14 @@ pub fn build(b: *std.Build) void {
     write_frontend.has_side_effects = true;
 
     const build_frontend_images = b.addSystemCommand(&.{ "docker", "compose", "--profile", "e2e", "build", "backend", "frontend", "e2e" });
+    build_frontend_images.step.dependOn(&write_env.step);
     build_frontend_images.step.dependOn(&write_ts_backend.step);
     build_frontend_images.step.dependOn(&write_ts_server.step);
     build_frontend_images.step.dependOn(&write_frontend.step);
 
     const frontend_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "frontend" });
     frontend_up.step.dependOn(&build_frontend_images.step);
-    frontend_up.step.dependOn(&apply_aida_schema.step);
+    frontend_up.step.dependOn(&apply_schema.step);
 
     const frontend_e2e_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -500,10 +516,11 @@ pub fn build(b: *std.Build) void {
     // The stack keeps running until `zig build example-down`. Not on
     // `test_step` nor `test-all` (needs Docker + Node, and it is not a test).
     const example_compose = [_][]const u8{ "docker", "compose", "-p", "zigma-example", "-f", "docker-compose.yml", "-f", "docker-compose.example.yml" };
-    const example_psql = [_][]const u8{ "docker", "exec", "-i", "zigma_example_postgres", "psql", "-U", "aida", "-d", "aida", "-v", "ON_ERROR_STOP=1", "-q" };
+    const example_psql = example_compose ++ psql_in_postgres ++ [_][]const u8{ "-v", "ON_ERROR_STOP=1", "-q" };
 
     const build_example_images = b.addSystemCommand(&example_compose);
     build_example_images.addArgs(&.{ "build", "backend", "frontend" });
+    build_example_images.step.dependOn(&write_env.step);
     build_example_images.step.dependOn(&write_ts_backend.step);
     build_example_images.step.dependOn(&write_ts_server.step);
     build_example_images.step.dependOn(&write_frontend.step);
@@ -517,7 +534,7 @@ pub fn build(b: *std.Build) void {
     reset_example_db.step.dependOn(&example_up.step);
 
     const apply_example_schema = b.addSystemCommand(&example_psql);
-    apply_example_schema.setStdIn(.{ .lazy_path = aida_schema_sql });
+    apply_example_schema.setStdIn(.{ .lazy_path = schema_sql });
     apply_example_schema.step.dependOn(&reset_example_db.step);
 
     const load_example_seed = b.addSystemCommand(&example_psql);
@@ -535,13 +552,14 @@ pub fn build(b: *std.Build) void {
     run_example_stack_tests.has_side_effects = true;
     run_example_stack_tests.step.dependOn(&load_example_seed.step);
 
-    const example_step = b.step("example", "Bring up the example stack (frontend on 8081) with the fake aida rows, then check it");
+    const example_step = b.step("example", "Bring up the example stack (frontend on 8081) with the seed's fake rows, then check it");
     example_step.dependOn(&run_example_stack_tests.step);
 
     // `zig build example-down`: stop and remove the example stack's
     // containers and network. The volume stays: `example` resets it anyway.
     const example_down = b.addSystemCommand(&example_compose);
     example_down.addArg("down");
+    example_down.step.dependOn(&write_env.step);
     const example_down_step = b.step("example-down", "Stop and remove the example stack");
     example_down_step.dependOn(&example_down.step);
 
@@ -663,7 +681,7 @@ pub fn build(b: *std.Build) void {
     // `zig build test-all`: `test`, then every test that needs Node or
     // Docker, one after another, each in its own nested `zig build` process.
     // New nodes only: an arrow added to the shared nodes (write_ts_backend,
-    // apply_aida_schema, ...) would also be there for every other step. One
+    // apply_schema, ...) would also be there for every other step. One
     // process at a time, so the stack tests never overlap on the shared
     // containers; the first failure stops the chain.
     const test_all_step = b.step("test-all", "Run test, then every Node/Docker test, one after another");

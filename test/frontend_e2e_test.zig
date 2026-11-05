@@ -9,7 +9,7 @@
 //! `docker compose run --rm e2e`, and removes the rows afterwards.
 //!
 //! Run with `zig build test-e2e`, which regenerates dml.ts, server.ts and
-//! the frontend, applies the aida schema, builds the images and brings the
+//! the frontend, applies the schema, builds the images and brings the
 //! frontend up (and the backend with it). Not part of `zig build test` (needs
 //! Docker).
 
@@ -24,7 +24,7 @@ fn run(argv: []const []const u8) !std.process.RunResult {
 }
 
 fn psql(sql: []const u8) !void {
-    const result = try run(&.{ "docker", "exec", "zigma_aida_postgres", "psql", "-U", "aida", "-d", "aida", "-v", "ON_ERROR_STOP=1", "-c", sql });
+    const result = try run(&.{ "docker", "compose", "exec", "-T", "postgres", "sh", "-c", "exec psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" \"$@\"", "psql", "-v", "ON_ERROR_STOP=1", "-c", sql });
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
     if (result.term != .exited or result.term.exited != 0) {

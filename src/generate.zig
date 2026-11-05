@@ -12,6 +12,8 @@
 //!                          entity, common.js and
 //!                          common.css, in DIR
 //!   generate rules-ts      rules.ts                (rule_defs)
+//!   generate env           .env for docker compose (name)
+//!                          (SYSTEM_NAME=<name>)
 //!
 //! All but `frontend` write to stdout (the build steps capture it to a
 //! file). An artifact whose declarations the system lacks is an error.
@@ -38,6 +40,7 @@ const dml_module: ?[]const u8 = if (has_entities) ts_backend_generator.generateT
 const dml_test_module: ?[]const u8 = if (has_entities) ts_backend_generator.generateTsBackendTests(system.type_defs, system.entity_defs) else null;
 const server_module: ?[]const u8 = if (has_entities) ts_server_generator.generateTsServer(system.type_defs, system.entity_defs) else null;
 const rules_module: ?[]const u8 = if (has_rules) ts_rules_generator.generateTsRules(system.rule_defs) else null;
+const env_file: ?[]const u8 = if (has_name) "SYSTEM_NAME=" ++ system.name else null;
 
 const Frontend = struct {
     const entity_names = @typeInfo(@TypeOf(system.entity_defs)).@"struct".field_names;
@@ -68,7 +71,7 @@ const Frontend = struct {
     }
 };
 
-const usage = "usage: generate schema | dml | dml-tests | server | frontend DIR | rules-ts\n";
+const usage = "usage: generate schema | dml | dml-tests | server | frontend DIR | rules-ts | env\n";
 
 // The message on stderr and exit status 1: a usage error, not a bug (no
 // error return trace).
@@ -99,6 +102,7 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, command, "dml-tests")) return print(init.io, dml_test_module, "\n", "type_defs and entity_defs");
     if (std.mem.eql(u8, command, "server")) return print(init.io, server_module, "", "type_defs and entity_defs");
     if (std.mem.eql(u8, command, "rules-ts")) return print(init.io, rules_module, "", "rule_defs");
+    if (std.mem.eql(u8, command, "env")) return print(init.io, env_file, "\n", "name");
     if (std.mem.eql(u8, command, "frontend")) {
         // a comptime-known condition: Frontend is not analyzed for a system
         // without these declarations
