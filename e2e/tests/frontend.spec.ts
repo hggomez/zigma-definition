@@ -1,6 +1,7 @@
 // The generated aida frontend in a real (headless) browser: the index of the
 // entities, each entity's page drawing its rows from the API through the
-// frontend's proxy, and the page of one row. The rows are seeded by
+// frontend's proxy, and the page of one row, which can delete it. The rows
+// are seeded by
 // test/frontend_e2e_test.zig, which runs this suite, with the marker
 // "e2e-test".
 import { test, expect } from "@playwright/test";
@@ -88,6 +89,50 @@ test("the page of a pk with no row shows a not-found message", async ({ page }) 
   await expect(page.locator("main")).toContainText("No row with that pk.");
   await expect(page.locator("main dl")).toHaveCount(0);
   await expect(page.locator("main table")).toHaveCount(0);
+});
+
+test("the row's page has a Delete button that asks for confirmation on the page; Cancel keeps the row", async ({ page, request }) => {
+  await page.goto("/periodos?periodo=e2e-test-cancel");
+  await expect(page.locator("main dl dd")).toHaveText(["e2e-test-cancel"]);
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  // the confirmation, on the page (no native dialog)
+  await expect(page.locator("main")).toContainText("Delete this row?");
+  await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.locator("main")).not.toContainText("Delete this row?");
+  await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/periodos\?periodo=e2e-test-cancel$/);
+  expect((await request.get("/api/periodos?periodo=e2e-test-cancel")).status()).toBe(200);
+});
+
+test("confirming the delete removes the row and goes back to the list", async ({ page, request }) => {
+  await page.goto("/periodos?periodo=e2e-test-delete");
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("button", { name: "Yes, delete" }).click();
+  await expect(page).toHaveURL(/\/periodos$/);
+  await expect(page.locator("tbody tr").first()).toBeVisible();
+  await expect(page.locator("tbody tr").filter({ hasText: "e2e-test-delete" })).toHaveCount(0);
+  expect((await request.get("/api/periodos?periodo=e2e-test-delete")).status()).toBe(404);
+});
+
+test("a delete the database rejects (a referenced row) shows a generic error and stays on the row", async ({ page, request }) => {
+  // the periodo of a curso
+  await page.goto("/periodos?periodo=e2e-test");
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.getByRole("button", { name: "Yes, delete" }).click();
+  await expect(page.locator("main")).toContainText("The row could not be deleted.");
+  await expect(page).toHaveURL(/\/periodos\?periodo=e2e-test$/);
+  await expect(page.locator("main dl dd")).toHaveText(["e2e-test"]);
+  expect((await request.get("/api/periodos?periodo=e2e-test")).status()).toBe(200);
+});
+
+test("only the page of an existing row has a Delete button", async ({ page }) => {
+  await page.goto("/periodos");
+  await expect(page.locator("tbody tr").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+  await page.goto("/periodos?periodo=no-existe");
+  await expect(page.locator("main")).toContainText("No row with that pk.");
+  await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
 });
 
 test("every page links the shared stylesheet, and it is served as CSS", async ({ page, request }) => {

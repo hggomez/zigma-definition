@@ -3,13 +3,16 @@
 //! mirroring the API, an index of the entities, and a fixed `common_js` the
 //! pages share.
 //!
-//! The pages navigate, list and show one row (read only). Like the API, an
+//! The pages navigate, list, show one row and delete it. Like the API, an
 //! entity page without a query string is the list (/docentes shows what GET
 //! /api/docentes returns): a table with a column per field, its header the
 //! field's label (from the FieldInfo), the first cell of each row linking to
 //! the row's page. With the query string of a pk (/clases?periodo=…&…, a
 //! struct one parameter per field) it is that row: its fields as label/value
-//! pairs, or a not-found message. Each value is shown as the JSON response has
+//! pairs and a Delete button, which asks for confirmation on the page and,
+//! confirmed, deletes the row through the API and goes back to the list (any
+//! answer but a 204 is a generic error); or a not-found message. Each value
+//! is shown as the JSON response has
 //! it, every number kept as its exact text (a bigint is never rounded through
 //! a JS number); null is empty, a struct its fields in order joined with "-".
 //!
@@ -24,7 +27,7 @@ const zig_type_map_ts = @import("zig_type_map_ts");
 const tsTypeOf = zig_type_map_ts.tsTypeOf;
 
 /// The code every page shares: reading the API, drawing the list of an
-/// entity and the page of one of its rows.
+/// entity and the page of one of its rows, and deleting it.
 pub const common_js =
     \\// Shared code of the generated pages: reading the API, drawing the list of
     \\// an entity and the page of one of its rows.
@@ -106,6 +109,56 @@ pub const common_js =
     \\    dl.append(dt, dd);
     \\  }
     \\  table.replaceWith(dl);
+    \\  dl.after(deleteControls(entity));
+    \\}
+    \\
+    \\// A button that does not submit anything.
+    \\function button(text, className) {
+    \\  const b = document.createElement("button");
+    \\  b.type = "button";
+    \\  b.textContent = text;
+    \\  if (className) b.className = className;
+    \\  return b;
+    \\}
+    \\
+    \\// The delete of the page's row: a button that asks for confirmation on the
+    \\// page; confirmed, the API's delete with the same query string, then back
+    \\// to the list (the page without its query string). Any answer but a 204
+    \\// is a generic error, and the row stays.
+    \\function deleteControls(entity) {
+    \\  const box = document.createElement("div");
+    \\  box.className = "actions";
+    \\  const remove = button("Delete", "danger");
+    \\  const question = document.createElement("span");
+    \\  question.textContent = "Delete this row?";
+    \\  const yes = button("Yes, delete", "danger");
+    \\  const cancel = button("Cancel");
+    \\  const error = document.createElement("p");
+    \\  error.className = "error";
+    \\  const asking = (on) => {
+    \\    if (on) remove.replaceWith(question, yes, cancel);
+    \\    else if (!remove.isConnected) {
+    \\      question.replaceWith(remove);
+    \\      yes.remove();
+    \\      cancel.remove();
+    \\    }
+    \\  };
+    \\  remove.addEventListener("click", () => {
+    \\    error.textContent = "";
+    \\    asking(true);
+    \\  });
+    \\  cancel.addEventListener("click", () => asking(false));
+    \\  yes.addEventListener("click", async () => {
+    \\    let status = 0;
+    \\    try {
+    \\      status = (await fetch(`/api/${entity}${location.search}`, { method: "DELETE" })).status;
+    \\    } catch {}
+    \\    if (status === 204) return location.assign(location.pathname);
+    \\    asking(false);
+    \\    error.textContent = "The row could not be deleted.";
+    \\  });
+    \\  box.append(remove, error);
+    \\  return box;
     \\}
     \\
 ;
@@ -139,6 +192,13 @@ pub const common_css =
     \\dt { padding: 12px 16px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; border-bottom: 1px solid #f1f5f9; }
     \\dd { margin: 0; padding: 12px 16px; border-bottom: 1px solid #f1f5f9; }
     \\dd:empty::after { content: "\2014"; color: #cbd5e1; }
+    \\.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 18px; }
+    \\button { font: inherit; padding: 7px 16px; border-radius: 7px; border: 1px solid #cbd5e1; background: #fff; color: #1e293b; cursor: pointer; }
+    \\button:hover { background: #f8fafc; }
+    \\button.danger { border-color: #dc2626; background: #dc2626; color: #fff; }
+    \\button.danger:hover { background: #b91c1c; }
+    \\.error { flex-basis: 100%; margin: 0; color: #b91c1c; }
+    \\.error:empty { display: none; }
     \\@media (max-width: 640px) {
     \\  body { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
     \\  header, nav, main { grid-column: 1; grid-row: auto; }

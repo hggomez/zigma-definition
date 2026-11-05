@@ -76,13 +76,17 @@ no solo pasando tests.
 * Generado por `src/frontend_generator.zig`: HTML + JS planos, sin framework ni paso de
   build, servidos por nginx, que hace proxy de `/api/` al backend (mismo origen: sin CORS).
 * Una página por entidad, su URL espeja la de la API, más un índice. Las páginas navegan,
-  listan y muestran una fila (solo lectura):
+  listan, muestran una fila y la borran:
   * sin query string, la lista (`/docentes` muestra lo que da `GET /api/docentes`): una
     tabla con una columna por campo (encabezado: su label), la primera celda de cada fila es
     el link a la página de la fila;
   * con el query string de una pk (`/clases?periodo=…&materia=…&orden=…`; un struct, un
-    parámetro por campo), esa fila: sus campos como pares label/valor (`dl`), o
-    `No row with that pk.` si no hay fila.
+    parámetro por campo), esa fila: sus campos como pares label/valor (`dl`) y un botón
+    `Delete`, o `No row with that pk.` si no hay fila;
+  * `Delete` pide confirmación en la página (`Delete this row?`, `Yes, delete` / `Cancel`,
+    sin diálogo nativo); confirmado, `DELETE /api/<entidad>?<pk>` y vuelve a la lista. Ante
+    cualquier respuesta que no sea 204 (por ejemplo, una fila referenciada: el 500
+    genérico), `The row could not be deleted.` y la fila queda.
   * Cada número como su texto exacto, `null` vacío (se ve "—"), un struct como sus campos
     unidos con `-`.
 * Estilo admin panel: header con el nombre del sistema (link al índice), nav lateral con
@@ -152,7 +156,7 @@ no solo pasando tests.
 
 ## Pendiente
 
-* **Frontend**: baja, alta y modificación con formularios (próximo paso: la baja). Qué
+* **Frontend**: alta y modificación con formularios (próximo paso: el alta). Qué
   muestra la página de una fila ante un query string que no es una pk (el 400 de la API).
   Una visualización propia para fechas, ligada a un tipo fecha del framework sobre `DATE`.
 * **Errores de dominio de pk/uk/fk**: hoy una violación (pk duplicada, fila referenciada) es

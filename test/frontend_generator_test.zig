@@ -4,13 +4,14 @@
 //! what GET /api/docentes returns), plus an index of the entities and a fixed
 //! common.js the pages share.
 //!
-//! The pages navigate, list and show one row (read only). An entity page
+//! The pages navigate, list, show one row and delete it. An entity page
 //! mirrors the API: without a query string it is the list, a table with a
 //! column per field (its header the field's label, from the FieldInfo), the
 //! first cell of each row linking to the row's page; with the query string of
 //! a pk (/clases?periodo=…&materia=…&orden=…, a struct one parameter per
-//! field) it is that row, its fields as label/value pairs, or a not-found
-//! message. Each value is shown as the JSON response has it, every number
+//! field) it is that row, its fields as label/value pairs and a Delete button
+//! (an on-page confirmation, then back to the list; a generic error when the
+//! API refuses), or a not-found message. Each value is shown as the JSON response has it, every number
 //! kept as its exact text (a bigint is never rounded through a JS number);
 //! null is empty, a struct its fields in order joined with "-" (`fecha` shows
 //! as 2026-3-14).
@@ -141,6 +142,26 @@ test "common_js: the entity page is the list without a query string, and the row
     try std.testing.expect(has("`?${new URLSearchParams(pk(row))}`"));
     // a pk with no row (the API's 404)
     try std.testing.expect(has("No row with that pk."));
+}
+
+test "common_js: the row's page deletes the row after an on-page confirmation, then goes back to the list" {
+    const has = struct {
+        fn has(text: []const u8) bool {
+            return std.mem.indexOf(u8, fe.common_js, text) != null;
+        }
+    }.has;
+    // the button and the confirmation, on the page (no native dialog)
+    try std.testing.expect(has("\"Delete\""));
+    try std.testing.expect(has("\"Delete this row?\""));
+    try std.testing.expect(has("\"Yes, delete\""));
+    try std.testing.expect(has("\"Cancel\""));
+    try std.testing.expect(!has("confirm("));
+    // the API's delete, with the same query string
+    try std.testing.expect(has("{ method: \"DELETE\" }"));
+    // back to the list: the page without its query string
+    try std.testing.expect(has("location.assign(location.pathname)"));
+    // anything but a 204: a generic error
+    try std.testing.expect(has("\"The row could not be deleted.\""));
 }
 
 test "common_css: the admin panel, a sidebar grid with the current entity highlighted and empty cells shown as a dash" {

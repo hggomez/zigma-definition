@@ -5,8 +5,8 @@
 //!
 //! The test seeds rows straight into Postgres (psql inside the postgres
 //! container) with the marker "e2e-test" (a clase whose `orden` is 2^53 + 1,
-//! another one without `fecha`, and a mesa, with a struct in its pk), runs
-//! the Playwright suite with
+//! another one without `fecha`, a mesa, with a struct in its pk, and two
+//! periodos without children for the deletes), runs the Playwright suite with
 //! `docker compose run --rm e2e`, and removes the rows afterwards.
 //!
 //! Run with `zig build --build-file test/build.zig test-e2e`, which regenerates dml.ts,
@@ -40,11 +40,11 @@ const cleanup =
     \\DELETE FROM mesas WHERE periodo = 'e2e-test';
     \\DELETE FROM cursos WHERE periodo = 'e2e-test';
     \\DELETE FROM materias WHERE materia = 'e2e-test';
-    \\DELETE FROM periodos WHERE periodo = 'e2e-test';
+    \\DELETE FROM periodos WHERE periodo IN ('e2e-test', 'e2e-test-cancel', 'e2e-test-delete');
 ;
 
 const seed =
-    \\INSERT INTO periodos (periodo) VALUES ('e2e-test');
+    \\INSERT INTO periodos (periodo) VALUES ('e2e-test'), ('e2e-test-cancel'), ('e2e-test-delete');
     \\INSERT INTO materias (materia, denominacion) VALUES ('e2e-test', 'e2e-test');
     \\INSERT INTO cursos (periodo, materia) VALUES ('e2e-test', 'e2e-test');
     \\INSERT INTO clases (periodo, materia, orden, fecha, tema) VALUES
