@@ -1,20 +1,26 @@
 //! Frontend generation: plain HTML + JS (no framework, no build step), from
-//! the system's entities, like server.ts. One page per entity, its URL
-//! mirroring the API, an index of the entities, and a fixed `common_js` the
-//! pages share.
+//! the system's entities, like server.ts. Two pages per entity, their URLs
+//! mirroring the API (/<entity> and /<entity>/new), an index of the
+//! entities, and a fixed `common_js` the pages share.
 //!
-//! The pages navigate, list, show one row and delete it. Like the API, an
-//! entity page without a query string is the list (/docentes shows what GET
-//! /api/docentes returns): a table with a column per field, its header the
-//! field's label (from the FieldInfo), the first cell of each row linking to
-//! the row's page. With the query string of a pk (/clases?periodo=…&…, a
-//! struct one parameter per field) it is that row: its fields as label/value
-//! pairs and a Delete button, which asks for confirmation on the page and,
-//! confirmed, deletes the row through the API and goes back to the list (any
-//! answer but a 204 is a generic error); or a not-found message. Each value
-//! is shown as the JSON response has
-//! it, every number kept as its exact text (a bigint is never rounded through
-//! a JS number); null is empty, a struct its fields in order joined with "-".
+//! The pages navigate, list, show one row, delete it and create one.
+//! * Like the API, an entity page without a query string is the list
+//!   (/docentes shows what GET /api/docentes returns): a table with a column
+//!   per field, its header the field's label (from the FieldInfo), the first
+//!   cell of each row linking to the row's page, and a New link.
+//! * With the query string of a pk (/clases?periodo=…&…, a struct one
+//!   parameter per field) it is that row: its fields as label/value pairs and
+//!   a Delete button, which asks for confirmation on the page and, confirmed,
+//!   deletes the row through the API and goes back to the list (any answer but
+//!   a 204 is a generic error); or a not-found message.
+//! * /<entity>/new is a form with an input per field (a checkbox for a
+//!   boolean, an input per part for a struct): Create posts the row and goes
+//!   back to the list (any answer but a 201 is a generic error, the form keeps
+//!   what was typed); an empty nullable field (outside the pk) is null.
+//!
+//! Each value is shown as the JSON response has it, every number kept as its
+//! exact text (a bigint is never rounded through a JS number, nor sent
+//! through one); null is empty, a struct its fields in order joined with "-".
 //!
 //! The look is an admin panel: every page has the same frame, a header with
 //! the system's name (linking the index), a sidebar nav with every entity in
@@ -27,7 +33,8 @@ const zig_type_map_ts = @import("zig_type_map_ts");
 const tsTypeOf = zig_type_map_ts.tsTypeOf;
 
 /// The code every page shares: reading the API, drawing the list of an
-/// entity and the page of one of its rows, and deleting it.
+/// entity and the page of one of its rows, deleting it, and the form that
+/// creates one.
 pub const common_js =
     \\// Shared code of the generated pages: reading the API, drawing the list of
     \\// an entity and the page of one of its rows.
@@ -109,6 +116,7 @@ pub const common_js =
     \\    dl.append(dt, dd);
     \\  }
     \\  table.replaceWith(dl);
+    \\  document.querySelector("a.new").remove();
     \\  dl.after(deleteControls(entity));
     \\}
     \\
@@ -161,6 +169,78 @@ pub const common_js =
     \\  return box;
     \\}
     \\
+    \\// The page that creates a row: a form with an input per field. Create posts
+    \\// the row as JSON and goes back to the list; any answer but a 201 is a
+    \\// generic error, and the form keeps what was typed. Cancel goes back to the
+    \\// list. `fields` has a { name, label, kind, nullable } per field.
+    \\export async function createPage(entity, fields) {
+    \\  const form = document.querySelector("form");
+    \\  const readers = fields.map((field) => fieldInput(form, field));
+    \\  const create = button("Create", "primary");
+    \\  create.type = "submit";
+    \\  const cancel = document.createElement("a");
+    \\  cancel.className = "cancel";
+    \\  cancel.href = `/${entity}`;
+    \\  cancel.textContent = "Cancel";
+    \\  const error = document.createElement("p");
+    \\  error.className = "error";
+    \\  const actions = document.createElement("div");
+    \\  actions.className = "actions";
+    \\  actions.append(create, cancel, error);
+    \\  form.append(actions);
+    \\  form.addEventListener("submit", async (event) => {
+    \\    event.preventDefault();
+    \\    error.textContent = "";
+    \\    let status = 0;
+    \\    try {
+    \\      const row = {};
+    \\      fields.forEach((field, i) => {
+    \\        row[field.name] = readers[i]();
+    \\      });
+    \\      const body = JSON.stringify(row);
+    \\      status = (await fetch(`/api/${entity}`, { method: "POST", headers: { "content-type": "application/json" }, body })).status;
+    \\    } catch {}
+    \\    if (status === 201) return location.assign(`/${entity}`);
+    \\    error.textContent = "The row could not be created.";
+    \\  });
+    \\}
+    \\
+    \\// The input of a field, appended to `parent`, and the reader of its value
+    \\// for the JSON: a struct is a fieldset with an input per part; an empty
+    \\// value (a struct with every part empty) is null when the field is nullable.
+    \\function fieldInput(parent, field) {
+    \\  if (typeof field.kind === "object") {
+    \\    const fieldset = document.createElement("fieldset");
+    \\    const legend = document.createElement("legend");
+    \\    legend.textContent = field.label;
+    \\    fieldset.append(legend);
+    \\    const parts = Object.entries(field.kind).map(([name, kind]) => [name, labeledInput(fieldset, name, kind)]);
+    \\    parent.append(fieldset);
+    \\    return () => {
+    \\      if (field.nullable && parts.every(([, part]) => part.empty())) return null;
+    \\      return Object.fromEntries(parts.map(([name, part]) => [name, part.value()]));
+    \\    };
+    \\  }
+    \\  const one = labeledInput(parent, field.label, field.kind);
+    \\  return () => (field.nullable && one.empty() ? null : one.value());
+    \\}
+    \\
+    \\// A labeled input of a value of `kind` ("text", "integer" or "boolean", a
+    \\// checkbox): whether it is empty, and its value for the JSON, an integer as
+    \\// an exact JSON number (JSON.rawJSON throws when the text is not one).
+    \\function labeledInput(parent, text, kind) {
+    \\  const label = document.createElement("label");
+    \\  label.textContent = text;
+    \\  const input = document.createElement("input");
+    \\  if (kind === "boolean") input.type = "checkbox";
+    \\  label.append(input);
+    \\  parent.append(label);
+    \\  return {
+    \\    empty: () => kind !== "boolean" && input.value === "",
+    \\    value: () => (kind === "boolean" ? input.checked : kind === "integer" ? JSON.rawJSON(input.value.trim()) : input.value),
+    \\  };
+    \\}
+    \\
 ;
 
 /// The look every page shares: an admin panel. The header and the nav are the
@@ -199,6 +279,17 @@ pub const common_css =
     \\button.danger:hover { background: #b91c1c; }
     \\.error { flex-basis: 100%; margin: 0; color: #b91c1c; }
     \\.error:empty { display: none; }
+    \\button.primary { border-color: #1e40af; background: #1e40af; color: #fff; }
+    \\button.primary:hover { background: #1e3a8a; }
+    \\a.new { display: inline-block; margin-bottom: 14px; padding: 7px 16px; border-radius: 7px; background: #1e40af; color: #fff; text-decoration: none; }
+    \\a.new:hover { background: #1e3a8a; }
+    \\a.cancel { color: #475569; }
+    \\form { display: grid; gap: 14px; max-width: 560px; padding: 20px; background: #fff; border-radius: 12px; box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 4px 16px rgba(15, 23, 42, .06); }
+    \\label { display: grid; gap: 4px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
+    \\input { font: inherit; font-size: 14px; text-transform: none; letter-spacing: normal; color: #1e293b; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 7px; }
+    \\input[type="checkbox"] { justify-self: start; }
+    \\fieldset { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; margin: 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 9px; }
+    \\legend { padding: 0 6px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
     \\@media (max-width: 640px) {
     \\  body { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
     \\  header, nav, main { grid-column: 1; grid-row: auto; }
@@ -305,6 +396,7 @@ fn EntityHolder(comptime system_name: []const u8, comptime type_defs: anytype, c
                 columns = columns ++ "  [\"" ++ field.label ++ "\", " ++ columnText(field_name, tsTypeOf(@field(type_defs, field.type).Type)) ++ "],\n";
             }
             break :blk page(system_name, entity_defs, entity_name, entity_name, "<h1>" ++ entity_name ++ "</h1>\n" ++
+                "<a class=\"new\" href=\"/" ++ entity_name ++ "/new\">New</a>\n" ++
                 "<table>\n" ++
                 "<thead>\n" ++
                 "<tr>" ++ headers ++ "</tr>\n" ++
@@ -326,4 +418,52 @@ fn EntityHolder(comptime system_name: []const u8, comptime type_defs: anytype, c
 /// the one of `entity_name`.
 pub fn entityHtml(comptime system_name: []const u8, comptime type_defs: anytype, comptime entity_defs: anytype, comptime entity_name: []const u8) []const u8 {
     return EntityHolder(system_name, type_defs, entity_defs, entity_name).text;
+}
+
+/// The kind of a field's input on the new-row page, as JS: "text", "integer"
+/// (any integer, a bigint too: its text goes as an exact JSON number),
+/// "boolean", or for a struct an object with the kind of each part.
+fn kindText(comptime t: zig_type_map_ts.TsType) []const u8 {
+    return switch (t) {
+        .string => "\"text\"",
+        .number, .bigint => "\"integer\"",
+        .boolean => "\"boolean\"",
+        .object => |parts| blk: {
+            var text: []const u8 = "{ ";
+            for (parts, 0..) |part, i| text = text ++ (if (i > 0) ", " else "") ++ "\"" ++ part.name ++ "\": " ++ kindText(part.type);
+            break :blk text ++ " }";
+        },
+    };
+}
+
+fn NewHolder(comptime system_name: []const u8, comptime type_defs: anytype, comptime entity_defs: anytype, comptime entity_name: []const u8) type {
+    return struct {
+        const text: []const u8 = blk: {
+            @setEvalBranchQuota(100000);
+            const entity = zigma.completeEntity(@field(entity_defs, entity_name));
+            var fields: []const u8 = "";
+            for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
+                const field = @field(entity.fields, field_name);
+                const in_pk = for (entity.pk) |pk_field| {
+                    if (std.mem.eql(u8, pk_field, field_name)) break true;
+                } else false;
+                fields = fields ++ "  { name: \"" ++ field_name ++ "\", label: \"" ++ field.label ++
+                    "\", kind: " ++ kindText(tsTypeOf(@field(type_defs, field.type).Type)) ++
+                    ", nullable: " ++ (if (field.nullable and !in_pk) "true" else "false") ++ " },\n";
+            }
+            break :blk page(system_name, entity_defs, entity_name, entity_name, "<h1>" ++ entity_name ++ "</h1>\n" ++
+                "<form></form>\n", "<script type=\"module\">\n" ++
+                "import { createPage } from \"/common.js\";\n" ++
+                "createPage(\"" ++ entity_name ++ "\", [\n" ++ fields ++ "]);\n" ++
+                "</script>\n");
+        };
+    };
+}
+
+/// <entity>/new.html: the frame (its own entity current in the nav), an empty
+/// form and the script that gives common.js's `createPage` a descriptor per
+/// field: its name, label, kind of input and whether an empty value is null
+/// (a nullable field outside the pk).
+pub fn newHtml(comptime system_name: []const u8, comptime type_defs: anytype, comptime entity_defs: anytype, comptime entity_name: []const u8) []const u8 {
+    return NewHolder(system_name, type_defs, entity_defs, entity_name).text;
 }

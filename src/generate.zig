@@ -8,7 +8,8 @@
 //!   generate dml           dml.ts                  (type_defs, entity_defs)
 //!   generate dml-tests     dml.test.ts             (type_defs, entity_defs)
 //!   generate server        server.ts               (type_defs, entity_defs)
-//!   generate frontend DIR  index.html, a page per  (name, type_defs, entity_defs)
+//!   generate frontend DIR  index.html, a page and  (name, type_defs, entity_defs)
+//!                          a new-row page per
 //!                          entity, common.js and
 //!                          common.css, in DIR
 //!   generate rules-ts      rules.ts                (rule_defs)
@@ -53,9 +54,18 @@ const Frontend = struct {
         const frozen = out;
         break :blk frozen;
     };
+    const new_pages = blk: {
+        var out: [entity_names.len][]const u8 = undefined;
+        for (entity_names, 0..) |entity_name, i| {
+            out[i] = frontend_generator.newHtml(system.name, system.type_defs, system.entity_defs, entity_name);
+        }
+        const frozen = out;
+        break :blk frozen;
+    };
 
-    // index.html, common.js, common.css and <entity>.html (served at
-    // /<entity>) into `out_path`, created if missing.
+    // index.html, common.js, common.css, <entity>.html (served at /<entity>)
+    // and <entity>/new.html (served at /<entity>/new) into `out_path`,
+    // created if missing.
     fn write(io: std.Io, out_path: []const u8) !void {
         const cwd = std.Io.Dir.cwd();
         try cwd.createDirPath(io, out_path);
@@ -67,6 +77,8 @@ const Frontend = struct {
         try dir.writeFile(io, .{ .sub_path = "common.css", .data = frontend_generator.common_css });
         inline for (entity_names, 0..) |entity_name, i| {
             try dir.writeFile(io, .{ .sub_path = entity_name ++ ".html", .data = pages[i] });
+            try dir.createDirPath(io, entity_name);
+            try dir.writeFile(io, .{ .sub_path = entity_name ++ "/new.html", .data = new_pages[i] });
         }
     }
 };

@@ -160,6 +160,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "ts_server_generator", .module = fw.ts_server_generator },
         } },
         .{ .source = "frontend_generator_test.zig", .imports = &.{
+            .{ .name = "zigma", .module = fw.zigma },
             .{ .name = "aida", .module = aida_mod },
             .{ .name = "frontend_generator", .module = fw.frontend_generator },
         } },

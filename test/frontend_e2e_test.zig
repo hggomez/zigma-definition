@@ -40,7 +40,7 @@ const cleanup =
     \\DELETE FROM mesas WHERE periodo = 'e2e-test';
     \\DELETE FROM cursos WHERE periodo = 'e2e-test';
     \\DELETE FROM materias WHERE materia = 'e2e-test';
-    \\DELETE FROM periodos WHERE periodo IN ('e2e-test', 'e2e-test-cancel', 'e2e-test-delete');
+    \\DELETE FROM periodos WHERE periodo IN ('e2e-test', 'e2e-test-cancel', 'e2e-test-delete', 'e2e-test-create', 'e2e-test-never');
 ;
 
 const seed =

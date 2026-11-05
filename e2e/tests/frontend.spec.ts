@@ -1,6 +1,7 @@
 // The generated aida frontend in a real (headless) browser: the index of the
 // entities, each entity's page drawing its rows from the API through the
-// frontend's proxy, and the page of one row, which can delete it. The rows
+// frontend's proxy, the page of one row, which can delete it, and the page
+// that creates a row. The rows
 // are seeded by
 // test/frontend_e2e_test.zig, which runs this suite, with the marker
 // "e2e-test".
@@ -133,6 +134,71 @@ test("only the page of an existing row has a Delete button", async ({ page }) =>
   await page.goto("/periodos?periodo=no-existe");
   await expect(page.locator("main")).toContainText("No row with that pk.");
   await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+});
+
+test("the list links to the entity's new-row page: a form with an input per field, a struct one per part", async ({ page }) => {
+  await page.goto("/clases");
+  await page.getByRole("link", { name: "New", exact: true }).click();
+  await expect(page).toHaveURL(/\/clases\/new$/);
+  await expect(page.locator("h1")).toHaveText("clases");
+  await expect(page.locator('nav a[aria-current="page"]')).toHaveText("clases");
+  for (const label of ["periodo", "materia", "orden", "tema", "año", "mes", "día"]) {
+    await expect(page.getByLabel(label, { exact: true }), label).toBeVisible();
+  }
+  await expect(page.locator("fieldset legend")).toHaveText("fecha");
+  await expect(page.getByRole("button", { name: "Create" })).toBeVisible();
+});
+
+test("creating a row posts it and goes back to the list", async ({ page, request }) => {
+  await page.goto("/periodos/new");
+  await page.getByLabel("periodo", { exact: true }).fill("e2e-test-create");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/periodos$/);
+  await expect(page.locator("tbody tr").filter({ hasText: "e2e-test-create" })).toHaveCount(1);
+  expect((await request.get("/api/periodos?periodo=e2e-test-create")).status()).toBe(200);
+});
+
+test("a created row keeps a bigint exact, a struct by its parts, and an empty nullable field as null", async ({ page, request }) => {
+  await page.goto("/clases/new");
+  await page.getByLabel("periodo", { exact: true }).fill("e2e-test");
+  await page.getByLabel("materia", { exact: true }).fill("e2e-test");
+  await page.getByLabel("orden", { exact: true }).fill("9007199254740995");
+  await page.getByLabel("año", { exact: true }).fill("2026");
+  await page.getByLabel("mes", { exact: true }).fill("4");
+  await page.getByLabel("día", { exact: true }).fill("1");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/clases$/);
+  // the response's text: 2^53 + 3 only survives if it never was a JS number
+  const created = await (await request.get("/api/clases?periodo=e2e-test&materia=e2e-test&orden=9007199254740995")).text();
+  expect(created).toBe('{"periodo":"e2e-test","materia":"e2e-test","orden":9007199254740995,"fecha":{"año":2026,"mes":4,"día":1},"tema":null}');
+
+  // a struct left empty: null
+  await page.goto("/clases/new");
+  await page.getByLabel("periodo", { exact: true }).fill("e2e-test");
+  await page.getByLabel("materia", { exact: true }).fill("e2e-test");
+  await page.getByLabel("orden", { exact: true }).fill("2");
+  await page.getByLabel("tema", { exact: true }).fill("sin fecha 2");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/clases$/);
+  const without = await (await request.get("/api/clases?periodo=e2e-test&materia=e2e-test&orden=2")).text();
+  expect(without).toBe('{"periodo":"e2e-test","materia":"e2e-test","orden":2,"fecha":null,"tema":"sin fecha 2"}');
+});
+
+test("a create the API rejects (a duplicate pk) shows a generic error and stays on the form", async ({ page }) => {
+  await page.goto("/periodos/new");
+  await page.getByLabel("periodo", { exact: true }).fill("e2e-test");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page.locator("main")).toContainText("The row could not be created.");
+  await expect(page).toHaveURL(/\/periodos\/new$/);
+  await expect(page.getByLabel("periodo", { exact: true })).toHaveValue("e2e-test");
+});
+
+test("Cancel on the new-row page goes back to the list without creating anything", async ({ page, request }) => {
+  await page.goto("/periodos/new");
+  await page.getByLabel("periodo", { exact: true }).fill("e2e-test-never");
+  await page.getByRole("link", { name: "Cancel" }).click();
+  await expect(page).toHaveURL(/\/periodos$/);
+  expect((await request.get("/api/periodos?periodo=e2e-test-never")).status()).toBe(404);
 });
 
 test("every page links the shared stylesheet, and it is served as CSS", async ({ page, request }) => {
