@@ -1,86 +1,126 @@
+//! Creating an instance of the framework: the system comes from the command
+//! line, so this file names none.
+//!
+//!   zig build up   -Dsystem=examples/<name>.zig [-Dseed=examples/<name>_seed.sql]
+//!   zig build down -Dsystem=examples/<name>.zig
+//!   zig build print-schema -Dsystem=...      zig build create-database -Dsystem=...
+//!
+//! The tests (with an example system) are a package of their own,
+//! test/build.zig, which reuses the pub functions of this file through its
+//! dependency on this package: `zig build --build-file test/build.zig test`.
+//! Every path these functions resolve is relative to the `b` they get: pass
+//! them this package's builder (the dependency's), so the generated files,
+//! .env and the compose stacks are the ones at the root.
+
 const std = @import("std");
 
-/// The error must be AT the marked expression of this fragment: its path, as
-/// the compiler prints it, is the start of the error line. Used for the native
-/// compiler messages, whose tail is not stable (it can end in the mangled name
-/// of an anonymous struct) and cannot be matched verbatim. The separator is
-/// the one of the host (`/` on posix, `\` on windows), which is how the
-/// compiler prints it, so the cases match on either system; it is a comptime
-/// constant, so the whole path is concatenated at compile time.
-fn at(comptime file: []const u8) []const u8 {
-    const sep = std.fs.path.sep_str;
-    return "test" ++ sep ++ "compile_errors" ++ sep ++ file ++ ":/?/";
+/// The modules of the framework: zigma and its generators.
+pub const Framework = struct {
+    zigma: *std.Build.Module,
+    zig_type_map_sql: *std.Build.Module,
+    sql_generator: *std.Build.Module,
+    zig_type_map_ts: *std.Build.Module,
+    ts_backend_generator: *std.Build.Module,
+    ts_server_generator: *std.Build.Module,
+    frontend_generator: *std.Build.Module,
+    ts_rules_generator: *std.Build.Module,
+};
+
+pub fn addFramework(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) Framework {
+    const zigma = b.addModule("zigma", .{
+        .root_source_file = b.path("src/zigma.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const zig_type_map_sql = b.addModule("zig_type_map_sql", .{
+        .root_source_file = b.path("src/zig_type_map_sql.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const sql_generator = b.addModule("sql_generator", .{
+        .root_source_file = b.path("src/sql_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma },
+            .{ .name = "zig_type_map_sql", .module = zig_type_map_sql },
+        },
+    });
+    const zig_type_map_ts = b.addModule("zig_type_map_ts", .{
+        .root_source_file = b.path("src/zig_type_map_ts.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const ts_backend_generator = b.addModule("ts_backend_generator", .{
+        .root_source_file = b.path("src/ts_backend_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma },
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts },
+        },
+    });
+    const ts_server_generator = b.addModule("ts_server_generator", .{
+        .root_source_file = b.path("src/ts_server_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma },
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts },
+            .{ .name = "ts_backend_generator", .module = ts_backend_generator },
+        },
+    });
+    const frontend_generator = b.addModule("frontend_generator", .{
+        .root_source_file = b.path("src/frontend_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = zigma },
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts },
+            .{ .name = "ts_backend_generator", .module = ts_backend_generator },
+        },
+    });
+    const ts_rules_generator = b.addModule("ts_rules_generator", .{
+        .root_source_file = b.path("src/ts_rules_generator.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts },
+            .{ .name = "ts_backend_generator", .module = ts_backend_generator },
+        },
+    });
+    return .{
+        .zigma = zigma,
+        .zig_type_map_sql = zig_type_map_sql,
+        .sql_generator = sql_generator,
+        .zig_type_map_ts = zig_type_map_ts,
+        .ts_backend_generator = ts_backend_generator,
+        .ts_server_generator = ts_server_generator,
+        .frontend_generator = frontend_generator,
+        .ts_rules_generator = ts_rules_generator,
+    };
 }
 
-/// Expected-compile-error cases: each file in test/compile_errors must FAIL
-/// to compile with a matching error (see Step.Compile.expect_errors). The
-/// match is per line: a plain string must be the END of some error line; with
-/// the /?/ wildcard the text before it must be the start of the line and the
-/// text after it the end (only the first /?/ of the line is a wildcard, and
-/// there is no regex: those two forms are the whole vocabulary). For the
-/// messages of the framework, which are ours and therefore stable, the full
-/// message is used; for the native ones, `at` (see above).
-const compile_error_cases = [_]struct { file: []const u8, expected: []const u8 }{
-    .{ .file = "types_not_a_typedef.zig", .expected = "type 'text': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
-    .{ .file = "types_extra_property.zig", .expected = "type 'fecha': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
-    .{ .file = "record_unknown_type.zig", .expected = "unknown type 'inexistente'" },
-    .{ .file = "record_unknown_property.zig", .expected = "unknown property 'colour'" },
-    .{ .file = "record_is_name_false.zig", .expected = "is_name only admits true in a definition (false is the default)" },
-    .{ .file = "instance_wrong_value_type.zig", .expected = "expected type 'i64', found '*const [6:0]u8'" },
-    .{ .file = "instance_unknown_field.zig", .expected = at("instance_unknown_field.zig") },
-    .{ .file = "entity_pk_not_in_fields.zig", .expected = "pk field 'inexistente' is not a field of the entity" },
-    .{ .file = "entity_pk_partially_wrong.zig", .expected = "pk field 'inexistente' is not a field of the entity" },
-    .{ .file = "entity_fk_source_not_in_fields_list.zig", .expected = "source field 'inexistente' is not a field of the entity" },
-    .{ .file = "entity_fk_source_not_in_fields_map.zig", .expected = "source field 'inexistente' is not a field of the entity" },
-    .{ .file = "entity_uk_not_in_fields.zig", .expected = "uk field 'inexistente' is not a field of the entity" },
-    .{ .file = "extract_pk_no_field.zig", .expected = at("extract_pk_no_field.zig") },
-    .{ .file = "system_fk_unknown_entity.zig", .expected = "unknown target entity 'inexistentes'" },
-    .{ .file = "system_fk_partial_pk.zig", .expected = "target fields do not match the complete pk nor any uk of entity 'franjas'" },
-    .{ .file = "info_fks_no_array_form.zig", .expected = at("info_fks_no_array_form.zig") },
-    .{ .file = "defined_type_wrong_field_type.zig", .expected = "expected type 'i64', found '*const [1:0]u8'" },
-    .{ .file = "validar_cargo_missing_field.zig", .expected = at("validar_cargo_missing_field.zig") },
-    .{ .file = "defined_type_no_field.zig", .expected = at("defined_type_no_field.zig") },
-    .{ .file = "sql_type_not_in_type_defs.zig", .expected = "type 'fecha' is not in type_defs" },
-    .{ .file = "zig_type_map_ts_float.zig", .expected = "Zig type 'f32' has no TS mapping" },
-    .{ .file = "zig_type_map_ts_optional.zig", .expected = "Zig type '?u8' has no TS mapping" },
-    .{ .file = "zig_type_map_ts_other_slice.zig", .expected = "Zig type '[]const i32' has no TS mapping" },
-    .{ .file = "zig_type_map_ts_struct_field_unsupported.zig", .expected = "Zig type 'f64' has no TS mapping" },
-    .{ .file = "ts_type_not_in_type_defs.zig", .expected = "type 'fecha' is not in type_defs" },
-    .{ .file = "zig_type_map_sql_too_wide.zig", .expected = "Zig type 'u64' does not fit in a Postgres BIGINT" },
-    .{ .file = "zig_type_map_sql_too_wide_signed.zig", .expected = "Zig type 'i65' does not fit in a Postgres BIGINT" },
-    .{ .file = "zig_type_map_sql_float.zig", .expected = "Zig type 'f32' has no SQL mapping" },
-    .{ .file = "zig_type_map_sql_optional.zig", .expected = "Zig type '?u8' has no SQL mapping" },
-    .{ .file = "zig_type_map_sql_other_slice.zig", .expected = "Zig type '[]const i32' has no SQL mapping" },
-    .{ .file = "zig_type_map_sql_nested_struct.zig", .expected = "field 'desde' is a struct: nested structs have no SQL mapping yet" },
-    .{ .file = "zig_type_map_sql_struct_field_unsupported.zig", .expected = "Zig type 'f64' has no SQL mapping" },
-    .{ .file = "rules_not_a_struct.zig", .expected = "a rule collection must be a struct of rule definitions" },
-    .{ .file = "rules_not_a_rule_definition.zig", .expected = "rule 'checkBooking': a rule definition must be a struct like .{ .record = ..., .rule = ... }" },
-    .{ .file = "rules_missing_record.zig", .expected = "rule 'checkBooking': missing 'record'" },
-    .{ .file = "rules_missing_rule.zig", .expected = "rule 'checkBooking': missing 'rule'" },
-    .{ .file = "rules_unknown_property.zig", .expected = "rule 'checkBooking': unknown property 'colour'" },
-    .{ .file = "rules_not_a_function.zig", .expected = "rule 'checkBooking': 'rule' must be a function" },
-    .{ .file = "rules_two_parameters.zig", .expected = "rule 'checkBooking': must take exactly one parameter, an instance of its record" },
-    .{ .file = "rules_parameter_of_other_record.zig", .expected = "rule 'checkBooking': its parameter must be the instance type of its record" },
-    .{ .file = "rules_not_a_validation.zig", .expected = "rule 'checkBooking': must be a validation, returning error{...}!void" },
-    .{ .file = "rules_returns_a_value.zig", .expected = "rule 'checkBooking': must be a validation, returning error{...}!void" },
-    .{ .file = "ts_server_struct_text_field.zig", .expected = "field 'nombre' of type 'lugar': text inside a composite type is not read yet" },
-};
+/// A system described with zigma (its SSOT file), as a module.
+pub fn addSystemModule(b: *std.Build, framework: Framework, source: std.Build.LazyPath, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Module {
+    return b.createModule(.{
+        .root_source_file = source,
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zigma", .module = framework.zigma },
+        },
+    });
+}
 
-/// The generator modules src/generate.zig imports.
-const Generators = struct {
-    sql: *std.Build.Module,
-    ts_backend: *std.Build.Module,
-    ts_server: *std.Build.Module,
-    frontend: *std.Build.Module,
-    ts_rules: *std.Build.Module,
-};
-
-/// The generator of `system` (src/generate.zig with it as "system").
-fn addGenerate(
+/// The generator of `system` (src/generate.zig with it as "system"): it
+/// writes what the framework generates for that system; each step runs it
+/// with what to generate (`schema`, `dml`, `frontend DIR`, ...).
+pub fn addGenerate(
     b: *std.Build,
     name: []const u8,
     system: *std.Build.Module,
-    generators: Generators,
+    framework: Framework,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Step.Compile {
@@ -92,605 +132,187 @@ fn addGenerate(
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "system", .module = system },
-                .{ .name = "sql_generator", .module = generators.sql },
-                .{ .name = "ts_backend_generator", .module = generators.ts_backend },
-                .{ .name = "ts_server_generator", .module = generators.ts_server },
-                .{ .name = "frontend_generator", .module = generators.frontend },
-                .{ .name = "ts_rules_generator", .module = generators.ts_rules },
+                .{ .name = "sql_generator", .module = framework.sql_generator },
+                .{ .name = "ts_backend_generator", .module = framework.ts_backend_generator },
+                .{ .name = "ts_server_generator", .module = framework.ts_server_generator },
+                .{ .name = "frontend_generator", .module = framework.frontend_generator },
+                .{ .name = "ts_rules_generator", .module = framework.ts_rules_generator },
             },
         }),
     });
 }
 
+/// What is generated for a system and written into the repo (all
+/// gitignored): .env, backend/src/*.ts and frontend/public. One node each,
+/// shared by every step that needs it.
+pub const Generated = struct {
+    generate: *std.Build.Step.Compile,
+    /// The DDL, captured.
+    schema_sql: std.Build.LazyPath,
+    /// `.env` at the root, read by every `docker compose`: the system's name
+    /// as SYSTEM_NAME, which docker-compose.yml interpolates into its
+    /// container, database and volume names.
+    write_env: *std.Build.Step,
+    /// backend/src/dml.ts and dml.test.ts: the backend image is built from
+    /// the committed backend/ package.
+    write_ts_backend: *std.Build.Step,
+    /// backend/src/server.ts.
+    write_ts_server: *std.Build.Step,
+    /// frontend/public: the pages the frontend image serves.
+    write_frontend: *std.Build.Step,
+};
+
+/// The writes into the repo are owned by `writer`, the root package of the
+/// build (only the root package may update source files), and their paths
+/// are `to_root` (from the writer's directory to this package's) plus the
+/// file: `addGenerated(b, b, "", ...)` here, `addGenerated(root, b, "../",
+/// ...)` from test/build.zig.
+pub fn addGenerated(b: *std.Build, writer: *std.Build, to_root: []const u8, generate: *std.Build.Step.Compile) Generated {
+    const run_generate_env = b.addRunArtifact(generate);
+    run_generate_env.addArg("env");
+    const write_env = writer.addUpdateSourceFiles();
+    write_env.addCopyFileToSource(run_generate_env.captureStdOut(.{}), b.fmt("{s}.env", .{to_root}));
+
+    const run_generate_schema = b.addRunArtifact(generate);
+    run_generate_schema.addArg("schema");
+
+    const run_generate_dml = b.addRunArtifact(generate);
+    run_generate_dml.addArg("dml");
+    const run_generate_dml_tests = b.addRunArtifact(generate);
+    run_generate_dml_tests.addArg("dml-tests");
+    const write_ts_backend = writer.addUpdateSourceFiles();
+    write_ts_backend.addCopyFileToSource(run_generate_dml.captureStdOut(.{}), b.fmt("{s}backend/src/dml.ts", .{to_root}));
+    write_ts_backend.addCopyFileToSource(run_generate_dml_tests.captureStdOut(.{}), b.fmt("{s}backend/src/dml.test.ts", .{to_root}));
+
+    const run_generate_server = b.addRunArtifact(generate);
+    run_generate_server.addArg("server");
+    const write_ts_server = writer.addUpdateSourceFiles();
+    write_ts_server.addCopyFileToSource(run_generate_server.captureStdOut(.{}), b.fmt("{s}backend/src/server.ts", .{to_root}));
+
+    const write_frontend = b.addRunArtifact(generate);
+    write_frontend.addArgs(&.{ "frontend", "frontend/public" });
+    write_frontend.setCwd(b.path("."));
+    write_frontend.has_side_effects = true;
+
+    return .{
+        .generate = generate,
+        .schema_sql = run_generate_schema.captureStdOut(.{}),
+        .write_env = &write_env.step,
+        .write_ts_backend = &write_ts_backend.step,
+        .write_ts_server = &write_ts_server.step,
+        .write_frontend = &write_frontend.step,
+    };
+}
+
+/// A compose stack: `docker compose` with its files. `test` is the base file
+/// alone (the test stack); `instance` puts docker-compose.instance.yml on
+/// top (the system's own project, other ports).
+pub const Compose = struct {
+    argv: []const []const u8,
+    generated: Generated,
+
+    pub fn testStack(generated: Generated) Compose {
+        return .{ .argv = &.{ "docker", "compose" }, .generated = generated };
+    }
+
+    pub fn instance(generated: Generated) Compose {
+        return .{ .argv = &.{ "docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.instance.yml" }, .generated = generated };
+    }
+
+    /// `docker compose <args>`, after .env is written.
+    pub fn run(self: Compose, b: *std.Build, args: []const []const u8) *std.Build.Step.Run {
+        const cmd = b.addSystemCommand(self.argv);
+        cmd.addArgs(args);
+        cmd.setCwd(b.path("."));
+        cmd.step.dependOn(self.generated.write_env);
+        return cmd;
+    }
+
+    /// psql inside the postgres service, as the user and on the database the
+    /// container was created with (its POSTGRES_USER / POSTGRES_DB, which
+    /// docker-compose.yml takes from SYSTEM_NAME): no name of the system
+    /// here. `args` go to psql ("$@"). `exec -T`: stdin without a TTY, so a
+    /// schema can be piped in.
+    pub fn psql(self: Compose, b: *std.Build, args: []const []const u8) *std.Build.Step.Run {
+        const cmd = self.run(b, &.{ "exec", "-T", "postgres", "sh", "-c", "exec psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" \"$@\"", "psql" });
+        cmd.addArgs(args);
+        return cmd;
+    }
+
+    /// Postgres up (the `--wait` flag blocks on its healthcheck, so this is
+    /// race-free even on first-time init) and the generated schema piped
+    /// into it. No Postgres driver needed: psql runs inside the container.
+    pub fn applySchema(self: Compose, b: *std.Build) *std.Build.Step {
+        const postgres_up = self.run(b, &.{ "up", "-d", "--wait", "postgres" });
+        const apply = self.psql(b, &.{});
+        apply.setStdIn(.{ .lazy_path = self.generated.schema_sql });
+        apply.step.dependOn(&postgres_up.step);
+        return &apply.step;
+    }
+
+    /// The whole stack up with a fresh database: regenerate the backend and
+    /// the frontend, build the images, bring the frontend up (and the backend
+    /// and Postgres with it, waiting for their healthchecks), then reset the
+    /// database (drop the schema, apply the generated DDL, load the seed if
+    /// there is one). It keeps running until `down`.
+    pub fn upWithFreshDatabase(self: Compose, b: *std.Build, seed: ?std.Build.LazyPath) *std.Build.Step {
+        const build_images = self.run(b, &.{ "build", "backend", "frontend" });
+        build_images.step.dependOn(self.generated.write_ts_backend);
+        build_images.step.dependOn(self.generated.write_ts_server);
+        build_images.step.dependOn(self.generated.write_frontend);
+
+        const up = self.run(b, &.{ "up", "-d", "--wait", "frontend" });
+        up.step.dependOn(&build_images.step);
+
+        const reset = self.psql(b, &.{ "-v", "ON_ERROR_STOP=1", "-q", "-c", "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" });
+        reset.step.dependOn(&up.step);
+
+        const apply = self.psql(b, &.{ "-v", "ON_ERROR_STOP=1", "-q" });
+        apply.setStdIn(.{ .lazy_path = self.generated.schema_sql });
+        apply.step.dependOn(&reset.step);
+
+        const s = seed orelse return &apply.step;
+        const load_seed = self.psql(b, &.{ "-v", "ON_ERROR_STOP=1", "-q" });
+        load_seed.setStdIn(.{ .lazy_path = s });
+        load_seed.step.dependOn(&apply.step);
+        return &load_seed.step;
+    }
+
+    /// Stop and remove the stack's containers and network. The volume stays:
+    /// `upWithFreshDatabase` resets it anyway.
+    pub fn down(self: Compose, b: *std.Build) *std.Build.Step {
+        return &self.run(b, &.{"down"}).step;
+    }
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const zigma_mod = b.addModule("zigma", .{
-        .root_source_file = b.path("src/zigma.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
+    const system_path = b.option([]const u8, "system", "The system to run: its SSOT file, described with zigma (e.g. examples/<name>.zig)");
+    const seed_path = b.option([]const u8, "seed", "Optional: SQL rows loaded into the database after the schema, by `up`");
 
-    const aida_mod = b.addModule("aida", .{
-        .root_source_file = b.path("examples/aida.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = zigma_mod },
-        },
-    });
+    const print_schema_step = b.step("print-schema", "Print the DDL generated for the system (-Dsystem)");
+    const create_database_step = b.step("create-database", "Start the system's Postgres via Docker, then generate and apply its schema (-Dsystem)");
+    const up_step = b.step("up", "Bring the system's stack up (frontend on 8081) with a fresh database and the seed rows if given (-Dsystem, -Dseed)");
+    const down_step = b.step("down", "Stop and remove the system's stack (-Dsystem)");
 
-    const zig_type_map_sql_mod = b.addModule("zig_type_map_sql", .{
-        .root_source_file = b.path("src/zig_type_map_sql.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const sql_generator_mod = b.addModule("sql_generator", .{
-        .root_source_file = b.path("src/sql_generator.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = zigma_mod },
-            .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
-        },
-    });
-
-    const zig_type_map_ts_mod = b.addModule("zig_type_map_ts", .{
-        .root_source_file = b.path("src/zig_type_map_ts.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const ts_backend_generator_mod = b.addModule("ts_backend_generator", .{
-        .root_source_file = b.path("src/ts_backend_generator.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = zigma_mod },
-            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
-        },
-    });
-
-    const tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/zigma_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zigma", .module = zigma_mod },
-                .{ .name = "aida", .module = aida_mod },
-            },
-        }),
-    });
-    const run_tests = b.addRunArtifact(tests);
-
-    const sql_generator_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/sql_generator_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zigma", .module = zigma_mod },
-                .{ .name = "aida", .module = aida_mod },
-                .{ .name = "sql_generator", .module = sql_generator_mod },
-            },
-        }),
-    });
-    const run_sql_generator_tests = b.addRunArtifact(sql_generator_tests);
-
-    const ts_backend_generator_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/ts_backend_generator_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zigma", .module = zigma_mod },
-                .{ .name = "aida", .module = aida_mod },
-                .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
-            },
-        }),
-    });
-    const run_ts_backend_generator_tests = b.addRunArtifact(ts_backend_generator_tests);
-
-    const zig_type_map_ts_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/zig_type_map_ts_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "aida", .module = aida_mod },
-                .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
-            },
-        }),
-    });
-    const run_zig_type_map_ts_tests = b.addRunArtifact(zig_type_map_ts_tests);
-
-    const zig_type_map_sql_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/zig_type_map_sql_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
-            },
-        }),
-    });
-    const run_zig_type_map_sql_tests = b.addRunArtifact(zig_type_map_sql_tests);
-
-    // A small system of its own with rules (rooms and bookings), for the
-    // tests of defineRules and of the rules WASM module.
-    const test_system_mod = b.createModule(.{
-        .root_source_file = b.path("test/test_system.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = zigma_mod },
-        },
-    });
-
-    const rules_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/rules_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zigma", .module = zigma_mod },
-                .{ .name = "test_system", .module = test_system_mod },
-            },
-        }),
-    });
-    const run_rules_tests = b.addRunArtifact(rules_tests);
-
-    // The rules WASM module is generic: it exports the rules of whatever
-    // module it is given as "system". Here, the test system.
-    const rules_wasm_test_system_mod = b.createModule(.{
-        .root_source_file = b.path("src/rules_wasm.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "system", .module = test_system_mod },
-        },
-    });
-    const rules_wasm_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/rules_wasm_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "rules_wasm", .module = rules_wasm_test_system_mod },
-            },
-        }),
-    });
-    const run_rules_wasm_tests = b.addRunArtifact(rules_wasm_tests);
-
-    const ts_rules_generator_mod = b.addModule("ts_rules_generator", .{
-        .root_source_file = b.path("src/ts_rules_generator.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
-            .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
-        },
-    });
-    const ts_rules_generator_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/ts_rules_generator_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zigma", .module = zigma_mod },
-                .{ .name = "test_system", .module = test_system_mod },
-                .{ .name = "ts_rules_generator", .module = ts_rules_generator_mod },
-            },
-        }),
-    });
-    const run_ts_rules_generator_tests = b.addRunArtifact(ts_rules_generator_tests);
-
-    const ts_server_generator_mod = b.addModule("ts_server_generator", .{
-        .root_source_file = b.path("src/ts_server_generator.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = zigma_mod },
-            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
-            .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
-        },
-    });
-    const ts_server_generator_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/ts_server_generator_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zigma", .module = zigma_mod },
-                .{ .name = "aida", .module = aida_mod },
-                .{ .name = "ts_server_generator", .module = ts_server_generator_mod },
-            },
-        }),
-    });
-    const run_ts_server_generator_tests = b.addRunArtifact(ts_server_generator_tests);
-
-    const frontend_generator_mod = b.addModule("frontend_generator", .{
-        .root_source_file = b.path("src/frontend_generator.zig"),
-        .target = target,
-        .optimize = optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = zigma_mod },
-            .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
-            .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
-        },
-    });
-    const frontend_generator_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/frontend_generator_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "aida", .module = aida_mod },
-                .{ .name = "frontend_generator", .module = frontend_generator_mod },
-            },
-        }),
-    });
-    const run_frontend_generator_tests = b.addRunArtifact(frontend_generator_tests);
-
-    // The generator of a system (src/generate.zig): generic, it writes what
-    // the framework generates for the module it gets as "system"; each step
-    // runs it with what to generate (`schema`, `dml`, `frontend DIR`, ...).
-    // One per system: aida here (the system the stack runs), the test system
-    // for test-rules-wasm.
-    const generators = Generators{
-        .sql = sql_generator_mod,
-        .ts_backend = ts_backend_generator_mod,
-        .ts_server = ts_server_generator_mod,
-        .frontend = frontend_generator_mod,
-        .ts_rules = ts_rules_generator_mod,
+    const path = system_path orelse {
+        const fail = b.addFail("no system: pass its SSOT file with -Dsystem=<path>, e.g. -Dsystem=examples/<name>.zig");
+        for ([_]*std.Build.Step{ print_schema_step, create_database_step, up_step, down_step }) |step| step.dependOn(&fail.step);
+        return;
     };
-    const generate_exe = addGenerate(b, "generate", aida_mod, generators, target, optimize);
 
-    const run_print_schema = b.addRunArtifact(generate_exe);
+    const framework = addFramework(b, target, optimize);
+    const system = addSystemModule(b, framework, b.path(path), target, optimize);
+    const generated = addGenerated(b, b, "", addGenerate(b, "generate", system, framework, target, optimize));
+    const instance = Compose.instance(generated);
+
+    const run_print_schema = b.addRunArtifact(generated.generate);
     run_print_schema.addArg("schema");
-    const print_schema_step = b.step("print-schema", "Print the CREATE TABLE DDL generated for the system");
     print_schema_step.dependOn(&run_print_schema.step);
 
-    // `zig build create-database`: starts the Postgres container (docker-compose.yml)
-    // if it isn't running, waits for it to be ready (the `--wait` flag blocks on the
-    // container's healthcheck, so this is race-free even on first-time init), and
-    // pipes the generated schema into psql running inside that container. No
-    // Postgres driver needed: psql runs inside the container, so the only host
-    // dependency is Docker. Only the `postgres` service: the `backend` one is
-    // brought up by `test-api`, once its server.ts is generated.
-    // `.env` at the root (gitignored), read by every `docker compose`: the
-    // system's name as SYSTEM_NAME, which docker-compose.yml interpolates
-    // into its container, database and volume names. Every compose step
-    // depends on it.
-    const run_generate_env = b.addRunArtifact(generate_exe);
-    run_generate_env.addArg("env");
-    const write_env = b.addUpdateSourceFiles();
-    write_env.addCopyFileToSource(run_generate_env.captureStdOut(.{}), ".env");
-
-    const docker_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "postgres" });
-    docker_up.step.dependOn(&write_env.step);
-
-    const run_print_schema_for_db = b.addRunArtifact(generate_exe);
-    run_print_schema_for_db.addArg("schema");
-    const schema_sql = run_print_schema_for_db.captureStdOut(.{});
-
-    // psql inside the postgres service, as the user and on the database the
-    // container was created with (its POSTGRES_USER / POSTGRES_DB, which
-    // docker-compose.yml takes from SYSTEM_NAME): no name of the system here.
-    // The arguments after it go to psql ("$@"). `exec -T`: stdin without a
-    // TTY, so a schema can be piped in.
-    const psql_in_postgres = [_][]const u8{ "exec", "-T", "postgres", "sh", "-c", "exec psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" \"$@\"", "psql" };
-
-    const apply_schema = b.addSystemCommand(&([_][]const u8{ "docker", "compose" } ++ psql_in_postgres));
-    apply_schema.setStdIn(.{ .lazy_path = schema_sql });
-    apply_schema.step.dependOn(&docker_up.step);
-
-    const create_database_step = b.step("create-database", "Start Postgres via Docker, then generate and apply the schema");
-    create_database_step.dependOn(&apply_schema.step);
-
-    // `zig build test-backend`: generate the TypeScript DML module and its
-    // test module from the SSOT, write both into backend/src/, then run
-    // the generated tests with `node --test`. Node 22.18+ runs .ts directly
-    // and the generated tests only use node:test / node:assert, so there is
-    // no npm step.
-    const run_generate_dml = b.addRunArtifact(generate_exe);
-    run_generate_dml.addArg("dml");
-    const dml_ts = run_generate_dml.captureStdOut(.{});
-    const run_generate_dml_tests = b.addRunArtifact(generate_exe);
-    run_generate_dml_tests.addArg("dml-tests");
-    const dml_test_ts = run_generate_dml_tests.captureStdOut(.{});
-
-    // The generated files are written into the committed backend/ package
-    // (gitignored there): the backend image is built from that directory.
-    const write_ts_backend = b.addUpdateSourceFiles();
-    write_ts_backend.addCopyFileToSource(dml_ts, "backend/src/dml.ts");
-    write_ts_backend.addCopyFileToSource(dml_test_ts, "backend/src/dml.test.ts");
-
-    const run_ts_backend_node_tests = b.addSystemCommand(&.{ "node", "--test", "src/dml.test.ts" });
-    run_ts_backend_node_tests.setCwd(b.path("backend"));
-    run_ts_backend_node_tests.step.dependOn(&write_ts_backend.step);
-
-    const test_backend_step = b.step("test-backend", "Generate the TypeScript DML module + tests into backend/, then run the pure tests with node");
-    test_backend_step.dependOn(&run_ts_backend_node_tests.step);
-
-    // `zig build test-api`: the generated HTTP server as the backend's
-    // long-running process. Regenerate dml.ts + server.ts into backend/, apply
-    // the schema, build the image, bring the backend up (waiting for its
-    // healthcheck), then run test/http_docker_test.zig - a Zig test that
-    // requests the API from the host. Not on `test_step` (needs Docker + Node).
-    const run_generate_server = b.addRunArtifact(generate_exe);
-    run_generate_server.addArg("server");
-    const server_ts = run_generate_server.captureStdOut(.{});
-    const write_ts_server = b.addUpdateSourceFiles();
-    write_ts_server.addCopyFileToSource(server_ts, "backend/src/server.ts");
-
-    const build_backend_image_with_server = b.addSystemCommand(&.{ "docker", "compose", "build", "backend" });
-    build_backend_image_with_server.step.dependOn(&write_env.step);
-    build_backend_image_with_server.step.dependOn(&write_ts_backend.step);
-    build_backend_image_with_server.step.dependOn(&write_ts_server.step);
-
-    const backend_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "backend" });
-    backend_up.step.dependOn(&build_backend_image_with_server.step);
-    backend_up.step.dependOn(&apply_schema.step);
-
-    const http_docker_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/http_docker_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const run_http_docker_tests = b.addRunArtifact(http_docker_tests);
-    run_http_docker_tests.has_side_effects = true;
-    run_http_docker_tests.step.dependOn(&backend_up.step);
-
-    const test_api_step = b.step("test-api", "Generate the HTTP server, run it in the backend container and request it from the host");
-    test_api_step.dependOn(&run_http_docker_tests.step);
-
-    // `zig build test-backend-db`: the generated DML against the database
-    // without the HTTP layer, with the values server.ts hands it: same image
-    // as test-api (built by the same node), the schema applied, then
-    // test/backend_db_test.zig - a Zig test that runs the builders inside the
-    // backend container. Not on `test_step` (needs Docker).
-    const backend_db_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/backend_db_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const run_backend_db_tests = b.addRunArtifact(backend_db_tests);
-    run_backend_db_tests.has_side_effects = true;
-    run_backend_db_tests.step.dependOn(&build_backend_image_with_server.step);
-    run_backend_db_tests.step.dependOn(&apply_schema.step);
-
-    const test_backend_db_step = b.step("test-backend-db", "Run the generated DML inside the backend container against Postgres, with the values of test-api, without HTTP");
-    test_backend_db_step.dependOn(&run_backend_db_tests.step);
-
-    // `zig build test-e2e`: the generated frontend in a headless browser.
-    // Regenerate dml.ts + server.ts into backend/ and the frontend into
-    // frontend/public (gitignored), apply the schema, build the images,
-    // bring the frontend up (and the backend with it, waiting for both
-    // healthchecks), then run test/frontend_e2e_test.zig - a Zig test that
-    // seeds rows and runs the Playwright suite in the e2e service. Not on
-    // `test_step` (needs Docker).
-    const write_frontend = b.addRunArtifact(generate_exe);
-    write_frontend.addArgs(&.{ "frontend", "frontend/public" });
-    write_frontend.has_side_effects = true;
-
-    const build_frontend_images = b.addSystemCommand(&.{ "docker", "compose", "--profile", "e2e", "build", "backend", "frontend", "e2e" });
-    build_frontend_images.step.dependOn(&write_env.step);
-    build_frontend_images.step.dependOn(&write_ts_backend.step);
-    build_frontend_images.step.dependOn(&write_ts_server.step);
-    build_frontend_images.step.dependOn(&write_frontend.step);
-
-    const frontend_up = b.addSystemCommand(&.{ "docker", "compose", "up", "-d", "--wait", "frontend" });
-    frontend_up.step.dependOn(&build_frontend_images.step);
-    frontend_up.step.dependOn(&apply_schema.step);
-
-    const frontend_e2e_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/frontend_e2e_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const run_frontend_e2e_tests = b.addRunArtifact(frontend_e2e_tests);
-    run_frontend_e2e_tests.has_side_effects = true;
-    run_frontend_e2e_tests.step.dependOn(&frontend_up.step);
-
-    const test_e2e_step = b.step("test-e2e", "Generate the frontend, serve it in its container and test it in a headless browser (Playwright, in a container)");
-    test_e2e_step.dependOn(&run_frontend_e2e_tests.step);
-
-    // `zig build example`: a second copy of the stack (compose project
-    // zigma-example, docker-compose.example.yml on top of docker-compose.yml:
-    // frontend on 8081, backend on 3001, Postgres on 5433) with the fake rows
-    // of examples/aida_seed.sql, to browse the frontend by hand. Regenerate
-    // the backend and the frontend (the same nodes as the tests), build the
-    // images, bring the frontend up (and the backend and Postgres with it),
-    // reset the database on every run (drop the schema, apply the generated
-    // DDL, load the seed), then check it with test/example_stack_test.zig.
-    // The stack keeps running until `zig build example-down`. Not on
-    // `test_step` nor `test-all` (needs Docker + Node, and it is not a test).
-    const example_compose = [_][]const u8{ "docker", "compose", "-p", "zigma-example", "-f", "docker-compose.yml", "-f", "docker-compose.example.yml" };
-    const example_psql = example_compose ++ psql_in_postgres ++ [_][]const u8{ "-v", "ON_ERROR_STOP=1", "-q" };
-
-    const build_example_images = b.addSystemCommand(&example_compose);
-    build_example_images.addArgs(&.{ "build", "backend", "frontend" });
-    build_example_images.step.dependOn(&write_env.step);
-    build_example_images.step.dependOn(&write_ts_backend.step);
-    build_example_images.step.dependOn(&write_ts_server.step);
-    build_example_images.step.dependOn(&write_frontend.step);
-
-    const example_up = b.addSystemCommand(&example_compose);
-    example_up.addArgs(&.{ "up", "-d", "--wait", "frontend" });
-    example_up.step.dependOn(&build_example_images.step);
-
-    const reset_example_db = b.addSystemCommand(&example_psql);
-    reset_example_db.addArgs(&.{ "-c", "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" });
-    reset_example_db.step.dependOn(&example_up.step);
-
-    const apply_example_schema = b.addSystemCommand(&example_psql);
-    apply_example_schema.setStdIn(.{ .lazy_path = schema_sql });
-    apply_example_schema.step.dependOn(&reset_example_db.step);
-
-    const load_example_seed = b.addSystemCommand(&example_psql);
-    load_example_seed.setStdIn(.{ .lazy_path = b.path("examples/aida_seed.sql") });
-    load_example_seed.step.dependOn(&apply_example_schema.step);
-
-    const example_stack_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/example_stack_test.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const run_example_stack_tests = b.addRunArtifact(example_stack_tests);
-    run_example_stack_tests.has_side_effects = true;
-    run_example_stack_tests.step.dependOn(&load_example_seed.step);
-
-    const example_step = b.step("example", "Bring up the example stack (frontend on 8081) with the seed's fake rows, then check it");
-    example_step.dependOn(&run_example_stack_tests.step);
-
-    // `zig build example-down`: stop and remove the example stack's
-    // containers and network. The volume stays: `example` resets it anyway.
-    const example_down = b.addSystemCommand(&example_compose);
-    example_down.addArg("down");
-    example_down.step.dependOn(&write_env.step);
-    const example_down_step = b.step("example-down", "Stop and remove the example stack");
-    example_down_step.dependOn(&example_down.step);
-
-    // `zig build test-rules-wasm`: compile the rules of the test system to one
-    // wasm32 module (src/rules_wasm.zig with test/test_system.zig as its
-    // "system") and run test/rules_wasm_node_test.zig, a Zig test that loads
-    // it with Node's built-in WebAssembly and calls the rules under the
-    // contract. Not on `test_step` (needs Node). The modules are created again
-    // for wasm32: every module of a compilation shares its target.
-    const wasm_target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
-    const zigma_wasm_mod = b.createModule(.{
-        .root_source_file = b.path("src/zigma.zig"),
-        .target = wasm_target,
-        .optimize = .ReleaseSmall,
-    });
-    const test_system_wasm_mod = b.createModule(.{
-        .root_source_file = b.path("test/test_system.zig"),
-        .target = wasm_target,
-        .optimize = .ReleaseSmall,
-        .imports = &.{
-            .{ .name = "zigma", .module = zigma_wasm_mod },
-        },
-    });
-    const test_system_rules_wasm = b.addExecutable(.{
-        .name = "test_system_rules",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/rules_wasm.zig"),
-            .target = wasm_target,
-            .optimize = .ReleaseSmall,
-            .imports = &.{
-                .{ .name = "system", .module = test_system_wasm_mod },
-            },
-        }),
-    });
-    // a library of exports: no entry point, and the `export`s kept. rdynamic
-    // also exports `__stack_pointer` (accepted, not contract); the exact list
-    // (`export_symbol_names`) would repeat the rule names here.
-    test_system_rules_wasm.entry = .disabled;
-    test_system_rules_wasm.rdynamic = true;
-
-    const rules_wasm_options = b.addOptions();
-    rules_wasm_options.addOptionPath("wasm_path", test_system_rules_wasm.getEmittedBin());
-    const rules_wasm_node_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/rules_wasm_node_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "build_options", .module = rules_wasm_options.createModule() },
-            },
-        }),
-    });
-    const run_rules_wasm_node_tests = b.addRunArtifact(rules_wasm_node_tests);
-
-    // Then the generated rules.ts of the test system, next to its compiled
-    // rules as rules.wasm (rules.ts loads ./rules.wasm), in a generated
-    // directory: test/rules_ts_node_test.zig imports it from Node.
-    const generate_test_system_exe = addGenerate(b, "generate_test_system", test_system_mod, generators, target, optimize);
-    const run_generate_rules_ts = b.addRunArtifact(generate_test_system_exe);
-    run_generate_rules_ts.addArg("rules-ts");
-    const test_system_rules_ts = run_generate_rules_ts.captureStdOut(.{});
-    const test_system_rules_dir = b.addWriteFiles();
-    const test_system_rules_ts_path = test_system_rules_dir.addCopyFile(test_system_rules_ts, "rules.ts");
-    _ = test_system_rules_dir.addCopyFile(test_system_rules_wasm.getEmittedBin(), "rules.wasm");
-
-    const rules_ts_options = b.addOptions();
-    // the path of rules.ts (an option path must be a file); rules.wasm is next to it
-    rules_ts_options.addOptionPath("rules_ts_path", test_system_rules_ts_path);
-    const rules_ts_node_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/rules_ts_node_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "build_options", .module = rules_ts_options.createModule() },
-            },
-        }),
-    });
-    const run_rules_ts_node_tests = b.addRunArtifact(rules_ts_node_tests);
-
-    const test_rules_wasm_step = b.step("test-rules-wasm", "Compile the test system's rules to wasm32, generate its rules.ts, and test both from Node");
-    test_rules_wasm_step.dependOn(&run_rules_wasm_node_tests.step);
-    test_rules_wasm_step.dependOn(&run_rules_ts_node_tests.step);
-
-    const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
-    test_step.dependOn(&run_tests.step);
-    test_step.dependOn(&run_sql_generator_tests.step);
-    test_step.dependOn(&run_ts_backend_generator_tests.step);
-    test_step.dependOn(&run_zig_type_map_ts_tests.step);
-    test_step.dependOn(&run_zig_type_map_sql_tests.step);
-    test_step.dependOn(&run_rules_tests.step);
-    test_step.dependOn(&run_rules_wasm_tests.step);
-    test_step.dependOn(&run_ts_rules_generator_tests.step);
-    test_step.dependOn(&run_ts_server_generator_tests.step);
-    test_step.dependOn(&run_frontend_generator_tests.step);
-
-    for (compile_error_cases) |case| {
-        const case_obj = b.addObject(.{
-            .name = case.file[0 .. case.file.len - 4],
-            .root_module = b.createModule(.{
-                .root_source_file = b.path(b.fmt("test/compile_errors/{s}", .{case.file})),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{
-                    .{ .name = "zigma", .module = zigma_mod },
-                    .{ .name = "aida", .module = aida_mod },
-                    .{ .name = "sql_generator", .module = sql_generator_mod },
-                    .{ .name = "zig_type_map_ts", .module = zig_type_map_ts_mod },
-                    .{ .name = "ts_backend_generator", .module = ts_backend_generator_mod },
-                    .{ .name = "zig_type_map_sql", .module = zig_type_map_sql_mod },
-                    .{ .name = "ts_server_generator", .module = ts_server_generator_mod },
-                },
-            }),
-        });
-        case_obj.expect_errors = .{ .contains = case.expected };
-        test_step.dependOn(&case_obj.step);
-    }
-
-    // `zig build test-all`: `test`, then every test that needs Node or
-    // Docker, one after another, each in its own nested `zig build` process.
-    // New nodes only: an arrow added to the shared nodes (write_ts_backend,
-    // apply_schema, ...) would also be there for every other step. One
-    // process at a time, so the stack tests never overlap on the shared
-    // containers; the first failure stops the chain.
-    const test_all_step = b.step("test-all", "Run test, then every Node/Docker test, one after another");
-    var previous: *std.Build.Step = test_step;
-    for ([_][]const u8{ "test-backend", "test-backend-db", "test-api", "test-e2e", "test-rules-wasm" }) |name| {
-        const nested = b.addSystemCommand(&.{ b.graph.zig_exe, "build", name });
-        nested.setName(b.fmt("zig build {s}", .{name}));
-        nested.step.dependOn(previous);
-        previous = &nested.step;
-    }
-    test_all_step.dependOn(previous);
+    create_database_step.dependOn(instance.applySchema(b));
+    up_step.dependOn(instance.upWithFreshDatabase(b, if (seed_path) |s| b.path(s) else null));
+    down_step.dependOn(instance.down(b));
 }

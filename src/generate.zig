@@ -1,6 +1,6 @@
 //! The generator of a system: a command-line program that writes what the
 //! framework generates for whatever module `build.zig` passes as "system"
-//! (examples/aida.zig, test/test_system.zig, ...), like src/rules_wasm.zig.
+//! (any system described with zigma), like src/rules_wasm.zig.
 //! Generic: it only reads what any system declares, and each artifact is
 //! offered when the system declares what it needs.
 //!

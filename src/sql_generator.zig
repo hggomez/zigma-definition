@@ -183,7 +183,7 @@ pub fn createTableSql(comptime type_defs: anytype, comptime name: []const u8, co
 pub fn schemaSql(comptime type_defs: anytype, comptime entity_defs: anytype) []const u8 {
     // completeEntity's fk-completion loop costs comptime branches per fk;
     // across a whole system's worth of entities that adds up past the
-    // default 1000-branch quota (hit at aida's 11 entities).
+    // default 1000-branch quota (already at about ten entities with fks).
     @setEvalBranchQuota(10000);
     const entity_names = @typeInfo(@TypeOf(entity_defs)).@"struct".field_names;
     comptime var domains: []const u8 = "";

@@ -1,21 +1,23 @@
-//! The example stack: a second copy of the generated frontend, backend and
-//! Postgres (compose project `zigma-example`, docker-compose.example.yml on
+//! The aida instance: a second copy of the generated frontend, backend and
+//! Postgres (compose project `zigma-aida`, docker-compose.instance.yml on
 //! top of docker-compose.yml), separate from the one the tests use, filled
 //! with the fake rows of examples/aida_seed.sql to browse the frontend by hand
 //! at http://localhost:8081.
 //!
-//! The test checks what `zig build example` leaves running: the frontend
-//! published on 8081 is the one of the `zigma-example` project (not the test
-//! stack's), it serves the index, and through it every entity of aida lists
+//! The test checks what `zig build up -Dsystem=examples/aida.zig
+//! -Dseed=examples/aida_seed.sql` leaves running: the frontend published on
+//! 8081 is the one of the `zigma-aida` project (not the test stack's), it
+//! serves the index, and through it every entity of aida lists
 //! exactly the rows of the seed, by their fake pks (`docente-1`, …), none
 //! more: a row left from before the run (one added by hand while browsing)
 //! means the database was not reset. A few rows are checked whole: the
 //! reflexive fk, a clase without fecha, a bigint above 2^53 read exactly.
 //!
-//! Run with `zig build example`, which regenerates the backend and the
-//! frontend, brings the example stack up, resets its database (schema + seed)
-//! and ends with this check; the stack keeps running until `zig build
-//! example-down`. Not part of `zig build test` (needs Docker + Node).
+//! Run with `zig build --build-file test/build.zig test-example`, which does
+//! what `up` does (regenerates the backend and the frontend, brings the
+//! instance up, resets its database: schema + seed) and ends with this
+//! check; the stack keeps running until `zig build down
+//! -Dsystem=examples/aida.zig`. Not part of `test` (needs Docker + Node).
 
 const std = @import("std");
 
@@ -27,12 +29,12 @@ fn run(argv: []const []const u8) !std.process.RunResult {
     });
 }
 
-test "the frontend on 8081 is the one of the zigma-example project" {
+test "the frontend on 8081 is the one of the zigma-aida project" {
     const result = try run(&.{ "docker", "ps", "--filter", "publish=8081", "--format", "{{.Label \"com.docker.compose.project\"}}" });
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try std.testing.expectEqualStrings("zigma-example", std.mem.trim(u8, result.stdout, " \r\n"));
+    try std.testing.expectEqualStrings("zigma-aida", std.mem.trim(u8, result.stdout, " \r\n"));
 }
 
 // An ES module run on the host with `node --input-type=module -e`: requests

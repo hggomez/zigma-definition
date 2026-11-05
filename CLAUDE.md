@@ -24,33 +24,52 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 ## Estructura
 
 * `src/zigma.zig`: el framework descriptor (módulo `zigma`). No conoce ningún sistema concreto.
-* `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`), y
-  `examples/aida_seed.sql`, sus filas de ejemplo. En `examples/` va solo el sistema: lo
-  generado sale de `src/generate.zig`, genérico, que `build.zig` compila con el sistema
-  como módulo `"system"` (`generate schema | dml | dml-tests | server | frontend DIR |
-  rules-ts`); cada artefacto exige lo que el sistema declara (`name`, `type_defs`,
-  `entity_defs`, `rule_defs`).
+* `examples/aida.zig`: el sistema de alumnos descripto con el framework, y
+  `examples/aida_seed.sql`, sus filas de ejemplo. Son los únicos archivos que nombran a
+  aida fuera de los tests: lo generado sale de `src/generate.zig`, genérico, compilado
+  con el sistema como módulo `"system"` (`generate schema | dml | dml-tests | server |
+  frontend DIR | rules-ts | env`); cada artefacto exige lo que el sistema declara (`name`,
+  `type_defs`, `entity_defs`, `rule_defs`).
+* `build.zig`: crear una instancia del framework. No nombra ningún sistema: lo recibe por
+  línea de comandos. `zig build up -Dsystem=examples/aida.zig
+  [-Dseed=examples/aida_seed.sql]` genera todo, levanta el stack de la instancia (proyecto
+  compose `zigma-<nombre>`, `docker-compose.instance.yml` encima de `docker-compose.yml`:
+  frontend en 8081, backend en 3001, Postgres en 5433) y resetea su base (esquema + seed
+  si hay); queda corriendo hasta `zig build down -Dsystem=...`. También `print-schema` y
+  `create-database`. Sin `-Dsystem` los pasos fallan con un mensaje. Expone como `pub fn`
+  el cableado (módulos del framework, generador, archivos generados, stacks de compose)
+  que reusan los tests.
+* Los nombres de la infra salen del sistema: `generate env` escribe `.env` (gitignoreado,
+  `SYSTEM_NAME=<name>`) antes de todo `docker compose`, y los compose lo interpolan
+  (contenedor, usuario/base de Postgres, volumen, proyecto de la instancia). `psql` corre
+  por el servicio (`docker compose exec -T postgres`) con el `POSTGRES_USER` /
+  `POSTGRES_DB` del contenedor.
+* `test/build.zig` (+ `test/build.zig.zon`): los tests, con aida como ejemplo. Es un
+  paquete propio que depende del raíz (`.path = ".."`) y reusa sus `pub fn` pasándoles el
+  builder del raíz; no puede estar junto a `build.zig`: dos build scripts en el mismo
+  directorio comparten el runner cacheado (el segundo recibe los pasos del primero). Se
+  corre **desde la raíz** (los paths de los errores de compilación esperados son relativos
+  al directorio desde el que se invoca): `zig build --build-file test/build.zig <paso>`.
 * `test/zigma_test.zig`: los tests positivos (runtime y asserts comptime).
-* `test/compile_errors/*.zig`: fragmentos que **deben fallar** la compilación; `build.zig`
-  los compila con `expect_errors` (el paso tiene éxito solo si el error coincide) y los
-  cuelga del step `test`. La lista de casos con su mensaje esperado está en `build.zig`.
-* `zig build test` corre los tests de Zig: tests de runtime y casos de no-compila (sin Node
-  ni Docker). `zig build test-all` corre `test` y después, de a uno y cada uno en su propio
-  proceso `zig build`, los que necesitan Node o Docker: `test-backend` (`dml.ts` con `node
-  --test`), `test-backend-db` (`dml.ts` contra Postgres desde el contenedor del backend, con
-  los valores que le pasa el servidor, sin HTTP), `test-api` (el servidor en su
-  contenedor), `test-e2e` (Playwright) y
-  `test-rules-wasm`. Cada uno se puede correr suelto.
-* `zig build example`: un segundo stack (proyecto compose `zigma-example`,
-  `docker-compose.example.yml` encima de `docker-compose.yml`: frontend en 8081, backend en
-  3001, Postgres en 5433) con las filas falsas de `examples/aida_seed.sql`, para revisar el
-  frontend a mano. Cada corrida resetea su base (esquema + seed) y termina con
-  `test/example_stack_test.zig`; queda corriendo hasta `zig build example-down`. No es un
-  test: no está en `test-all`.
+* `test/compile_errors/*.zig`: fragmentos que **deben fallar** la compilación;
+  `test/build.zig` los compila con `expect_errors` (el paso tiene éxito solo si el error
+  coincide) y los cuelga del step `test`. La lista de casos con su mensaje esperado está en
+  `test/build.zig`.
+* `zig build --build-file test/build.zig test` corre los tests de Zig: tests de runtime y
+  casos de no-compila (sin Node ni Docker). `test-all` corre `test` y después, de a uno y
+  cada uno en su propio proceso `zig build`, los que necesitan Node o Docker:
+  `test-backend` (`dml.ts` con `node --test`), `test-backend-db` (`dml.ts` contra Postgres
+  desde el contenedor del backend, con los valores que le pasa el servidor, sin HTTP),
+  `test-api` (el servidor en su contenedor), `test-e2e` (Playwright) y `test-rules-wasm`.
+  Cada uno se puede correr suelto. Usan el stack de test (`docker-compose.yml` solo,
+  8080/3000/5432).
+* `test-example`: lo que deja `up` con aida y su seed, chequeado por
+  `test/example_stack_test.zig` (exactamente las filas del seed); el stack queda corriendo.
+  No está en `test-all`.
 * `src/rules.zig` (`defineRules`, re-exportado por `zigma`), `src/rules_wasm.zig` (las reglas
   de un sistema compiladas a un `.wasm`) y `src/ts_rules_generator.zig` (`rules.ts`); sus
-  tests usan `test/test_system.zig`, un sistema propio de prueba. `zig build test-rules-wasm`
-  prueba el `.wasm` y el `rules.ts` desde Node (fuera de `zig build test`).
+  tests usan `test/test_system.zig`, un sistema propio de prueba. `test-rules-wasm` prueba
+  el `.wasm` y el `rules.ts` desde Node (fuera de `test`).
 
 ## Decisiones de diseño
 

@@ -1,0 +1,27 @@
+# The instance stack: docker-compose.yml with this file on top, as its own
+# compose project named after the system (zigma-<name>, from SYSTEM_NAME in
+# .env), to run a system with its seed rows and browse its frontend:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.instance.yml ...
+#
+# `zig build up -Dsystem=... [-Dseed=...]` brings it up and resets its
+# database; `zig build down -Dsystem=...` stops it. The project name keeps
+# its containers, network and volume apart from the test stack's; only the
+# fixed container name and the published ports would collide, so they are
+# replaced here (`!override`: a plain list would be appended to the base
+# file's).
+name: zigma-${SYSTEM_NAME}
+
+services:
+  postgres:
+    container_name: zigma_${SYSTEM_NAME}_instance_postgres
+    ports: !override
+      - "5433:5432"
+
+  backend:
+    ports: !override
+      - "3001:3000"
+
+  frontend:
+    ports: !override
+      - "8081:80"

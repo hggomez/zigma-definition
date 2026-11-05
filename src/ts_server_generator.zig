@@ -527,7 +527,7 @@ fn ServerHolder(comptime type_defs: anytype, comptime entity_defs: anytype) type
     };
 }
 
-/// The HTTP server of the given entities (`.{ .periodos = aida.periodos }`),
+/// The HTTP server of the given entities (`.{ .entity = system.entity }`),
 /// over the system's `type_defs`: for every entity a GET route (the list, and
 /// one row by its pk), a DELETE and a POST route, and a PUT route when some
 /// field is outside the pk; in declaration order.
