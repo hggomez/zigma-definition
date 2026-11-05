@@ -6,7 +6,8 @@
 //! The test seeds rows straight into Postgres (psql inside the postgres
 //! container) with the marker "e2e-test" (a clase whose `orden` is 2^53 + 1,
 //! another one without `fecha`, a mesa, with a struct in its pk, and two
-//! periodos without children for the deletes), runs the Playwright suite with
+//! periodos without children for the deletes; and, with the marker
+//! "edit-e2e", a clase to edit), runs the Playwright suite with
 //! `docker compose run --rm e2e`, and removes the rows afterwards.
 //!
 //! Run with `zig build --build-file test/build.zig test-e2e`, which regenerates dml.ts,
@@ -36,11 +37,11 @@ fn psql(sql: []const u8) !void {
 
 // Every row the test writes, keyed by the same value; removed child-first.
 const cleanup =
-    \\DELETE FROM clases WHERE periodo = 'e2e-test';
+    \\DELETE FROM clases WHERE periodo IN ('e2e-test', 'edit-e2e');
     \\DELETE FROM mesas WHERE periodo = 'e2e-test';
-    \\DELETE FROM cursos WHERE periodo = 'e2e-test';
-    \\DELETE FROM materias WHERE materia = 'e2e-test';
-    \\DELETE FROM periodos WHERE periodo IN ('e2e-test', 'e2e-test-cancel', 'e2e-test-delete', 'e2e-test-create', 'e2e-test-never');
+    \\DELETE FROM cursos WHERE periodo IN ('e2e-test', 'edit-e2e');
+    \\DELETE FROM materias WHERE materia IN ('e2e-test', 'edit-e2e');
+    \\DELETE FROM periodos WHERE periodo IN ('e2e-test', 'e2e-test-cancel', 'e2e-test-delete', 'e2e-test-create', 'e2e-test-never', 'edit-e2e');
 ;
 
 const seed =
@@ -51,6 +52,10 @@ const seed =
     \\  ('e2e-test', 'e2e-test', 9007199254740993, ROW(2026, 3, 14), NULL),
     \\  ('e2e-test', 'e2e-test', 1, NULL, 'sin fecha');
     \\INSERT INTO mesas (periodo, materia, fecha) VALUES ('e2e-test', 'e2e-test', ROW(2026, 3, 14));
+    \\INSERT INTO periodos (periodo) VALUES ('edit-e2e');
+    \\INSERT INTO materias (materia, denominacion) VALUES ('edit-e2e', 'edit-e2e');
+    \\INSERT INTO cursos (periodo, materia) VALUES ('edit-e2e', 'edit-e2e');
+    \\INSERT INTO clases (periodo, materia, orden, fecha, tema) VALUES ('edit-e2e', 'edit-e2e', 9007199254740999, ROW(2026, 3, 14), 'antes');
 ;
 
 test "the generated frontend, in a headless browser, navigates and lists the aida entities" {

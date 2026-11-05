@@ -13,7 +13,10 @@
 //! (an on-page confirmation, then back to the list; a generic error when the
 //! API refuses), or a not-found message. The list links to /<entity>/new, a
 //! form built from a descriptor per field (its kind of input, and whether an
-//! empty value is null), which posts the row and goes back to the list. Each value is shown as the JSON response has it, every number
+//! empty value is null), which posts the row and goes back to the list. The
+//! row's page of an entity with some field outside the pk links to
+//! /<entity>/edit?<pk>: the same form, filled with the row, the pk shown but
+//! not editable, which puts the other fields and goes back to the list. Each value is shown as the JSON response has it, every number
 //! kept as its exact text (a bigint is never rounded through a JS number);
 //! null is empty, a struct its fields in order joined with "-" (`fecha` shows
 //! as 2026-3-14).
@@ -92,7 +95,7 @@ test "entityHtml: the frame with its own entity current, a table with a column p
         \\entityPage("materias", [
         \\  ["materia", (row) => cell(row.materia)],
         \\  ["denominación", (row) => cell(row.denominacion)],
-        \\], (row) => ({ "materia": row.materia }));
+        \\], (row) => ({ "materia": row.materia }), true);
         \\</script>
         \\</body>
         \\</html>
@@ -116,14 +119,21 @@ test "entityHtml: a bigint is a value like any other, in a cell and in the pk; a
         \\  ["orden", (row) => cell(row.orden)],
         \\  ["fecha", (row) => struct(row.fecha, ["año", "mes", "día"])],
         \\  ["tema", (row) => cell(row.tema)],
-        \\], (row) => ({ "periodo": row.periodo, "materia": row.materia, "orden": row.orden }));
+        \\], (row) => ({ "periodo": row.periodo, "materia": row.materia, "orden": row.orden }), true);
+    ) != null);
+}
+
+test "entityHtml: an entity that is all pk has nothing to edit" {
+    const page = fe.entityHtml("aida", aida.type_defs, aida.entity_defs, "periodos");
+    try std.testing.expect(std.mem.indexOf(u8, page,
+        \\], (row) => ({ "periodo": row.periodo }), false);
     ) != null);
 }
 
 test "entityHtml: a struct in the pk is one query-string parameter per field, like the API's" {
     const page = fe.entityHtml("aida", aida.type_defs, aida.entity_defs, "mesas");
     try std.testing.expect(std.mem.indexOf(u8, page,
-        \\], (row) => ({ "periodo": row.periodo, "materia": row.materia, "fecha.año": row.fecha["año"], "fecha.mes": row.fecha["mes"], "fecha.día": row.fecha["día"] }));
+        \\], (row) => ({ "periodo": row.periodo, "materia": row.materia, "fecha.año": row.fecha["año"], "fecha.mes": row.fecha["mes"], "fecha.día": row.fecha["día"] }), true);
     ) != null);
 }
 
@@ -139,7 +149,7 @@ test "common_js: the entity page is the list without a query string, and the row
             return std.mem.indexOf(u8, fe.common_js, text) != null;
         }
     }.has;
-    try std.testing.expect(has("export async function entityPage(entity, columns, pk) {"));
+    try std.testing.expect(has("export async function entityPage(entity, columns, pk, editable) {"));
     // the row: the same query string, asked to the API
     try std.testing.expect(has("`/api/${entity}${location.search}`"));
     // the list: the first cell of each row links to the row's page
@@ -249,6 +259,73 @@ test "common_js: the new-row page builds its form from the descriptors, posts th
     // back to the list; anything but a 201, a generic error
     try std.testing.expect(has("location.assign(`/${entity}`)"));
     try std.testing.expect(has("\"The row could not be created.\""));
+}
+
+test "editHtml: the frame with its own entity current, an empty form and the page's script: a descriptor per field and the pk's fields" {
+    try expectEqualStrings(
+        \\<!doctype html>
+        \\<html>
+        \\<head>
+        \\<meta charset="utf-8">
+        \\<meta name="viewport" content="width=device-width, initial-scale=1">
+        \\<title>materias</title>
+        \\<link rel="stylesheet" href="/common.css">
+        \\</head>
+        \\<body>
+        \\<header><a class="home" href="/">aida</a></header>
+        \\<nav>
+        \\<ul>
+        \\<li><a href="/periodos">periodos</a></li>
+        \\<li><a href="/materias" aria-current="page">materias</a></li>
+        \\</ul>
+        \\</nav>
+        \\<main>
+        \\<h1>materias</h1>
+        \\<form></form>
+        \\</main>
+        \\<script type="module">
+        \\import { editPage } from "/common.js";
+        \\editPage("materias", [
+        \\  { name: "materia", label: "materia", kind: "text", nullable: false },
+        \\  { name: "denominacion", label: "denominación", kind: "text", nullable: false },
+        \\], ["materia"]);
+        \\</script>
+        \\</body>
+        \\</html>
+        \\
+    , fe.editHtml("aida", aida.type_defs, two_entities, "materias"));
+}
+
+test "editHtml: a composite pk, a struct and a nullable field, with the same descriptors as the new-row page" {
+    const page = fe.editHtml("aida", aida.type_defs, aida.entity_defs, "clases");
+    try std.testing.expect(std.mem.indexOf(u8, page,
+        \\editPage("clases", [
+        \\  { name: "periodo", label: "periodo", kind: "text", nullable: false },
+        \\  { name: "materia", label: "materia", kind: "text", nullable: false },
+        \\  { name: "orden", label: "orden", kind: "integer", nullable: false },
+        \\  { name: "fecha", label: "fecha", kind: { "año": "integer", "mes": "integer", "día": "integer" }, nullable: true },
+        \\  { name: "tema", label: "tema", kind: "text", nullable: true },
+        \\], ["periodo", "materia", "orden"]);
+    ) != null);
+}
+
+test "common_js: the row's page links to the edit page; the edit page fills the form with the row, puts the fields outside the pk and goes back to the list" {
+    const has = struct {
+        fn has(text: []const u8) bool {
+            return std.mem.indexOf(u8, fe.common_js, text) != null;
+        }
+    }.has;
+    try std.testing.expect(has("export async function entityPage(entity, columns, pk, editable) {"));
+    // the Edit link, with the row's query string
+    try std.testing.expect(has("\"Edit\""));
+    try std.testing.expect(has("`/${entity}/edit${location.search}`"));
+    try std.testing.expect(has("export async function editPage(entity, fields, pk) {"));
+    // the pk shown but not editable
+    try std.testing.expect(has(".disabled = true"));
+    try std.testing.expect(has("\"Save\""));
+    try std.testing.expect(has("{ method: \"PUT\""));
+    // anything but a 204: a generic error
+    try std.testing.expect(has("\"The row could not be updated.\""));
 }
 
 test "common_css: the admin panel, a sidebar grid with the current entity highlighted and empty cells shown as a dash" {

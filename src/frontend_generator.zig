@@ -1,22 +1,27 @@
 //! Frontend generation: plain HTML + JS (no framework, no build step), from
-//! the system's entities, like server.ts. Two pages per entity, their URLs
-//! mirroring the API (/<entity> and /<entity>/new), an index of the
-//! entities, and a fixed `common_js` the pages share.
+//! the system's entities, like server.ts. Up to three pages per entity, their
+//! URLs mirroring the API (/<entity>, /<entity>/new and /<entity>/edit), an
+//! index of the entities, and a fixed `common_js` the pages share.
 //!
-//! The pages navigate, list, show one row, delete it and create one.
+//! The pages navigate, list, show one row, delete it, create one and edit it.
 //! * Like the API, an entity page without a query string is the list
 //!   (/docentes shows what GET /api/docentes returns): a table with a column
 //!   per field, its header the field's label (from the FieldInfo), the first
 //!   cell of each row linking to the row's page, and a New link.
 //! * With the query string of a pk (/clases?periodo=…&…, a struct one
-//!   parameter per field) it is that row: its fields as label/value pairs and
-//!   a Delete button, which asks for confirmation on the page and, confirmed,
+//!   parameter per field) it is that row: its fields as label/value pairs, an
+//!   Edit link (when the entity has some field outside the pk) and a Delete
+//!   button, which asks for confirmation on the page and, confirmed,
 //!   deletes the row through the API and goes back to the list (any answer but
 //!   a 204 is a generic error); or a not-found message.
 //! * /<entity>/new is a form with an input per field (a checkbox for a
 //!   boolean, an input per part for a struct): Create posts the row and goes
 //!   back to the list (any answer but a 201 is a generic error, the form keeps
 //!   what was typed); an empty nullable field (outside the pk) is null.
+//! * /<entity>/edit?<pk> is the same form filled with that row, the pk shown
+//!   but not editable: Save puts the fields outside the pk and goes back to
+//!   the list (any answer but a 204 is a generic error); Cancel goes back to
+//!   the row's page; a pk with no row is a not-found message.
 //!
 //! Each value is shown as the JSON response has it, every number kept as its
 //! exact text (a bigint is never rounded through a JS number, nor sent
@@ -33,8 +38,8 @@ const zig_type_map_ts = @import("zig_type_map_ts");
 const tsTypeOf = zig_type_map_ts.tsTypeOf;
 
 /// The code every page shares: reading the API, drawing the list of an
-/// entity and the page of one of its rows, deleting it, and the form that
-/// creates one.
+/// entity and the page of one of its rows, deleting it, and the forms that
+/// create and edit one.
 pub const common_js =
     \\// Shared code of the generated pages: reading the API, drawing the list of
     \\// an entity and the page of one of its rows.
@@ -65,10 +70,11 @@ pub const common_js =
     \\// The page of an entity, like the API: without a query string, the list of
     \\// its rows; with the query string of a pk, the row of that pk. `columns` has
     \\// a [label, text of the value] per field; `pk` gives the query-string
-    \\// parameters of a row's pk.
-    \\export async function entityPage(entity, columns, pk) {
+    \\// parameters of a row's pk; `editable`, whether the row's page links to the
+    \\// edit page (the entity has some field outside the pk).
+    \\export async function entityPage(entity, columns, pk, editable) {
     \\  if (location.search === "") return list(entity, columns, pk);
-    \\  return show(entity, columns);
+    \\  return show(entity, columns, editable);
     \\}
     \\
     \\// Fills the table with the rows, a cell per column; the first cell of each
@@ -95,8 +101,9 @@ pub const common_js =
     \\}
     \\
     \\// Replaces the table with the row of the page's query string, its fields
-    \\// as label/value pairs, or with a message when no row has that pk.
-    \\async function show(entity, columns) {
+    \\// as label/value pairs, the Edit link and the delete, or with a message
+    \\// when no row has that pk.
+    \\async function show(entity, columns, editable) {
     \\  const table = document.querySelector("table");
     \\  const res = await fetch(`/api/${entity}${location.search}`);
     \\  if (res.status === 404) {
@@ -117,7 +124,15 @@ pub const common_js =
     \\  }
     \\  table.replaceWith(dl);
     \\  document.querySelector("a.new").remove();
-    \\  dl.after(deleteControls(entity));
+    \\  const controls = deleteControls(entity);
+    \\  if (editable) {
+    \\    const edit = document.createElement("a");
+    \\    edit.className = "edit";
+    \\    edit.href = `/${entity}/edit${location.search}`;
+    \\    edit.textContent = "Edit";
+    \\    controls.prepend(edit);
+    \\  }
+    \\  dl.after(controls);
     \\}
     \\
     \\// A button that does not submit anything.
@@ -169,45 +184,88 @@ pub const common_js =
     \\  return box;
     \\}
     \\
-    \\// The page that creates a row: a form with an input per field. Create posts
-    \\// the row as JSON and goes back to the list; any answer but a 201 is a
-    \\// generic error, and the form keeps what was typed. Cancel goes back to the
-    \\// list. `fields` has a { name, label, kind, nullable } per field.
-    \\export async function createPage(entity, fields) {
-    \\  const form = document.querySelector("form");
-    \\  const readers = fields.map((field) => fieldInput(form, field));
-    \\  const create = button("Create", "primary");
-    \\  create.type = "submit";
+    \\// The submit and Cancel of a form page, and its error: on submit, `send`
+    \\// gives the answer's status (it may throw, as an invalid integer does); the
+    \\// status `ok` goes back to the list, anything else shows `failure` and the
+    \\// form keeps what was typed.
+    \\function formActions(form, entity, submitText, cancelHref, ok, failure, send) {
+    \\  const submit = button(submitText, "primary");
+    \\  submit.type = "submit";
     \\  const cancel = document.createElement("a");
     \\  cancel.className = "cancel";
-    \\  cancel.href = `/${entity}`;
+    \\  cancel.href = cancelHref;
     \\  cancel.textContent = "Cancel";
     \\  const error = document.createElement("p");
     \\  error.className = "error";
     \\  const actions = document.createElement("div");
     \\  actions.className = "actions";
-    \\  actions.append(create, cancel, error);
+    \\  actions.append(submit, cancel, error);
     \\  form.append(actions);
     \\  form.addEventListener("submit", async (event) => {
     \\    event.preventDefault();
     \\    error.textContent = "";
     \\    let status = 0;
     \\    try {
-    \\      const row = {};
-    \\      fields.forEach((field, i) => {
-    \\        row[field.name] = readers[i]();
-    \\      });
-    \\      const body = JSON.stringify(row);
-    \\      status = (await fetch(`/api/${entity}`, { method: "POST", headers: { "content-type": "application/json" }, body })).status;
+    \\      status = await send();
     \\    } catch {}
-    \\    if (status === 201) return location.assign(`/${entity}`);
-    \\    error.textContent = "The row could not be created.";
+    \\    if (status === ok) return location.assign(`/${entity}`);
+    \\    error.textContent = failure;
     \\  });
     \\}
     \\
-    \\// The input of a field, appended to `parent`, and the reader of its value
-    \\// for the JSON: a struct is a fieldset with an input per part; an empty
-    \\// value (a struct with every part empty) is null when the field is nullable.
+    \\// The JSON body of some fields of a form: each one's value by its input.
+    \\function body(fields, inputs) {
+    \\  const row = {};
+    \\  fields.forEach((field, i) => {
+    \\    row[field.name] = inputs[i].read();
+    \\  });
+    \\  return JSON.stringify(row);
+    \\}
+    \\
+    \\// The page that creates a row: a form with an input per field. Create posts
+    \\// the row as JSON and goes back to the list; any answer but a 201 is a
+    \\// generic error, and the form keeps what was typed. Cancel goes back to the
+    \\// list. `fields` has a { name, label, kind, nullable } per field.
+    \\export async function createPage(entity, fields) {
+    \\  const form = document.querySelector("form");
+    \\  const inputs = fields.map((field) => fieldInput(form, field));
+    \\  formActions(form, entity, "Create", `/${entity}`, 201, "The row could not be created.", async () =>
+    \\    (await fetch(`/api/${entity}`, { method: "POST", headers: { "content-type": "application/json" }, body: body(fields, inputs) })).status);
+    \\}
+    \\
+    \\// The page that edits the row of its query string: the form filled with the
+    \\// row, the fields of `pk` shown but not editable. Save puts the fields
+    \\// outside the pk (the full row: an emptied nullable field is null) and goes
+    \\// back to the list; any answer but a 204 is a generic error, and the form
+    \\// keeps what was typed. Cancel goes back to the row's page. A pk with no row
+    \\// is a message instead of the form.
+    \\export async function editPage(entity, fields, pk) {
+    \\  const form = document.querySelector("form");
+    \\  const res = await fetch(`/api/${entity}${location.search}`);
+    \\  if (res.status === 404) {
+    \\    const p = document.createElement("p");
+    \\    p.textContent = "No row with that pk.";
+    \\    form.replaceWith(p);
+    \\    return;
+    \\  }
+    \\  if (!res.ok) throw new Error(`/api/${entity}${location.search}: ${res.status}`);
+    \\  const row = await readJson(res);
+    \\  const inputs = fields.map((field) => fieldInput(form, field));
+    \\  fields.forEach((field, i) => {
+    \\    inputs[i].set(row[field.name]);
+    \\    if (pk.includes(field.name)) inputs[i].disable();
+    \\  });
+    \\  const others = fields.filter((field) => !pk.includes(field.name));
+    \\  const otherInputs = inputs.filter((input, i) => !pk.includes(fields[i].name));
+    \\  formActions(form, entity, "Save", `/${entity}${location.search}`, 204, "The row could not be updated.", async () =>
+    \\    (await fetch(`/api/${entity}${location.search}`, { method: "PUT", headers: { "content-type": "application/json" }, body: body(others, otherInputs) })).status);
+    \\}
+    \\
+    \\// The input of a field, appended to `parent`: its value for the JSON
+    \\// (`read`), filling it with a value of a row (`set`, null empty) and
+    \\// making it not editable (`disable`). A struct is a fieldset with an input
+    \\// per part; an empty value (a struct with every part empty) is null when
+    \\// the field is nullable.
     \\function fieldInput(parent, field) {
     \\  if (typeof field.kind === "object") {
     \\    const fieldset = document.createElement("fieldset");
@@ -216,18 +274,32 @@ pub const common_js =
     \\    fieldset.append(legend);
     \\    const parts = Object.entries(field.kind).map(([name, kind]) => [name, labeledInput(fieldset, name, kind)]);
     \\    parent.append(fieldset);
-    \\    return () => {
-    \\      if (field.nullable && parts.every(([, part]) => part.empty())) return null;
-    \\      return Object.fromEntries(parts.map(([name, part]) => [name, part.value()]));
+    \\    return {
+    \\      read: () => {
+    \\        if (field.nullable && parts.every(([, part]) => part.empty())) return null;
+    \\        return Object.fromEntries(parts.map(([name, part]) => [name, part.value()]));
+    \\      },
+    \\      set: (value) => {
+    \\        for (const [name, part] of parts) part.set(value === null ? null : value[name]);
+    \\      },
+    \\      disable: () => {
+    \\        for (const [, part] of parts) part.disable();
+    \\      },
     \\    };
     \\  }
     \\  const one = labeledInput(parent, field.label, field.kind);
-    \\  return () => (field.nullable && one.empty() ? null : one.value());
+    \\  return {
+    \\    read: () => (field.nullable && one.empty() ? null : one.value()),
+    \\    set: one.set,
+    \\    disable: one.disable,
+    \\  };
     \\}
     \\
     \\// A labeled input of a value of `kind` ("text", "integer" or "boolean", a
-    \\// checkbox): whether it is empty, and its value for the JSON, an integer as
-    \\// an exact JSON number (JSON.rawJSON throws when the text is not one).
+    \\// checkbox): whether it is empty, its value for the JSON (an integer as an
+    \\// exact JSON number: JSON.rawJSON throws when the text is not one), filling
+    \\// it with a value (null empty; a number is already its exact text) and
+    \\// making it not editable.
     \\function labeledInput(parent, text, kind) {
     \\  const label = document.createElement("label");
     \\  label.textContent = text;
@@ -238,6 +310,13 @@ pub const common_js =
     \\  return {
     \\    empty: () => kind !== "boolean" && input.value === "",
     \\    value: () => (kind === "boolean" ? input.checked : kind === "integer" ? JSON.rawJSON(input.value.trim()) : input.value),
+    \\    set: (value) => {
+    \\      if (kind === "boolean") input.checked = value === true;
+    \\      else input.value = value === null ? "" : String(value);
+    \\    },
+    \\    disable: () => {
+    \\      input.disabled = true;
+    \\    },
     \\  };
     \\}
     \\
@@ -284,10 +363,13 @@ pub const common_css =
     \\a.new { display: inline-block; margin-bottom: 14px; padding: 7px 16px; border-radius: 7px; background: #1e40af; color: #fff; text-decoration: none; }
     \\a.new:hover { background: #1e3a8a; }
     \\a.cancel { color: #475569; }
+    \\a.edit { padding: 7px 16px; border-radius: 7px; border: 1px solid #1e40af; color: #1e40af; text-decoration: none; }
+    \\a.edit:hover { background: #eff6ff; }
     \\form { display: grid; gap: 14px; max-width: 560px; padding: 20px; background: #fff; border-radius: 12px; box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 4px 16px rgba(15, 23, 42, .06); }
     \\label { display: grid; gap: 4px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
     \\input { font: inherit; font-size: 14px; text-transform: none; letter-spacing: normal; color: #1e293b; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 7px; }
     \\input[type="checkbox"] { justify-self: start; }
+    \\input:disabled { background: #f1f5f9; color: #64748b; }
     \\fieldset { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px; margin: 0; padding: 12px; border: 1px solid #e2e8f0; border-radius: 9px; }
     \\legend { padding: 0 6px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
     \\@media (max-width: 640px) {
@@ -404,7 +486,8 @@ fn EntityHolder(comptime system_name: []const u8, comptime type_defs: anytype, c
                 "<tbody></tbody>\n" ++
                 "</table>\n", "<script type=\"module\">\n" ++
                 "import { entityPage, cell, struct } from \"/common.js\";\n" ++
-                "entityPage(\"" ++ entity_name ++ "\", [\n" ++ columns ++ "], " ++ pkParams(type_defs, entity) ++ ");\n" ++
+                "entityPage(\"" ++ entity_name ++ "\", [\n" ++ columns ++ "], " ++ pkParams(type_defs, entity) ++ ", " ++
+                (if (hasFieldsOutsidePk(entity)) "true" else "false") ++ ");\n" ++
                 "</script>\n");
         };
     };
@@ -436,26 +519,58 @@ fn kindText(comptime t: zig_type_map_ts.TsType) []const u8 {
     };
 }
 
+fn inPk(comptime entity: anytype, comptime field_name: []const u8) bool {
+    for (entity.pk) |pk_field| {
+        if (std.mem.eql(u8, pk_field, field_name)) return true;
+    }
+    return false;
+}
+
+/// Whether the entity (completed) has some field outside the pk: an all-pk
+/// entity has nothing to update.
+fn hasFieldsOutsidePk(comptime entity: anytype) bool {
+    for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
+        if (!inPk(entity, field_name)) return true;
+    }
+    return false;
+}
+
+/// Whether the row's page of `entity_name` links to an edit page (and so
+/// whether <entity>/edit.html is generated): the entity has some field
+/// outside the pk.
+pub fn editable(comptime entity_defs: anytype, comptime entity_name: []const u8) bool {
+    @setEvalBranchQuota(100000);
+    return hasFieldsOutsidePk(zigma.completeEntity(@field(entity_defs, entity_name)));
+}
+
+/// The JS descriptor of each field of a form page, one per line: its name,
+/// label, kind of input and whether an empty value is null (a nullable field
+/// outside the pk).
+fn fieldDescriptors(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
+    var fields: []const u8 = "";
+    for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
+        const field = @field(entity.fields, field_name);
+        fields = fields ++ "  { name: \"" ++ field_name ++ "\", label: \"" ++ field.label ++
+            "\", kind: " ++ kindText(tsTypeOf(@field(type_defs, field.type).Type)) ++
+            ", nullable: " ++ (if (field.nullable and !inPk(entity, field_name)) "true" else "false") ++ " },\n";
+    }
+    return fields;
+}
+
+/// A form page of an entity: the frame (its own entity current), an empty
+/// form, and `script` after main.
+fn formPage(comptime system_name: []const u8, comptime entity_defs: anytype, comptime entity_name: []const u8, comptime script: []const u8) []const u8 {
+    return page(system_name, entity_defs, entity_name, entity_name, "<h1>" ++ entity_name ++ "</h1>\n" ++
+        "<form></form>\n", "<script type=\"module\">\n" ++ script ++ "</script>\n");
+}
+
 fn NewHolder(comptime system_name: []const u8, comptime type_defs: anytype, comptime entity_defs: anytype, comptime entity_name: []const u8) type {
     return struct {
         const text: []const u8 = blk: {
             @setEvalBranchQuota(100000);
             const entity = zigma.completeEntity(@field(entity_defs, entity_name));
-            var fields: []const u8 = "";
-            for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
-                const field = @field(entity.fields, field_name);
-                const in_pk = for (entity.pk) |pk_field| {
-                    if (std.mem.eql(u8, pk_field, field_name)) break true;
-                } else false;
-                fields = fields ++ "  { name: \"" ++ field_name ++ "\", label: \"" ++ field.label ++
-                    "\", kind: " ++ kindText(tsTypeOf(@field(type_defs, field.type).Type)) ++
-                    ", nullable: " ++ (if (field.nullable and !in_pk) "true" else "false") ++ " },\n";
-            }
-            break :blk page(system_name, entity_defs, entity_name, entity_name, "<h1>" ++ entity_name ++ "</h1>\n" ++
-                "<form></form>\n", "<script type=\"module\">\n" ++
-                "import { createPage } from \"/common.js\";\n" ++
-                "createPage(\"" ++ entity_name ++ "\", [\n" ++ fields ++ "]);\n" ++
-                "</script>\n");
+            break :blk formPage(system_name, entity_defs, entity_name, "import { createPage } from \"/common.js\";\n" ++
+                "createPage(\"" ++ entity_name ++ "\", [\n" ++ fieldDescriptors(type_defs, entity) ++ "]);\n");
         };
     };
 }
@@ -466,4 +581,27 @@ fn NewHolder(comptime system_name: []const u8, comptime type_defs: anytype, comp
 /// (a nullable field outside the pk).
 pub fn newHtml(comptime system_name: []const u8, comptime type_defs: anytype, comptime entity_defs: anytype, comptime entity_name: []const u8) []const u8 {
     return NewHolder(system_name, type_defs, entity_defs, entity_name).text;
+}
+
+fn EditHolder(comptime system_name: []const u8, comptime type_defs: anytype, comptime entity_defs: anytype, comptime entity_name: []const u8) type {
+    return struct {
+        const text: []const u8 = blk: {
+            @setEvalBranchQuota(100000);
+            const entity = zigma.completeEntity(@field(entity_defs, entity_name));
+            var pk: []const u8 = "";
+            for (entity.pk, 0..) |pk_field, i| pk = pk ++ (if (i > 0) ", " else "") ++ "\"" ++ pk_field ++ "\"";
+            break :blk formPage(system_name, entity_defs, entity_name, "import { editPage } from \"/common.js\";\n" ++
+                "editPage(\"" ++ entity_name ++ "\", [\n" ++ fieldDescriptors(type_defs, entity) ++ "], [" ++ pk ++ "]);\n");
+        };
+    };
+}
+
+/// <entity>/edit.html, for an entity with some field outside the pk (see
+/// `editable`): the frame, an empty form and the script that gives
+/// common.js's `editPage` the descriptor of each field (the same as the
+/// new-row page's) and the names of the pk's fields, which are shown but not
+/// editable. The row is the one of the page's query string, like the row's
+/// page.
+pub fn editHtml(comptime system_name: []const u8, comptime type_defs: anytype, comptime entity_defs: anytype, comptime entity_name: []const u8) []const u8 {
+    return EditHolder(system_name, type_defs, entity_defs, entity_name).text;
 }

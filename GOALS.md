@@ -75,15 +75,16 @@ no solo pasando tests.
 
 * Generado por `src/frontend_generator.zig`: HTML + JS planos, sin framework ni paso de
   build, servidos por nginx, que hace proxy de `/api/` al backend (mismo origen: sin CORS).
-* Dos páginas por entidad, sus URLs espejan las de la API (`/<entidad>` y
-  `/<entidad>/new`), más un índice. Las páginas navegan, listan, muestran una fila, la
-  borran y crean una:
+* Hasta tres páginas por entidad, sus URLs espejan las de la API (`/<entidad>`,
+  `/<entidad>/new` y `/<entidad>/edit`), más un índice. Las páginas navegan, listan,
+  muestran una fila, la borran, crean una y la modifican:
   * sin query string, la lista (`/docentes` muestra lo que da `GET /api/docentes`): una
     tabla con una columna por campo (encabezado: su label), la primera celda de cada fila es
     el link a la página de la fila, y un link `New`;
   * con el query string de una pk (`/clases?periodo=…&materia=…&orden=…`; un struct, un
-    parámetro por campo), esa fila: sus campos como pares label/valor (`dl`) y un botón
-    `Delete`, o `No row with that pk.` si no hay fila;
+    parámetro por campo), esa fila: sus campos como pares label/valor (`dl`), un link
+    `Edit` (si la entidad tiene algún campo fuera de la pk) y un botón `Delete`, o
+    `No row with that pk.` si no hay fila;
   * `Delete` pide confirmación en la página (`Delete this row?`, `Yes, delete` / `Cancel`,
     sin diálogo nativo); confirmado, `DELETE /api/<entidad>?<pk>` y vuelve a la lista. Ante
     cualquier respuesta que no sea 204 (por ejemplo, una fila referenciada: el 500
@@ -95,7 +96,13 @@ no solo pasando tests.
     todas sus partes están vacías); ante cualquier respuesta que no sea 201,
     `The row could not be created.` y el formulario conserva lo escrito. `Cancel` vuelve a
     la lista. Un texto no nullable vacío va como `""`; un checkbox siempre es
-    `true`/`false`; una fk es un input de texto.
+    `true`/`false`; una fk es un input de texto;
+  * `/<entidad>/edit?<pk>` (un `<entidad>/edit.html` generado solo para las entidades con
+    algún campo fuera de la pk): el mismo formulario lleno con la fila, la pk visible pero
+    no editable. `Save` hace el `PUT` de los campos fuera de la pk (la fila completa: un
+    nullable vaciado va `null`) y vuelve a la lista; ante cualquier respuesta que no sea
+    204, `The row could not be updated.` y el formulario conserva lo escrito. `Cancel`
+    vuelve a la página de la fila; una pk sin fila, `No row with that pk.`
   * Cada número como su texto exacto, `null` vacío (se ve "—"), un struct como sus campos
     unidos con `-`.
 * Estilo admin panel: header con el nombre del sistema (link al índice), nav lateral con
@@ -165,9 +172,18 @@ no solo pasando tests.
 
 ## Pendiente
 
-* **Frontend**: modificación con formulario (próximo paso). Qué
-  muestra la página de una fila ante un query string que no es una pk (el 400 de la API).
-  Una visualización propia para fechas, ligada a un tipo fecha del framework sobre `DATE`.
+* **Frontend**, tareas futuras (cada una a acordar antes de programarla):
+  1. **Un query string que no es una pk** en la página de una fila o en la de edición (el
+     400 de la API: un parámetro de más, uno repetido, uno de la pk que falta, un valor
+     fuera de su tipo): qué muestra la página. Hoy no está definido.
+  2. **Errores que nombran el campo** en los formularios de alta y modificación: hoy el
+     mensaje es genérico (`The row could not be created.` / `updated.`); la API ya nombra el
+     campo en su 400 (`field 'fecha.mes' must be an integer in 0..255`).
+  3. **Una fk como lista de los valores posibles** (las filas de la entidad destino), no un
+     input de texto libre.
+  4. **Una visualización propia para fechas**, ligada a un tipo fecha del framework sobre
+     `DATE` (hoy un struct `fecha` se ve como sus campos unidos con `-`, y se carga parte por
+     parte).
 * **Errores de dominio de pk/uk/fk**: hoy una violación (pk duplicada, fila referenciada) es
   el 500 genérico; mapearlas a errores de dominio con constraints nombradas desde el SSOT.
   Referencia de un intento: commit `5fad670` en `lucas-branch-first-attempt`.

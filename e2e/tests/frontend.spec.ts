@@ -1,7 +1,7 @@
 // The generated aida frontend in a real (headless) browser: the index of the
 // entities, each entity's page drawing its rows from the API through the
-// frontend's proxy, the page of one row, which can delete it, and the page
-// that creates a row. The rows
+// frontend's proxy, the page of one row, which can delete it, and the pages
+// that create and edit a row. The rows
 // are seeded by
 // test/frontend_e2e_test.zig, which runs this suite, with the marker
 // "e2e-test".
@@ -199,6 +199,68 @@ test("Cancel on the new-row page goes back to the list without creating anything
   await page.getByRole("link", { name: "Cancel" }).click();
   await expect(page).toHaveURL(/\/periodos$/);
   expect((await request.get("/api/periodos?periodo=e2e-test-never")).status()).toBe(404);
+});
+
+const editRow = "periodo=edit-e2e&materia=edit-e2e&orden=9007199254740999";
+
+test("the row's page links to the edit page, with the same query string; an entity that is all pk has none", async ({ page, request }) => {
+  await page.goto("/clases?" + editRow);
+  await page.getByRole("link", { name: "Edit", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp("/clases/edit\\?" + editRow.replace(/[.?]/g, "\\$&") + "$"));
+  await expect(page.locator("h1")).toHaveText("clases");
+  await expect(page.locator('nav a[aria-current="page"]')).toHaveText("clases");
+  await page.goto("/periodos?periodo=e2e-test");
+  await expect(page.locator("main dl")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Edit", exact: true })).toHaveCount(0);
+  expect((await request.get("/periodos/edit")).status()).toBe(404);
+});
+
+test("the edit page: the form filled with the row, the pk shown but not editable", async ({ page }) => {
+  await page.goto("/clases/edit?" + editRow);
+  for (const [label, value] of [["periodo", "edit-e2e"], ["materia", "edit-e2e"], ["orden", "9007199254740999"]]) {
+    await expect(page.getByLabel(label, { exact: true }), label).toHaveValue(value);
+    await expect(page.getByLabel(label, { exact: true }), label).toBeDisabled();
+  }
+  for (const [label, value] of [["año", "2026"], ["mes", "3"], ["día", "14"], ["tema", "antes"]]) {
+    await expect(page.getByLabel(label, { exact: true }), label).toHaveValue(value);
+    await expect(page.getByLabel(label, { exact: true }), label).toBeEditable();
+  }
+  await expect(page.getByRole("button", { name: "Save" })).toBeVisible();
+});
+
+test("Cancel on the edit page goes back to the row's page without changing it", async ({ page, request }) => {
+  await page.goto("/clases/edit?" + editRow);
+  await page.getByLabel("tema", { exact: true }).fill("nunca");
+  await page.getByRole("link", { name: "Cancel" }).click();
+  await expect(page).toHaveURL(new RegExp("/clases\\?" + editRow.replace(/[.?]/g, "\\$&") + "$"));
+  expect(await (await request.get("/api/clases?" + editRow)).text()).toContain('"tema":"antes"');
+});
+
+test("an update the API rejects shows a generic error and stays on the form", async ({ page }) => {
+  await page.goto("/clases/edit?" + editRow);
+  // mes is a u8
+  await page.getByLabel("mes", { exact: true }).fill("300");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.locator("main")).toContainText("The row could not be updated.");
+  await expect(page).toHaveURL(new RegExp("/clases/edit\\?" + editRow.replace(/[.?]/g, "\\$&") + "$"));
+  await expect(page.getByLabel("mes", { exact: true })).toHaveValue("300");
+});
+
+test("saving puts the fields outside the pk and goes back to the list; an emptied nullable field is null", async ({ page, request }) => {
+  await page.goto("/clases/edit?" + editRow);
+  await page.getByLabel("tema", { exact: true }).fill("después");
+  for (const label of ["año", "mes", "día"]) await page.getByLabel(label, { exact: true }).fill("");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page).toHaveURL(/\/clases$/);
+  // the response's text: the bigint pk exact, the emptied struct null
+  expect(await (await request.get("/api/clases?" + editRow)).text())
+    .toBe('{"periodo":"edit-e2e","materia":"edit-e2e","orden":9007199254740999,"fecha":null,"tema":"después"}');
+});
+
+test("the edit page of a pk with no row shows a not-found message", async ({ page }) => {
+  await page.goto("/clases/edit?periodo=no-existe&materia=no-existe&orden=1");
+  await expect(page.locator("main")).toContainText("No row with that pk.");
+  await expect(page.locator("main form")).toHaveCount(0);
 });
 
 test("every page links the shared stylesheet, and it is served as CSS", async ({ page, request }) => {
