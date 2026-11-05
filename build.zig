@@ -155,7 +155,7 @@ pub fn build(b: *std.Build) void {
 
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("test/aida_test.zig"),
+            .root_source_file = b.path("test/zigma_test.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -179,19 +179,6 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_sql_generator_tests = b.addRunArtifact(sql_generator_tests);
-
-    const sql_generator_aida_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/sql_generator_aida_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "aida", .module = aida_mod },
-                .{ .name = "sql_generator", .module = sql_generator_mod },
-            },
-        }),
-    });
-    const run_sql_generator_aida_tests = b.addRunArtifact(sql_generator_aida_tests);
 
     const ts_backend_generator_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -642,7 +629,6 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests (runtime and expected compile errors)");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_sql_generator_tests.step);
-    test_step.dependOn(&run_sql_generator_aida_tests.step);
     test_step.dependOn(&run_ts_backend_generator_tests.step);
     test_step.dependOn(&run_zig_type_map_ts_tests.step);
     test_step.dependOn(&run_zig_type_map_sql_tests.step);

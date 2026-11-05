@@ -126,7 +126,7 @@ de otras:
 * `docentes` tiene una fk reflexiva (`jefe` → `docente`, el jefe de cátedra es otro docente),
   y `mesas` tiene dos fks distintas a `docentes` (`presidente` y `vocal`).
 
-Los tests en `test/aida_test.zig` importan estas definiciones y verifican, para cada tramo del
+Los tests en `test/zigma_test.zig` importan estas definiciones y verifican, para cada tramo del
 vocabulario, tanto los casos positivos (en runtime y con `comptime std.debug.assert`) como los
 rechazos esperados en compilación, que viven aparte como fragmentos en `test/compile_errors/`
 (el equivalente de los `// @ts-expect-error` del repo TypeScript).
@@ -136,7 +136,7 @@ rechazos esperados en compilación, que viven aparte como fragmentos en `test/co
 * `src/zigma.zig`: el framework descriptor (módulo `zigma`); no conoce ningún sistema
   concreto.
 * `examples/aida.zig`: el sistema de alumnos descripto con el framework (módulo `aida`).
-* `test/aida_test.zig`: los tests positivos.
+* `test/zigma_test.zig`: los tests positivos.
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
   error esperado listado en `build.zig`.
 * `src/rules.zig`: `defineRules` (re-exportado por `zigma`). `src/rules_wasm.zig` y
