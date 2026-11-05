@@ -4,12 +4,16 @@
 //! what GET /api/docentes returns), plus an index of the entities and a fixed
 //! common.js the pages share.
 //!
-//! The pages navigate and list (read only). Each entity page is a table: a
-//! column per field, its header the field's label (from the FieldInfo), and a
-//! cell per value as the JSON response has it, every number kept as its exact
-//! text (a bigint is never rounded through a JS number); null is an empty
-//! cell, a struct its fields in order joined with "-" (`fecha` shows as
-//! 2026-3-14).
+//! The pages navigate, list and show one row (read only). An entity page
+//! mirrors the API: without a query string it is the list, a table with a
+//! column per field (its header the field's label, from the FieldInfo), the
+//! first cell of each row linking to the row's page; with the query string of
+//! a pk (/clases?periodo=…&materia=…&orden=…, a struct one parameter per
+//! field) it is that row, its fields as label/value pairs, or a not-found
+//! message. Each value is shown as the JSON response has it, every number
+//! kept as its exact text (a bigint is never rounded through a JS number);
+//! null is empty, a struct its fields in order joined with "-" (`fecha` shows
+//! as 2026-3-14).
 //!
 //! The look is an admin panel: every page has the same frame, a header with
 //! the system's name (linking the index), a sidebar nav with every entity in
@@ -51,7 +55,7 @@ test "indexHtml: the frame (header, nav with a link per entity in declaration or
     , fe.indexHtml("aida", two_entities));
 }
 
-test "entityHtml: the frame with its own entity current, and a table with a column per field, its header the field's label, filled from the API" {
+test "entityHtml: the frame with its own entity current, a table with a column per field (its header the field's label), and the page's script: each field's label and text, and the pk of a row" {
     try expectEqualStrings(
         \\<!doctype html>
         \\<html>
@@ -79,11 +83,11 @@ test "entityHtml: the frame with its own entity current, and a table with a colu
         \\</table>
         \\</main>
         \\<script type="module">
-        \\import { list, cell, struct } from "/common.js";
-        \\list("materias", [
-        \\  (row) => cell(row.materia),
-        \\  (row) => cell(row.denominacion),
-        \\]);
+        \\import { entityPage, cell, struct } from "/common.js";
+        \\entityPage("materias", [
+        \\  ["materia", (row) => cell(row.materia)],
+        \\  ["denominación", (row) => cell(row.denominacion)],
+        \\], (row) => ({ "materia": row.materia }));
         \\</script>
         \\</body>
         \\</html>
@@ -98,16 +102,23 @@ test "entityHtml: a derived label (email_alternativo -> email alternativo)" {
     ) != null);
 }
 
-test "entityHtml: a bigint is a cell like any other value, a struct its fields joined with '-'" {
+test "entityHtml: a bigint is a value like any other, in a cell and in the pk; a struct its fields joined with '-'" {
     const page = fe.entityHtml("aida", aida.type_defs, aida.entity_defs, "clases");
     try std.testing.expect(std.mem.indexOf(u8, page,
-        \\list("clases", [
-        \\  (row) => cell(row.periodo),
-        \\  (row) => cell(row.materia),
-        \\  (row) => cell(row.orden),
-        \\  (row) => struct(row.fecha, ["año", "mes", "día"]),
-        \\  (row) => cell(row.tema),
-        \\]);
+        \\entityPage("clases", [
+        \\  ["periodo", (row) => cell(row.periodo)],
+        \\  ["materia", (row) => cell(row.materia)],
+        \\  ["orden", (row) => cell(row.orden)],
+        \\  ["fecha", (row) => struct(row.fecha, ["año", "mes", "día"])],
+        \\  ["tema", (row) => cell(row.tema)],
+        \\], (row) => ({ "periodo": row.periodo, "materia": row.materia, "orden": row.orden }));
+    ) != null);
+}
+
+test "entityHtml: a struct in the pk is one query-string parameter per field, like the API's" {
+    const page = fe.entityHtml("aida", aida.type_defs, aida.entity_defs, "mesas");
+    try std.testing.expect(std.mem.indexOf(u8, page,
+        \\], (row) => ({ "periodo": row.periodo, "materia": row.materia, "fecha.año": row.fecha["año"], "fecha.mes": row.fecha["mes"], "fecha.día": row.fecha["día"] }));
     ) != null);
 }
 
@@ -115,7 +126,21 @@ test "common_js: reads the API keeping every number as its exact text" {
     try std.testing.expect(std.mem.indexOf(u8, fe.common_js,
         \\  return JSON.parse(await res.text(), (key, value, context) => (typeof value === "number" ? context.source : value));
     ) != null);
-    try std.testing.expect(std.mem.indexOf(u8, fe.common_js, "export async function list(entity, columns) {") != null);
+}
+
+test "common_js: the entity page is the list without a query string, and the row of that pk with one, like the API" {
+    const has = struct {
+        fn has(text: []const u8) bool {
+            return std.mem.indexOf(u8, fe.common_js, text) != null;
+        }
+    }.has;
+    try std.testing.expect(has("export async function entityPage(entity, columns, pk) {"));
+    // the row: the same query string, asked to the API
+    try std.testing.expect(has("`/api/${entity}${location.search}`"));
+    // the list: the first cell of each row links to the row's page
+    try std.testing.expect(has("`?${new URLSearchParams(pk(row))}`"));
+    // a pk with no row (the API's 404)
+    try std.testing.expect(has("No row with that pk."));
 }
 
 test "common_css: the admin panel, a sidebar grid with the current entity highlighted and empty cells shown as a dash" {
@@ -129,6 +154,8 @@ test "common_css: the admin panel, a sidebar grid with the current entity highli
     try std.testing.expect(has("main { grid-column: 2; grid-row: 1 / 3;"));
     try std.testing.expect(has("nav a[aria-current=\"page\"] {"));
     try std.testing.expect(has("td:empty::after { content: \"\\2014\";"));
+    // the row's page: its label/value pairs, an empty value (null) a dash too
+    try std.testing.expect(has("dd:empty::after { content: \"\\2014\";"));
     // narrow screens: one column, the nav above the content
     try std.testing.expect(has("@media (max-width: 640px) {"));
 }

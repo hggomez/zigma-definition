@@ -5,7 +5,8 @@
 //!
 //! The test seeds rows straight into Postgres (psql inside the postgres
 //! container) with the marker "e2e-test" (a clase whose `orden` is 2^53 + 1,
-//! and another one without `fecha`), runs the Playwright suite with
+//! another one without `fecha`, and a mesa, with a struct in its pk), runs
+//! the Playwright suite with
 //! `docker compose run --rm e2e`, and removes the rows afterwards.
 //!
 //! Run with `zig build --build-file test/build.zig test-e2e`, which regenerates dml.ts,
@@ -36,6 +37,7 @@ fn psql(sql: []const u8) !void {
 // Every row the test writes, keyed by the same value; removed child-first.
 const cleanup =
     \\DELETE FROM clases WHERE periodo = 'e2e-test';
+    \\DELETE FROM mesas WHERE periodo = 'e2e-test';
     \\DELETE FROM cursos WHERE periodo = 'e2e-test';
     \\DELETE FROM materias WHERE materia = 'e2e-test';
     \\DELETE FROM periodos WHERE periodo = 'e2e-test';
@@ -48,6 +50,7 @@ const seed =
     \\INSERT INTO clases (periodo, materia, orden, fecha, tema) VALUES
     \\  ('e2e-test', 'e2e-test', 9007199254740993, ROW(2026, 3, 14), NULL),
     \\  ('e2e-test', 'e2e-test', 1, NULL, 'sin fecha');
+    \\INSERT INTO mesas (periodo, materia, fecha) VALUES ('e2e-test', 'e2e-test', ROW(2026, 3, 14));
 ;
 
 test "the generated frontend, in a headless browser, navigates and lists the aida entities" {

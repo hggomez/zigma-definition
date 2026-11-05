@@ -75,10 +75,16 @@ no solo pasando tests.
 
 * Generado por `src/frontend_generator.zig`: HTML + JS planos, sin framework ni paso de
   build, servidos por nginx, que hace proxy de `/api/` al backend (mismo origen: sin CORS).
-* Una página por entidad, su URL espeja la de la API (`/docentes` muestra lo que da
-  `GET /api/docentes`), más un índice. Las páginas navegan y listan (solo lectura): una
-  tabla con una columna por campo (encabezado: su label), cada número como su texto exacto,
-  `null` como celda vacía (se ve "—"), un struct como sus campos unidos con `-`.
+* Una página por entidad, su URL espeja la de la API, más un índice. Las páginas navegan,
+  listan y muestran una fila (solo lectura):
+  * sin query string, la lista (`/docentes` muestra lo que da `GET /api/docentes`): una
+    tabla con una columna por campo (encabezado: su label), la primera celda de cada fila es
+    el link a la página de la fila;
+  * con el query string de una pk (`/clases?periodo=…&materia=…&orden=…`; un struct, un
+    parámetro por campo), esa fila: sus campos como pares label/valor (`dl`), o
+    `No row with that pk.` si no hay fila.
+  * Cada número como su texto exacto, `null` vacío (se ve "—"), un struct como sus campos
+    unidos con `-`.
 * Estilo admin panel: header con el nombre del sistema (link al índice), nav lateral con
   todas las entidades (la actual marcada) y el contenido en `<main>`, con un `common.css`
   fijo.
@@ -146,9 +152,9 @@ no solo pasando tests.
 
 ## Pendiente
 
-* **Frontend**: una fila, baja, alta y modificación con formularios (próximo paso: mostrar
-  una fila). Una visualización propia para fechas, ligada a un tipo fecha del framework sobre
-  `DATE`.
+* **Frontend**: baja, alta y modificación con formularios (próximo paso: la baja). Qué
+  muestra la página de una fila ante un query string que no es una pk (el 400 de la API).
+  Una visualización propia para fechas, ligada a un tipo fecha del framework sobre `DATE`.
 * **Errores de dominio de pk/uk/fk**: hoy una violación (pk duplicada, fila referenciada) es
   el 500 genérico; mapearlas a errores de dominio con constraints nombradas desde el SSOT.
   Referencia de un intento: commit `5fad670` en `lucas-branch-first-attempt`.

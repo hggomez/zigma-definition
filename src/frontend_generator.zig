@@ -1,13 +1,17 @@
 //! Frontend generation: plain HTML + JS (no framework, no build step), from
 //! the system's entities, like server.ts. One page per entity, its URL
-//! mirroring the API (/docentes shows what GET /api/docentes returns), an
-//! index of the entities, and a fixed `common_js` the pages share.
+//! mirroring the API, an index of the entities, and a fixed `common_js` the
+//! pages share.
 //!
-//! The pages navigate and list (read only). Each entity page is a table: a
-//! column per field, its header the field's label (from the FieldInfo), and a
-//! cell per value as the JSON response has it, every number kept as its exact
-//! text (a bigint is never rounded through a JS number); null is an empty
-//! cell, a struct its fields in order joined with "-".
+//! The pages navigate, list and show one row (read only). Like the API, an
+//! entity page without a query string is the list (/docentes shows what GET
+//! /api/docentes returns): a table with a column per field, its header the
+//! field's label (from the FieldInfo), the first cell of each row linking to
+//! the row's page. With the query string of a pk (/clases?periodo=…&…, a
+//! struct one parameter per field) it is that row: its fields as label/value
+//! pairs, or a not-found message. Each value is shown as the JSON response has
+//! it, every number kept as its exact text (a bigint is never rounded through
+//! a JS number); null is empty, a struct its fields in order joined with "-".
 //!
 //! The look is an admin panel: every page has the same frame, a header with
 //! the system's name (linking the index), a sidebar nav with every entity in
@@ -19,41 +23,89 @@ const zigma = @import("zigma");
 const zig_type_map_ts = @import("zig_type_map_ts");
 const tsTypeOf = zig_type_map_ts.tsTypeOf;
 
-/// The code every page shares: reading the API and drawing a table.
+/// The code every page shares: reading the API, drawing the list of an
+/// entity and the page of one of its rows.
 pub const common_js =
-    \\// Shared code of the generated pages: reading the API and drawing a table.
+    \\// Shared code of the generated pages: reading the API, drawing the list of
+    \\// an entity and the page of one of its rows.
     \\
-    \\// A JSON response, every number kept as its exact text (a JS number would
-    \\// round a bigint): the pages only show the values.
-    \\export async function getJson(path) {
-    \\  const res = await fetch(path);
-    \\  if (!res.ok) throw new Error(`${path}: ${res.status}`);
+    \\// The body of a JSON response, every number kept as its exact text (a JS
+    \\// number would round a bigint): the pages only show the values.
+    \\async function readJson(res) {
     \\  return JSON.parse(await res.text(), (key, value, context) => (typeof value === "number" ? context.source : value));
     \\}
     \\
-    \\// The text of a value in a cell: null is an empty cell.
+    \\// A JSON response that must be a success.
+    \\export async function getJson(path) {
+    \\  const res = await fetch(path);
+    \\  if (!res.ok) throw new Error(`${path}: ${res.status}`);
+    \\  return readJson(res);
+    \\}
+    \\
+    \\// The text of a value: null is empty.
     \\export function cell(value) {
     \\  return value === null ? "" : String(value);
     \\}
     \\
-    \\// A struct in a cell: its fields in order, joined with "-"; null is empty.
+    \\// The text of a struct: its fields in order, joined with "-"; null is empty.
     \\export function struct(value, keys) {
     \\  return value === null ? "" : keys.map((key) => value[key]).join("-");
     \\}
     \\
-    \\// Fills the table of the page with the rows of the entity, a cell per column.
-    \\export async function list(entity, columns) {
+    \\// The page of an entity, like the API: without a query string, the list of
+    \\// its rows; with the query string of a pk, the row of that pk. `columns` has
+    \\// a [label, text of the value] per field; `pk` gives the query-string
+    \\// parameters of a row's pk.
+    \\export async function entityPage(entity, columns, pk) {
+    \\  if (location.search === "") return list(entity, columns, pk);
+    \\  return show(entity, columns);
+    \\}
+    \\
+    \\// Fills the table with the rows, a cell per column; the first cell of each
+    \\// row links to the row's page.
+    \\async function list(entity, columns, pk) {
     \\  const rows = await getJson(`/api/${entity}`);
     \\  const tbody = document.querySelector("tbody");
     \\  for (const row of rows) {
     \\    const tr = document.createElement("tr");
-    \\    for (const column of columns) {
+    \\    columns.forEach(([, text], i) => {
     \\      const td = document.createElement("td");
-    \\      td.textContent = column(row);
+    \\      if (i === 0) {
+    \\        const a = document.createElement("a");
+    \\        a.href = `?${new URLSearchParams(pk(row))}`;
+    \\        a.textContent = text(row);
+    \\        td.append(a);
+    \\      } else {
+    \\        td.textContent = text(row);
+    \\      }
     \\      tr.append(td);
-    \\    }
+    \\    });
     \\    tbody.append(tr);
     \\  }
+    \\}
+    \\
+    \\// Replaces the table with the row of the page's query string, its fields
+    \\// as label/value pairs, or with a message when no row has that pk.
+    \\async function show(entity, columns) {
+    \\  const table = document.querySelector("table");
+    \\  const res = await fetch(`/api/${entity}${location.search}`);
+    \\  if (res.status === 404) {
+    \\    const p = document.createElement("p");
+    \\    p.textContent = "No row with that pk.";
+    \\    table.replaceWith(p);
+    \\    return;
+    \\  }
+    \\  if (!res.ok) throw new Error(`/api/${entity}${location.search}: ${res.status}`);
+    \\  const row = await readJson(res);
+    \\  const dl = document.createElement("dl");
+    \\  for (const [label, text] of columns) {
+    \\    const dt = document.createElement("dt");
+    \\    dt.textContent = label;
+    \\    const dd = document.createElement("dd");
+    \\    dd.textContent = text(row);
+    \\    dl.append(dt, dd);
+    \\  }
+    \\  table.replaceWith(dl);
     \\}
     \\
 ;
@@ -81,6 +133,12 @@ pub const common_css =
     \\tbody tr:nth-child(even) td { background: #f8fafc; }
     \\tbody tr:hover td { background: #eff6ff; }
     \\td:empty::after { content: "\2014"; color: #cbd5e1; }
+    \\td a { color: #1d4ed8; font-weight: 600; text-decoration: none; }
+    \\td a:hover { text-decoration: underline; }
+    \\dl { display: grid; grid-template-columns: max-content 1fr; gap: 0; margin: 0; background: #fff; border-radius: 12px; box-shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 4px 16px rgba(15, 23, 42, .06); overflow: hidden; }
+    \\dt { padding: 12px 16px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; border-bottom: 1px solid #f1f5f9; }
+    \\dd { margin: 0; padding: 12px 16px; border-bottom: 1px solid #f1f5f9; }
+    \\dd:empty::after { content: "\2014"; color: #cbd5e1; }
     \\@media (max-width: 640px) {
     \\  body { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
     \\  header, nav, main { grid-column: 1; grid-row: auto; }
@@ -156,6 +214,24 @@ fn columnText(comptime field_name: []const u8, comptime t: zig_type_map_ts.TsTyp
     };
 }
 
+/// The JS that gives the query-string parameters of a row's pk, in pk order,
+/// like the API reads them: a field's value by its name, a struct one
+/// parameter per field (`"fecha.año": row.fecha["año"]`).
+fn pkParams(comptime type_defs: anytype, comptime entity: anytype) []const u8 {
+    var params: []const u8 = "";
+    for (entity.pk) |pk_field| {
+        const field = @field(entity.fields, pk_field);
+        switch (tsTypeOf(@field(type_defs, field.type).Type)) {
+            .object => |parts| for (parts) |part| {
+                params = params ++ (if (params.len > 0) ", " else "") ++
+                    "\"" ++ pk_field ++ "." ++ part.name ++ "\": row." ++ pk_field ++ "[\"" ++ part.name ++ "\"]";
+            },
+            else => params = params ++ (if (params.len > 0) ", " else "") ++ "\"" ++ pk_field ++ "\": row." ++ pk_field,
+        }
+    }
+    return "(row) => ({ " ++ params ++ " })";
+}
+
 fn EntityHolder(comptime system_name: []const u8, comptime type_defs: anytype, comptime entity_defs: anytype, comptime entity_name: []const u8) type {
     return struct {
         const text: []const u8 = blk: {
@@ -166,7 +242,7 @@ fn EntityHolder(comptime system_name: []const u8, comptime type_defs: anytype, c
             for (@typeInfo(@TypeOf(entity.fields)).@"struct".field_names) |field_name| {
                 const field = @field(entity.fields, field_name);
                 headers = headers ++ "<th>" ++ field.label ++ "</th>";
-                columns = columns ++ "  " ++ columnText(field_name, tsTypeOf(@field(type_defs, field.type).Type)) ++ ",\n";
+                columns = columns ++ "  [\"" ++ field.label ++ "\", " ++ columnText(field_name, tsTypeOf(@field(type_defs, field.type).Type)) ++ "],\n";
             }
             break :blk page(system_name, entity_defs, entity_name, entity_name, "<h1>" ++ entity_name ++ "</h1>\n" ++
                 "<table>\n" ++
@@ -175,17 +251,19 @@ fn EntityHolder(comptime system_name: []const u8, comptime type_defs: anytype, c
                 "</thead>\n" ++
                 "<tbody></tbody>\n" ++
                 "</table>\n", "<script type=\"module\">\n" ++
-                "import { list, cell, struct } from \"/common.js\";\n" ++
-                "list(\"" ++ entity_name ++ "\", [\n" ++ columns ++ "]);\n" ++
+                "import { entityPage, cell, struct } from \"/common.js\";\n" ++
+                "entityPage(\"" ++ entity_name ++ "\", [\n" ++ columns ++ "], " ++ pkParams(type_defs, entity) ++ ");\n" ++
                 "</script>\n");
         };
     };
 }
 
-/// <entity>.html: the frame (its own entity current in the nav) and the
-/// entity's rows as a table, a column per field (its header the field's
-/// label), filled from GET /api/<entity> by common.js. `entity_defs` is the
-/// whole system's, for the nav; the page is the one of `entity_name`.
+/// <entity>.html: the frame (its own entity current in the nav), a table with
+/// a column per field (its header the field's label), and the script that
+/// gives common.js's `entityPage` each field's label and text and the pk of a
+/// row: the list fills the table from GET /api/<entity>, the row's page
+/// replaces it. `entity_defs` is the whole system's, for the nav; the page is
+/// the one of `entity_name`.
 pub fn entityHtml(comptime system_name: []const u8, comptime type_defs: anytype, comptime entity_defs: anytype, comptime entity_name: []const u8) []const u8 {
     return EntityHolder(system_name, type_defs, entity_defs, entity_name).text;
 }

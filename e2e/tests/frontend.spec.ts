@@ -1,7 +1,8 @@
 // The generated aida frontend in a real (headless) browser: the index of the
-// entities, and each entity's page drawing its rows from the API through the
-// frontend's proxy. The rows are seeded by test/frontend_e2e_test.zig, which
-// runs this suite, with the marker "e2e-test".
+// entities, each entity's page drawing its rows from the API through the
+// frontend's proxy, and the page of one row. The rows are seeded by
+// test/frontend_e2e_test.zig, which runs this suite, with the marker
+// "e2e-test".
 import { test, expect } from "@playwright/test";
 
 const entities = ["docentes", "materias", "periodos", "cursos", "clases", "alumnos",
@@ -48,6 +49,45 @@ test("the rows: a bigint exact, a fecha as its fields joined with '-', null as a
     .toHaveText(["e2e-test", "e2e-test", "9007199254740993", "2026-3-14", ""]);
   await expect(rows.filter({ hasText: "sin fecha" }).locator("td"))
     .toHaveText(["e2e-test", "e2e-test", "1", "", "sin fecha"]);
+});
+
+test("the first cell of each row links to the row's page, its URL mirroring the API's", async ({ page }) => {
+  await page.goto("/clases");
+  const row = page.locator("tbody tr").filter({ hasText: "9007199254740993" });
+  // only the first cell is a link
+  await expect(row.locator("td").first().locator("a")).toHaveText("e2e-test");
+  await expect(row.locator("td a")).toHaveCount(1);
+  await row.locator("td a").click();
+  // the pk in the query string, in pk order; the bigint exact
+  await expect(page).toHaveURL(/\/clases\?periodo=e2e-test&materia=e2e-test&orden=9007199254740993$/);
+});
+
+test("the row's page: its fields as label/value pairs, read from the API with the same query string", async ({ page }) => {
+  await page.goto("/clases?periodo=e2e-test&materia=e2e-test&orden=9007199254740993");
+  await expect(page.locator("h1")).toHaveText("clases");
+  await expect(page.locator('nav a[aria-current="page"]')).toHaveText("clases");
+  await expect(page.locator("main dl dt")).toHaveText(["periodo", "materia", "orden", "fecha", "tema"]);
+  // the bigint exact, the fecha its fields joined with '-', null an empty value
+  await expect(page.locator("main dl dd")).toHaveText(["e2e-test", "e2e-test", "9007199254740993", "2026-3-14", ""]);
+  // the row's page shows the row, not the list
+  await expect(page.locator("main table")).toHaveCount(0);
+});
+
+test("a struct in the pk is one parameter per field, like the API's", async ({ page }) => {
+  await page.goto("/mesas");
+  const row = page.locator("tbody tr").filter({ hasText: "e2e-test" });
+  await row.locator("td a").click();
+  await expect(page).toHaveURL(/\/mesas\?periodo=e2e-test&materia=e2e-test&fecha\.a%C3%B1o=2026&fecha\.mes=3&fecha\.d%C3%ADa=14$/);
+  await expect(page.locator("main dl dt")).toHaveText(["periodo", "materia", "fecha", "presidente", "vocal"]);
+  await expect(page.locator("main dl dd")).toHaveText(["e2e-test", "e2e-test", "2026-3-14", "", ""]);
+});
+
+test("the page of a pk with no row shows a not-found message", async ({ page }) => {
+  await page.goto("/periodos?periodo=no-existe");
+  await expect(page.locator("h1")).toHaveText("periodos");
+  await expect(page.locator("main")).toContainText("No row with that pk.");
+  await expect(page.locator("main dl")).toHaveCount(0);
+  await expect(page.locator("main table")).toHaveCount(0);
 });
 
 test("every page links the shared stylesheet, and it is served as CSS", async ({ page, request }) => {
