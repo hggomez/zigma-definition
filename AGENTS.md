@@ -6,6 +6,7 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 
 | Task | Open |
 | --- | --- |
+| Adopción en una aplicación nueva | `docs/new-application.md`, `build/app.zig`, `build/runtime.zig`, `build/modules.zig`, `build.zig.zon` |
 | API pública del núcleo | `src/core/zigma.zig` (reexporta las implementaciones; no importa generadores) |
 | Tipos de dominio / records / campos / merge | `src/core/records.zig`, `test/aida_test.zig`, `test/model_nullability_test.zig` |
 | Entidades / PK, UK y FK / metadatos de reglas | `src/core/entities.zig`, `test/aida_test.zig` |
@@ -14,7 +15,7 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | Helpers internos de nombres | `src/core/names.zig` |
 | Example system (records, entities, `Cargo`) | `examples/aida/src/aida.zig` |
 | Fecha: calendario, ISO y codecs REST | `examples/aida/src/aida.zig`, `examples/aida/src/fecha_wire.zig`, `test/fecha_test.zig`, `test/fecha_codec_test.zig`, `test/fecha_rest_test.zig`, `test/fixtures/fail_once_allocator.zig`, `test/integration/fecha_validation_review.md` |
-| Example app (`system` + seeds, own `build.zig`) | `examples/aida/` |
+| Example frontend (`system`, own `build.zig`) | `examples/aida/` |
 | Positive tests (runtime + comptime asserts) | `test/aida_test.zig` |
 | Expected compile failures | `test/compile_errors/<case>.zig` **and** the matching entry in `compile_error_cases` in `build/tests.zig` |
 | JSON stringify of record instances / schema | `src/json.zig` + `test/json_test.zig` (+ `test/tiny_system.zig` for the non-aida contract) |
@@ -23,23 +24,24 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | Typed REST validators and pending named-rule bindings | `docs/validators.md` |
 | Consumer widgets | `examples/aida/src/widgets.js` (optional `widgets_js` on `addAppFromDep`) |
 | Consumer page title | optional `title` on `addApp` / `addAppFromDep`; generated `title.js` |
+| CRUD HTTP con PostgreSQL / CORS y valores | `test/integration/run_rest_postgres.sh`, `test/integration/rest_values_http.py`, `test/integration/docente_age_http.py` |
 | API REST / routing / secuencia CRUD | `src/rest/api.zig`, `src/rest/types.zig`, `test/rest_test.zig` |
 | Entrada y salida REST / codecs | `src/rest/request.zig`, `src/rest/response.zig`, `src/rest/codecs.zig`, `test/rest_test.zig` |
 | Validadores REST actuales | `src/rest/validation.zig`, `examples/aida/src/rest.zig`, `test/aida_rest_test.zig`, `test/rest_test.zig`, `test/typed_business_validation_test.zig`, `test/fixtures/validation_repository.zig` |
 | Edad de docente / contexto por solicitud | `examples/aida/src/aida.zig`, `examples/aida/src/validation_context.zig`, `examples/aida/src/rest.zig`, `src/rest/validation.zig`, `src/rest/std_http.zig`, `test/docente_age_test.zig`, `test/docente_age_rest_test.zig`, `test/validation_context_test.zig`, `test/integration/context_server.zig`, `test/integration/run_context_test.py`, `test/integration/docente_age_http.py` |
-| Backend de pruebas en memoria | `src/testing_backend/main.zig`, `src/testing_backend/memory_repository.zig`, `src/rest/std_http.zig` |
-| Comprobación HTTP del backend de pruebas | `test/integration/run_testing_backend.py`, `examples/aida/build.zig` |
-| Entrada de AIDA / arranque conjunto del backend real y frontend | `examples/aida/src/main.zig`, `test/integration/run_aida_test.py`, `build/aida.zig`, `src/frontend/api_config.js` |
-| AIDA PostgreSQL y aplicación del historial | `examples/aida/src/postgres.zig`, `examples/aida/src/server.zig`, `migration_tools/apply_migrations.zig` |
+| Lanzador compartido / arranque conjunto de AIDA | `src/runtime/launcher.zig`, `test/integration/run_launcher_test.py`, `build/aida.zig`, `src/frontend/api_config.js` |
+| Runtime de un consumidor / `addRuntimeFromDep` | `build/runtime.zig`, `src/server.zig`, `test/integration/runtime_consumer_build.zig`, `test/integration/runtime_contract.zig`, `test/integration/runtime_rest.zig`, `test/integration/runtime_postgres.zig`, `test/integration/run_runtime_consumer_test.py` |
+| AIDA PostgreSQL y aplicación del historial | `examples/aida/src/postgres.zig`, `src/server.zig`, `examples/aida/db/`, `migration_tools/apply_migrations.zig`, `test/integration/run_migrations.sh` |
 | API de migraciones / snapshot canónico | `src/postgres/migrations/schema.zig`, `src/postgres/migrations/snapshot.zig` |
 | Diff, nombres y drafts SQL de migraciones | `src/postgres/migrations/diff.zig`, `src/postgres/migrations/draft.zig`, `test/postgres_migrations_test.zig` |
 | Bootstrap exclusivo de integraciones / comandos públicos | `test/integration/postgres_bootstrap.zig`, `test/integration/build_commands_test.py`, `build/tests.zig`, `build/aida.zig` |
 | Entrada del build / módulos publicados / libpq | `build.zig`, `build/modules.zig`, `docs/build.md` |
-| `addApp`, `addAppFromDep`, WASM/backend del consumidor | `build/app.zig`, `examples/aida/build.zig` |
+| `addApp`, `addAppFromDep`, frontend del consumidor | `build/app.zig`, `examples/aida/build.zig` |
+| Migraciones para aplicaciones consumidoras / contrato `application_postgres` | `build/migrations.zig`, `migration_tools/schema_guard.zig`, `migration_tools/postgres_migration_tool.zig`, `migration_tools/postgres_schema_validator.zig`, `migration_tools/apply_migrations.zig`, `docs/new-application.md`, `test/integration/migration_application.zig`, `test/integration/migration_consumer_build.zig`, `test/integration/run_migration_tool_test.py`, `test/integration/run_migration_consumer_test.py` |
 | Grafo de tests locales e integraciones | `build/tests.zig` |
 | Package name, zig version, published paths | `build.zig.zon` |
 
-`src/core/zigma.zig` does not know any concrete system. Generators (`src/json.zig`, `src/testing_backend/`, `src/frontend/`) import `zigma` and an injected `system` module (`type_defs` + `entity_defs`; optional `seeds`). `examples/aida/src/aida.zig` is the vocabulary fixture; `examples/aida/` is a consumer package (`src/system.zig` + `build.zig`) that depends on this framework. Domain names in aida stay in Spanish; framework identifiers are English.
+`src/core/zigma.zig` does not know any concrete system. `src/frontend/` imports `zigma`, `zigma_json` and an injected `system` module (`type_defs` + `entity_defs`). `examples/aida/src/aida.zig` is the vocabulary fixture; `examples/aida/` is a consumer package (`src/system.zig` + `build.zig`) that depends on this framework. Domain names in aida stay in Spanish; framework identifiers are English.
 
 ## Public API (`src/core/zigma.zig`)
 
@@ -73,23 +75,42 @@ reciben definiciones. `defineEntity` fue retirado, sin alias.
 
 ## Generators
 
-`system` contract: `type_defs`, `entity_defs`. Optional `seeds`: struct of row arrays keyed by entity name.
+`system` contract for the frontend: `type_defs`, `entity_defs`.
 
 | Module | Root | Role |
 | --- | --- | --- |
 | `zigma_json` | `src/json.zig` | serializa filas y el catálogo desde Model.info + Model.Row; publica nullable |
 | (WASM) | `src/frontend/main.zig` | catalog + typed row builder; import name `system` |
-| (Testing backend) | `src/testing_backend/main.zig` | API `/api/{entity}` compartida; repositorio en memoria y transporte `zigma_std_http` |
 
-`addApp` is implemented in `build/app.zig` and reexported by `build.zig`. It compiles native HTTP and WASM frontend from one system file, with separate module graphs per target. Consumer (see `examples/aida/build.zig`): `@import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .rest_root, .aida_root, .widgets_js, .title, .target, .optimize })`. Optional `title` is installed as generated `title.js` (`document.title`).
+`addApp` is implemented in `build/app.zig` and reexported by `build.zig`. It compiles and installs only the WASM frontend (`wasm32-freestanding`, `.small`). Consumer (see `examples/aida/build.zig`): `@import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .contract_root, .widgets_js, .title })`. Only `system_root` is required. Optional `title` is installed as generated `title.js` (`document.title`). `App` exposes `frontend`, `frontend_directory`, `frontend_step`.
+
+`contract_root` se inyecta como `@import("contract")` en `system_root`; si se omite,
+usa `system_root`. El adaptador REST pertenece al grafo nativo de `addRuntimeFromDep`.
+El módulo publicado `aida` sigue siendo el contrato concreto del ejemplo.
+
+`addMigrationsFromDep(b, dep, .{ .application_postgres, .target, .optimize })` registra
+los comandos de migraciones del consumidor. El módulo inyectado `application_postgres`
+publica `schema_snapshot` y `baseline_ddl` como strings comptime. El historial `db/`
+pertenece al consumidor; `project_root` permite elegir su directorio. El helper devuelve
+`schema_guard`, `schema_check`, `migration_tool`, `schema_validator` y `migration_applier`.
+El guard se conecta explícitamente a los artefactos que se quieran proteger.
+
+El helper `addRuntimeFromDep` recibe módulos compartidos `contract` (`Model`),
+`application_rest` (`Api`; `ContextProvider` inicializable con `.io` si el contexto no es
+`void`) y `schema_guard`, más el directorio del frontend y `project_root` (contiene `db/`).
+Devuelve `backend`, `launcher`, `run_backend` y `run`; no registra comandos ni instala
+artefactos automáticamente. `App.frontend_directory` y `App.frontend_step` conectan el
+frontend generado. El lanzador usa `ZIGMA_STARTUP_TIMEOUT` y no importa el dominio.
 
 ## Tests
 
 `zig build test` ejecuta las suites Zig de contrato, modelo, JSON, REST, PostgreSQL sin
 servicios, herramientas de migración, rechazos de compilación y comprobación del snapshot.
-`zig build test-local` agrega el lanzador, los nombres públicos de comandos y las suites
-del consumidor `test-backend` y `test-frontend`; requiere Node y Python, pero no libpq
-ni servicios externos.
+`zig build test-local` agrega el lanzador, los comandos públicos, consumidores independientes,
+el transporte HTTP y `test-frontend`; requiere Node y Python, pero no libpq ni servicios externos.
+
+`zig build test-migration-tool` prueba el workflow de archivos y un paquete consumidor
+desde cero; está incluido en `test-local` y solo necesita Python, sin servicios.
 
 Adding a rejection: new file under `test/compile_errors/`, then a `{ .file, .expected }` in `build/tests.zig`. Matching is **per line**: full framework `@compileError` text, or `at("file.zig")` for unstable native compiler messages. See `CLAUDE.md` for `/?/` wildcards.
 
@@ -100,18 +121,21 @@ TDD: write the failing test first, show the red, **wait for review before implem
 The library `zig build` does **not** install the example app. From `examples/aida/`:
 
 ```sh
-zig build              # zig-out/frontend/ + zig-out/bin/testing-backend
-zig build testing-backend # run the in-memory testing backend (port 8080)
-zig build test-backend    # HTTP integration check (Python 3)
+zig build              # zig-out/frontend/
+zig build test-frontend # Node + compiled WASM
 python3 -m http.server 8000 --directory zig-out/frontend
 ```
 
-Details: [docs/run-example.md](docs/run-example.md).
+Para ejecutar la aplicación completa, desde la raíz: `zig build run-aida` con PostgreSQL,
+libpq y Liquibase configurados. Details: [docs/run-example.md](docs/run-example.md).
 
-WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr`, `json_ptr`, `json_len`, `error_ptr`, `error_len`, `build_row`, `create_row`. JS import: `env.js_send_post`. El frontend arma la página desde el catálogo de entidades y consulta `/api/{entity}`. POST crea filas; PUT envía los campos editables sin PK y usa la query para seleccionar filas; DELETE usa esos mismos filtros. La API compartida determina validaciones y respuestas. `testing-backend` carga los seeds en `MemoryRepository` y delega HTTP/CORS a `std_http.serve`. Los datos solo duran mientras vive el proceso.
+WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr`, `json_ptr`, `json_len`, `error_ptr`, `error_len`, `build_row`, `create_row`. JS import: `env.js_send_post`. El frontend arma la página desde el catálogo de entidades y consulta `/api/{entity}`. POST crea filas; PUT envía los campos editables sin PK y usa la query para seleccionar filas; DELETE usa esos mismos filtros. La API compartida determina validaciones y respuestas. El servidor compartido persiste mediante libpq y delega HTTP/CORS a `std_http.serve`.
 
 ## Published package
 
-`build.zig.zon` `.paths`: `build.zig`, `build.zig.zon`, `build/`, `src`, `examples`, `db`, `migration_tools`,
-`test/integration`, `README.md`, `DOCS.md`, `LICENSE`. Los tests unitarios y `docs/` no
-forman parte del paquete; los auxiliares de integración sí.
+`build.zig.zon` `.paths`: `build.zig`, `build.zig.zon`, `build/`, `src`,
+`examples/aida/build.zig`, `examples/aida/build.zig.zon`, `examples/aida/src`,
+`examples/aida/db`, `migration_tools`, `test/integration`, `README.md`, `DOCS.md`, `LICENSE`.
+Los tests unitarios y `docs/` no forman parte del paquete; los auxiliares de integración
+sí. Las rutas explícitas del ejemplo excluyen sus cachés y binarios. El historial de
+AIDA está en `examples/aida/db/`; su propio paquete también publica `db`.

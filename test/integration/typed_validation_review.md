@@ -1,5 +1,9 @@
 # Checkpoint: retirar Projection y validar entidades concretas
 
+Nota de mantenimiento: los resultados conservan el estado de aquel checkpoint.
+La implementación temporal en memoria fue retirada; la cobertura HTTP actual usa
+PostgreSQL descartable.
+
 Estado: **checkpoint aprobado e implementación verificada**. El usuario autorizó
 continuar con los tests presentados. Las secciones de baseline y rojos conservan
 la evidencia anterior al cambio; la verificación final figura al pie.

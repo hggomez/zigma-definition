@@ -1,4 +1,4 @@
-//! Entrada de la aplicación AIDA: supervisa el backend y sirve el frontend compilado.
+//! Lanzador compartido: supervisa el backend y sirve el frontend de un consumidor.
 //! El build prepara los artefactos; este proceso administra su vida en macOS/Linux.
 const std = @import("std");
 const Io = std.Io;
@@ -20,7 +20,7 @@ pub fn main(init: std.process.Init) void {
     posix.sigaction(.INT, &action, null);
     posix.sigaction(.TERM, &action, null);
     const code = run(init) catch |err| blk: {
-        std.debug.print("No se pudo iniciar AIDA: {t}\n", .{err});
+        std.debug.print("No se pudo iniciar la aplicación: {t}\n", .{err});
         break :blk @as(u8, 1);
     };
     // run ya ejecutó todos sus defer antes de terminar el proceso.
@@ -72,7 +72,7 @@ fn run(init: std.process.Init) !u8 {
     const allocator = init.gpa;
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len != 3) {
-        std.debug.print("Uso: run-aida <aida-rest-server> <frontend-directory>\n", .{});
+        std.debug.print("Uso: launcher <backend> <frontend-directory>\n", .{});
         return 1;
     }
     const backend_port = try portFromEnv(init.environ_map, "HTTP_PORT", 8080);
@@ -81,7 +81,7 @@ fn run(init: std.process.Init) !u8 {
         std.debug.print("HTTP_PORT y FRONTEND_PORT deben ser distintos\n", .{});
         return 1;
     }
-    const timeout_seconds = try std.fmt.parseFloat(f64, init.environ_map.get("AIDA_STARTUP_TIMEOUT") orelse "120");
+    const timeout_seconds = try std.fmt.parseFloat(f64, init.environ_map.get("ZIGMA_STARTUP_TIMEOUT") orelse "120");
     if (!std.math.isFinite(timeout_seconds) or timeout_seconds <= 0 or timeout_seconds > 1e12)
         return error.InvalidStartupTimeout;
     const timeout: Io.Duration = .{ .nanoseconds = @intFromFloat(timeout_seconds * std.time.ns_per_s) };
@@ -131,7 +131,7 @@ fn run(init: std.process.Init) !u8 {
     };
     defer backend.stop(io, group, &watcher);
 
-    std.debug.print("Iniciando AIDA con PostgreSQL; esperando migraciones y API...\n", .{});
+    std.debug.print("Iniciando aplicación; esperando API...\n", .{});
     const deadline = Io.Clock.awake.now(io).addDuration(timeout);
     while (true) {
         if (interrupted.load(.monotonic)) return 0;

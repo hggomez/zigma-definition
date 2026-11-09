@@ -1,14 +1,14 @@
-//! Servidor PostgreSQL de AIDA: primero el historial aceptado de Liquibase;
-//! después, una conexión libpq y la API REST generada de AIDA.
+//! Servidor PostgreSQL compartido: historial aceptado, conexión y API del consumidor.
+//! Imports: contract.Model, application_rest.Api y schema_guard.
 
 const std = @import("std");
-const aida = @import("aida");
-const aida_rest = @import("aida_rest");
+const contract = @import("contract");
+const application_rest = @import("application_rest");
 const crud = @import("zigma_postgres_crud");
 const libpq = @import("zigma_postgres_libpq");
 const liquibase = @import("zigma_liquibase_runner");
 const std_http = @import("zigma_std_http");
-const schema_guard = @import("aida_schema_guard");
+const schema_guard = @import("schema_guard");
 
 comptime {
     // Referenciar el guard basta para evaluar su comprobación del snapshot
@@ -20,17 +20,18 @@ pub fn main(init: std.process.Init) !void {
     // La URL nativa de libpq y la URL JDBC de Liquibase describen la misma base
     // de datos con los formatos que entiende cada cliente.
     const database_url = init.environ_map.get("DATABASE_URL") orelse {
-        std.debug.print("DATABASE_URL is required (for example postgresql://user:password@localhost:5432/zigma_dev)\n", .{});
+        std.debug.print("DATABASE_URL is required (for example postgresql://user:password@localhost:5432/app_db)\n", .{});
         return error.MissingDatabaseUrl;
     };
     const jdbc_url = init.environ_map.get("LIQUIBASE_URL") orelse {
-        std.debug.print("LIQUIBASE_URL is required (for example jdbc:postgresql://localhost:5432/zigma_dev)\n", .{});
+        std.debug.print("LIQUIBASE_URL is required (for example jdbc:postgresql://localhost:5432/app_db)\n", .{});
         return error.MissingLiquibaseUrl;
     };
     const schema_name = init.environ_map.get("LIQUIBASE_SCHEMA") orelse "public";
 
     // Aplica el historial aceptado antes de recibir tráfico. Si falla una migración,
     // el arranque termina: ninguna solicitud observa una aplicación actualizada a medias.
+    // El build ejecuta desde project_root, conservando db/ como ruta del changelog.
     try liquibase.update(init.gpa, .{
         .executable = init.environ_map.get("LIQUIBASE_BIN") orelse "liquibase",
         .changelog_file = init.environ_map.get("LIQUIBASE_CHANGELOG") orelse "db/changelog-root.yaml",
@@ -55,10 +56,11 @@ pub fn main(init: std.process.Init) !void {
 
     // Api aporta routing y validación; Repository, SQL; y std_http, sockets.
     // Sus interfaces estructurales permiten reemplazar cada componente.
-    var api = aida_rest.Api.init(.{});
-    var repository = crud.Repository(aida.Model).init(&connection);
-    std.debug.print("AIDA REST listening on http://{s}:{d}\n", .{ address, port });
-    var context_provider = aida_rest.ContextProvider{ .io = init.io };
+    var api = application_rest.Api.init(.{});
+    var repository = crud.Repository(contract.Model).init(&connection);
+    std.debug.print("REST listening on http://{s}:{d}\n", .{ address, port });
+    const Provider = if (application_rest.Api.ValidationContext == void) std_http.EmptyContextProvider else application_rest.ContextProvider;
+    var context_provider: Provider = if (application_rest.Api.ValidationContext == void) .{} else .{ .io = init.io };
     try std_http.serve(init.io, init.gpa, &api, &repository, &context_provider, .{
         .address = address,
         .port = port,

@@ -8,6 +8,7 @@ migration_tool=$1
 validator=$2
 liquibase_bin=$3
 project_root=$(CDPATH= cd "$4" && pwd)
+cd "$project_root"
 
 draft_count=$(find "$project_root/db/drafts" -maxdepth 1 -type f -name '*.sql' | wc -l | tr -d ' ')
 if [ "$draft_count" -ne 1 ]; then
@@ -36,7 +37,8 @@ docker run --detach --rm \
     -p 127.0.0.1::5432 \
     postgres:18.4-alpine3.24 >/dev/null
 
-until docker exec "$container_name" pg_isready -U postgres -d zigma_test >/dev/null 2>&1; do
+# El servidor temporal de inicialización solo escucha por socket; esperar TCP.
+until docker exec "$container_name" pg_isready -h 127.0.0.1 -U postgres -d zigma_test >/dev/null 2>&1; do
     sleep 1
 done
 published_port=$(docker port "$container_name" 5432/tcp | sed -n 's/.*://p')

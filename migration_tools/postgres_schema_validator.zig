@@ -1,11 +1,11 @@
-//! Comprobación en base de datos de que un schema migrado coincide con la SSOT actual de AIDA.
+//! Comprueba que un schema migrado coincide con la proyección PostgreSQL de la aplicación.
 //!
 //! Crea un schema esperado temporal a partir del DDL baseline comptime,
 //! compara las estructuras del catálogo PostgreSQL y siempre intenta eliminar
 //! el schema temporal. Nunca modifica objetos del schema real.
 
 const std = @import("std");
-const postgres = @import("aida_postgres");
+const postgres = @import("application_postgres");
 const libpq = @import("zigma_postgres_libpq");
 
 // El nombre privado fijo es seguro porque el validador impide usarlo como

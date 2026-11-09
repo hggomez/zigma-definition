@@ -111,6 +111,8 @@ test "creates a reflexive foreign key inline" {
         \\    "jefe" TEXT,
         \\    "telefono" TEXT,
         \\    "experiencia" BIGINT,
+        \\    "esImportador" BOOLEAN,
+        \\    "fecha_nacimiento" DATE,
         \\    CONSTRAINT "pk_docentes" PRIMARY KEY ("docente"),
         \\    CONSTRAINT "fk_docentes_jefe" FOREIGN KEY ("jefe") REFERENCES "docentes" ("docente")
         \\);
@@ -177,6 +179,8 @@ test "creates the complete AIDA schema in dependency order" {
         \\    "jefe" TEXT,
         \\    "telefono" TEXT,
         \\    "experiencia" BIGINT,
+        \\    "esImportador" BOOLEAN,
+        \\    "fecha_nacimiento" DATE,
         \\    CONSTRAINT "pk_docentes" PRIMARY KEY ("docente"),
         \\    CONSTRAINT "fk_docentes_jefe" FOREIGN KEY ("jefe") REFERENCES "docentes" ("docente")
         \\);

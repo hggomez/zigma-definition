@@ -1,9 +1,15 @@
 # Checkpoint: entidades como tipos concretos
 
+Nota de mantenimiento: los resultados de este informe corresponden a su checkpoint.
+El backend temporal fue retirado posteriormente; las verificaciones HTTP vigentes
+usan PostgreSQL descartable.
+
 Estado: **checkpoint aprobado e implementación verificada**. El usuario autorizó
 continuar después de revisar los rojos. Se implementaron `Entity`, el registro y la
 migración de AIDA en `dev-tipos-concretos`. Las secciones de baseline y rojos conservan
 el resultado anterior a la implementación; la verificación final figura al pie.
+El historial de AIDA se trasladó posteriormente a `examples/aida/db/`; los resultados
+y hashes de este informe corresponden al checkpoint original.
 
 ## Preparación y baseline
 
@@ -42,7 +48,8 @@ Logs locales de esta ejecución:
 ## Artefactos de comparación
 
 Se capturaron los resultados **actuales**, sin reemplazar las referencias históricas
-de `test/fixtures/` ni el snapshot de `db/`. Directorio temporal:
+de `test/fixtures/` ni el snapshot de AIDA, actualmente en `examples/aida/db/`.
+Directorio temporal:
 `/tmp/zigma-entities-comparison-96rplb8w`.
 
 `capture.zig` y `capture.sh` permiten repetir la captura después del refactor en
@@ -142,7 +149,8 @@ migraron los consumidores y contratos auxiliares.
   no se informa como exitosa ni se modifica su lógica dentro de este refactor.
 - Los cinco archivos capturados en `after/` son idénticos byte por byte a
   `before/` y conservan los SHA-256 indicados arriba. No se modificaron los
-  artefactos aceptados de `db/` ni las referencias históricas de `test/fixtures/`.
+  artefactos aceptados de AIDA (actualmente en `examples/aida/db/`) ni las referencias
+  históricas de `test/fixtures/`.
 
 Logs posteriores: `/tmp/zigma-entities-after-local.log`,
 `/tmp/zigma-entities-after-build.log`, `/tmp/zigma-entities-after-check.log` y

@@ -41,7 +41,7 @@ class LauncherTest(unittest.TestCase):
         self.addCleanup(self.log.close)
         self.frontend = self.directory / "frontend"
         self.frontend.mkdir()
-        (self.frontend / "index.html").write_text("<h1>AIDA</h1>")
+        (self.frontend / "index.html").write_text("<h1>Inventory</h1>")
         (self.frontend / "frontend.wasm").write_bytes(b"\x00asm\x01\x00\x00\x00")
         self.backend_port = free_port()
         self.frontend_port = free_port()
@@ -88,12 +88,13 @@ http.server.HTTPServer(("127.0.0.1", int(os.environ["HTTP_PORT"])), Handler).ser
             [str(LAUNCHER), str(self.backend), str(self.frontend)],
             env=env, stdout=self.log, stderr=self.log,
         )
-        self.addCleanup(self.stop)
+        self.addCleanup(self.stop, self.process)
 
-    def stop(self):
-        if self.process.poll() is None:
-            self.process.send_signal(signal.SIGINT)
-            self.process.wait(timeout=8)
+    def stop(self, process=None):
+        process = self.process if process is None else process
+        if process.poll() is None:
+            process.send_signal(signal.SIGINT)
+            process.wait(timeout=8)
 
     def wait_frontend(self):
         deadline = time.monotonic() + 8
@@ -119,7 +120,7 @@ http.server.HTTPServer(("127.0.0.1", int(os.environ["HTTP_PORT"])), Handler).ser
     def test_serves_assets_and_config_and_ctrl_c_stops_backend(self):
         self.start()
         self.wait_frontend()
-        self.assertEqual(get(self.frontend_port, "/")[1], b"<h1>AIDA</h1>")
+        self.assertEqual(get(self.frontend_port, "/")[1], b"<h1>Inventory</h1>")
         status, config, _ = get(self.frontend_port, "/api-config.js")
         self.assertEqual(status, 200)
         self.assertIn(f"http://127.0.0.1:{self.backend_port}/api".encode(), config)
@@ -177,17 +178,17 @@ http.server.HTTPServer(("127.0.0.1", int(os.environ["HTTP_PORT"])), Handler).ser
             self.assertIn(b"puerto del backend", self.log.read())
 
     def test_startup_timeout_cleans_up_backend(self):
-        self.start(BACKEND_DELAY="5", AIDA_STARTUP_TIMEOUT="1")
+        self.start(BACKEND_DELAY="5", ZIGMA_STARTUP_TIMEOUT="1")
         self.assertNotEqual(self.process.wait(timeout=8), 0)
         self.assert_backend_stopped()
 
     def test_unresponsive_api_does_not_block_timeout(self):
-        self.start(OPTIONS_DELAY="60", AIDA_STARTUP_TIMEOUT="1")
+        self.start(OPTIONS_DELAY="60", ZIGMA_STARTUP_TIMEOUT="1")
         self.assertNotEqual(self.process.wait(timeout=8), 0)
         self.assert_backend_stopped()
 
     def test_non_ready_http_status_does_not_start_frontend(self):
-        self.start(OPTIONS_STATUS="503", AIDA_STARTUP_TIMEOUT="1")
+        self.start(OPTIONS_STATUS="503", ZIGMA_STARTUP_TIMEOUT="1")
         self.assertNotEqual(self.process.wait(timeout=8), 0)
         self.assert_backend_stopped()
         with self.assertRaises(OSError):
@@ -224,11 +225,15 @@ http.server.HTTPServer(("127.0.0.1", int(os.environ["HTTP_PORT"])), Handler).ser
 
     def test_invalid_configuration_does_not_start_backend(self):
         for name, value in (("HTTP_PORT", "0"), ("FRONTEND_PORT", "65536"),
-                            ("AIDA_STARTUP_TIMEOUT", "nan"), ("AIDA_STARTUP_TIMEOUT", "-1")):
+                            ("ZIGMA_STARTUP_TIMEOUT", "nan"), ("ZIGMA_STARTUP_TIMEOUT", "-1")):
             with self.subTest(name=name, value=value):
+                self.marker.unlink(missing_ok=True)
                 self.start(**{name: value})
-                self.assertNotEqual(self.process.wait(timeout=8), 0)
-                self.assertFalse(self.marker.exists())
+                try:
+                    self.assertNotEqual(self.process.wait(timeout=8), 0)
+                    self.assertFalse(self.marker.exists())
+                finally:
+                    self.stop()
 
     def test_static_http_paths_headers_and_missing_assets(self):
         (self.frontend / "hello world.js").write_text("const greeting = '¡Hola!';")

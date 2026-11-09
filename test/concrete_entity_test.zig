@@ -189,15 +189,25 @@ test "AIDA publishes eleven concrete types registered under the existing table n
     try std.testing.expect(@FieldType(Cargo, "cargo") == ?[]const u8);
 }
 
-test "AIDA seed collections and whole row business validation use concrete types" {
-    inline for (@typeInfo(@TypeOf(system.seeds)).@"struct".field_names) |name| {
-        const Seed = @typeInfo(@TypeOf(@field(system.seeds, name))).array.child;
-        try std.testing.expect(Seed == aida.Model.Row(name));
+test "AIDA frontend contract and whole row business validation use concrete types" {
+    const FrontendModel = zigma.Framework(system.type_defs, system.entity_defs);
+    inline for (@typeInfo(@TypeOf(aida.entity_defs)).@"struct".field_names) |name| {
+        try std.testing.expect(FrontendModel.Row(name) == aida.Model.Row(name));
     }
     const validate: *const fn (aida.Docente, aida.Fecha) aida.DocenteValidationError!void = &aida.validarDocente;
-    var row: aida.Docente = system.seeds.docentes[0];
-    row.cargo = "teorico";
-    row.experiencia = 4;
+    var row: aida.Docente = .{
+        .docente = "validation-check",
+        .apellido = null,
+        .nombres = "Prueba",
+        .cargo = "teorico",
+        .email = null,
+        .email_alternativo = null,
+        .jefe = null,
+        .telefono = null,
+        .experiencia = 4,
+        .esImportador = null,
+        .fecha_nacimiento = null,
+    };
     try std.testing.expectError(error.TeoricoRequiereCincoAniosExperiencia, validate(row, .{ .@"año" = 2026, .mes = 10, .@"día" = 28 }));
     row.experiencia = 5;
     row.fecha_nacimiento = .{ .@"año" = 1980, .mes = 1, .@"día" = 1 };

@@ -1,5 +1,13 @@
 # Verificación de la limpieza de ejemplos y build
 
+Nota de mantenimiento: los resultados de este informe corresponden a su checkpoint.
+El backend temporal fue retirado posteriormente; las verificaciones HTTP vigentes
+usan PostgreSQL descartable.
+
+Este informe conserva los resultados del checkpoint original. El historial de AIDA
+se trasladó posteriormente a `examples/aida/db/`; `db/changelog-root.yaml` sigue siendo
+la ruta lógica del changelog al ejecutar desde `examples/aida/`.
+
 ## Checkpoint aprobado
 
 Antes de modificar producción, `build_commands_test.py` ejecutó `zig build --help`:
@@ -66,4 +74,5 @@ dio igualdad para los tres:
 | Snapshot | `2271a0b9f066067a5e013e087ae82ab0607327bc64296877071983c0c522e7a4` |
 
 También se comprobaron los hashes del core, del contrato AIDA, de todos los archivos
-de `db/` y de las referencias históricas: permanecen sin cambios.
+del historial de AIDA (actualmente en `examples/aida/db/`) y de las referencias
+históricas: permanecieron sin cambios en ese checkpoint.

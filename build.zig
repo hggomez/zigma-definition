@@ -5,6 +5,8 @@
 
 const std = @import("std");
 const app = @import("build/app.zig");
+const migrations = @import("build/migrations.zig");
+const runtime = @import("build/runtime.zig");
 const project_modules = @import("build/modules.zig");
 const aida_build = @import("build/aida.zig");
 const tests = @import("build/tests.zig");
@@ -17,6 +19,16 @@ pub const filesHere = app.filesHere;
 pub const filesFromDependency = app.filesFromDependency;
 pub const addApp = app.addApp;
 pub const addAppFromDep = app.addAppFromDep;
+pub const MigrationOptions = migrations.MigrationOptions;
+pub const MigrationModules = migrations.MigrationModules;
+pub const Migrations = migrations.Migrations;
+pub const addMigrations = migrations.addMigrations;
+pub const addMigrationsFromDep = migrations.addMigrationsFromDep;
+pub const RuntimeOptions = runtime.RuntimeOptions;
+pub const RuntimeModules = runtime.RuntimeModules;
+pub const Runtime = runtime.Runtime;
+pub const addRuntime = runtime.addRuntime;
+pub const addRuntimeFromDep = runtime.addRuntimeFromDep;
 
 pub fn build(b: *std.Build) void {
     // Opciones compartidas por los artefactos nativos de este build.

@@ -38,10 +38,6 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   sistema concreto ni importa generadores; `docs/zigma.md` explica cómo recorrerlo.
 * `src/json.zig`: catálogo basado en `Model`, serialización con `std.json` y parsing
   de celdas (módulo `zigma_json`); no conoce REST ni PostgreSQL.
-* `src/testing_backend/main.zig`: composición del backend de pruebas: API REST, seeds,
-  repositorio en memoria y transporte compartido `zigma_std_http`.
-* `src/testing_backend/memory_repository.zig`: persistencia temporal para el backend de pruebas;
-  los datos se descartan al terminar el proceso.
 * `src/frontend/`: cliente WASM genérico que consume el mismo contrato `system`.
 * `src/rest/api.zig`: entrada pública de `zigma_rest`, rutas y coordinación CRUD.
   Reexporta los tipos compartidos de `types.zig`, los codecs de `codecs.zig` y el registro
@@ -66,16 +62,21 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `examples/aida/src/aida.zig`: contrato del sistema de alumnos (módulo `aida`), compartido
   por los ejemplos y usado como fixture de tests.
 * `examples/aida/`: app de ejemplo que depende del paquete; `src/system.zig` expone el
-  contrato y los seeds, y `build.zig` compone el backend en memoria y el frontend WASM.
+  contrato para el frontend WASM que compone `build.zig`.
 * `examples/aida/src/postgres.zig`: mappings y proyección PostgreSQL compartida de AIDA.
 * `examples/aida/src/rest.zig`: codecs y validadores de negocio de AIDA para REST.
-* `examples/aida/src/main.zig`: entrada de la aplicación para macOS/Linux; sirve el frontend,
+* `src/runtime/launcher.zig`: lanzador genérico para macOS/Linux; sirve el frontend,
   espera la API después de las migraciones y cierra ambos con Ctrl+C. No requiere Python.
-* `examples/aida/src/server.zig`: composición del servidor REST con libpq y migraciones Liquibase.
+* `src/server.zig`: servidor compartido con libpq y Liquibase; recibe
+  `contract.Model`, `application_rest.Api` y `schema_guard`.
 * `test/integration/postgres_bootstrap.zig`: auxiliar de las integraciones DDL/REST que
   usa los mappings PostgreSQL de AIDA; no tiene comando público de arranque.
-* `db/`: snapshot aceptado, baseline/changesets inmutables y directorio del único draft.
+* `examples/aida/db/`: snapshot aceptado, baseline/changesets inmutables y directorio
+  del único draft de AIDA. Los comandos de la raíz se ejecutan desde `examples/aida/`.
 * `migration_tools/postgres_migration_tool.zig`: workflow de init/check/draft/accept-files.
+  Recibe `application_postgres` (`schema_snapshot` + `baseline_ddl`), igual que el validador.
+* `migration_tools/schema_guard.zig`: compara en comptime el snapshot deseado del consumidor
+  con su archivo aceptado, inyectado por el build; no conoce AIDA ni su Model.
 * `migration_tools/apply_migrations.zig`: aplica el historial aceptado y termina sin iniciar HTTP;
   se ejecuta mediante `zig build apply-migrations` y también desde `test-migrations`.
 * `migration_tools/postgres_schema_validator.zig`: comparación SSOT↔`pg_catalog` en un schema esperado
@@ -83,9 +84,13 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `build.zig`: opciones generales, conexiones del grafo y API pública del build.
 * `build/modules.zig`: módulos publicados e imports compartidos; configuración de libpq.
 * `build/app.zig`: implementación de `addApp` / `addAppFromDep`, reexportadas por la raíz.
-  Componen el backend en memoria y el frontend WASM para consumidores como `examples/aida/`;
+  Compilan e instalan el frontend WASM para consumidores como `examples/aida/`;
   el `build()` de la librería no instala esa app.
-* `build/aida.zig`: ejecutables de AIDA, comprobación del schema y comandos de migración.
+* `build/aida.zig`: composición de AIDA con los helpers de runtime y migraciones.
+* `build/runtime.zig`: `addRuntime` / `addRuntimeFromDep`; declara backend, lanzador
+  y ejecuciones por separado. El consumidor elige comandos e instalación.
+* `build/migrations.zig`: `addMigrations` / `addMigrationsFromDep`, composición reutilizable
+  de herramientas, guard y comandos; cada aplicación conserva su historial `db/`.
 * `build/tests.zig`: suites locales, integraciones y casos esperados de no-compila.
   `docs/build.md` explica módulos, artefactos, ejecución y dependencias para leer el grafo.
 * `test/*_test.zig`: pruebas de comportamiento (runtime y asserts comptime), incluidos
@@ -97,8 +102,11 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 ## Comprobaciones
 
 * `zig build test-local`: agrega la suite `test`, el lanzador, los nombres públicos de
-  comandos y las suites del consumidor `test-backend`/`test-frontend`. Requiere Node y
+  comandos, consumidores independientes, transporte HTTP y `test-frontend`. Requiere Node y
   Python; no requiere libpq ni servicios.
+* `zig build test-runtime`: paquete consumidor sin AIDA; migraciones y lanzador sin libpq.
+* `zig build test-runtime-backend -Dlibpq-prefix=...`: guard, contexto void y fallo de
+  migración antes de conectar; incluido en `test-rest-postgres`.
 * `zig build test-json`: serialización y catálogo del modelo; incluye escaping y buffers.
 * Desde `examples/aida/`, `zig build test-frontend`: catálogo, nulabilidad, controles
   escalares y protocolo del WASM compilado; requiere Node.
@@ -107,17 +115,18 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   (Python 3); `zig build run-aida -Dlibpq-prefix=...` inicia la aplicación configurada.
 * `zig build test`: suite de runtime, asserts comptime, casos de no-compila y comprobación
   del snapshot aceptado. Las integraciones con servicios externos se ejecutan por separado.
-* Desde `examples/aida/`, `zig build testing-backend` inicia el backend en memoria;
-  `zig build test-backend` verifica su API HTTP con un proceso propio (requiere Python 3).
 * `zig build test-model`: pruebas del modelo normalizado y sus consumidores, incluidos
   los rechazos de compilación correspondientes.
 * `zig build test-postgres -Dlibpq-prefix=...` levanta un PostgreSQL descartable con Docker
   y prueba la ejecución real; queda separado para que la suite normal no requiera servicios.
 * `zig build test-migrations -Dlibpq-prefix=... -Dliquibase-bin=...` fija Liquibase 5.0.4 y
   PostgreSQL 18.4, y prueba el historial aceptado, idempotencia, migraciones manuales,
-  rollback y checksum.
+  rollback y checksum; también verifica rechazo y aceptación de drafts desde un
+  paquete consumidor independiente. Además prueba el runtime genérico con Liquibase,
+  frontend, CRUD persistente y reinicio contra una base descartable.
 * `zig build test-rest-postgres -Dlibpq-prefix=...` prueba el CRUD generado end-to-end con
-  `std.http`, libpq y PostgreSQL descartable.
+  `std.http`, libpq y PostgreSQL descartable, incluidos CORS, escaping, nulabilidad
+  y fechas mediante `test/integration/rest_values_http.py`.
 * `python3 test/integration/build_commands_test.py`: comprueba los nombres públicos del
   build mediante `--help`; no inicia aplicaciones ni aplica migraciones.
 

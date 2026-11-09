@@ -1,4 +1,4 @@
-"""Mismos casos de edad contra ambos backends descartables; nunca usa DATABASE_URL."""
+"""Casos de edad contra un servidor con PostgreSQL descartable; nunca usa DATABASE_URL."""
 
 from datetime import datetime, timedelta, timezone
 import http.client

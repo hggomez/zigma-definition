@@ -30,7 +30,8 @@ docker run \
     postgres:18.4-alpine3.24 >/dev/null
 
 attempt=0
-until docker exec "$container_name" pg_isready --username postgres --dbname zigma_test >/dev/null 2>&1; do
+# El servidor temporal de inicialización solo escucha por socket; esperar TCP.
+until docker exec "$container_name" pg_isready --host 127.0.0.1 --username postgres --dbname zigma_test >/dev/null 2>&1; do
     attempt=$((attempt + 1))
     if [ "$attempt" -ge 60 ]; then
         echo "PostgreSQL did not become ready within 60 seconds" >&2

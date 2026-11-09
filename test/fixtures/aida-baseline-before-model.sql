@@ -8,6 +8,8 @@ CREATE TABLE "docentes" (
     "jefe" TEXT,
     "telefono" TEXT,
     "experiencia" BIGINT,
+    "esImportador" BOOLEAN,
+    "fecha_nacimiento" DATE,
     CONSTRAINT "pk_docentes" PRIMARY KEY ("docente"),
     CONSTRAINT "fk_docentes_jefe" FOREIGN KEY ("jefe") REFERENCES "docentes" ("docente")
 );

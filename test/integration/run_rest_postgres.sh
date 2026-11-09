@@ -35,7 +35,8 @@ docker run \
     postgres:18.4-alpine3.24 >/dev/null
 
 attempt=0
-until docker exec "$container_name" pg_isready --username postgres --dbname zigma_rest_test >/dev/null 2>&1; do
+# El servidor temporal de inicialización solo escucha por socket; esperar TCP.
+until docker exec "$container_name" pg_isready --host 127.0.0.1 --username postgres --dbname zigma_rest_test >/dev/null 2>&1; do
     attempt=$((attempt + 1))
     if [ "$attempt" -ge 60 ]; then
         echo "PostgreSQL did not become ready within 60 seconds" >&2
@@ -88,7 +89,7 @@ expect_response() {
 request "$base_url/materias"
 expect_response 200 '[]'
 
-# Casos compartidos con el backend en memoria, sobre este proceso descartable.
+# Reglas de edad sobre este proceso y su base descartables.
 python3 "$(dirname "$0")/docente_age_http.py" "$base_url"
 
 oversized_body=$(python3 -c 'print("x" * 257)')
@@ -222,5 +223,7 @@ expect_response 200 '[{"periodo":"p1","materia":"m1","orden":1,"fecha":{"año":2
 
 request "$base_url/clases"
 expect_response 200 '[]'
+
+python3 "$(dirname "$0")/rest_values_http.py" "$base_url"
 
 echo "REST PostgreSQL integration passed"

@@ -4,7 +4,7 @@ set -eu
 validator=$1
 migration_applier=$2
 liquibase_bin=$3
-project_root=$(CDPATH= cd "$4" && pwd)
+application_root=$(CDPATH= cd "$4" && pwd)
 
 case "$("$liquibase_bin" --version 2>&1)" in
     *5.0.4*) ;;
@@ -29,20 +29,23 @@ docker run --detach --rm \
     -p 127.0.0.1::5432 \
     postgres:18.4-alpine3.24 >/dev/null
 
-until docker exec "$container_name" pg_isready -U postgres -d zigma_test >/dev/null 2>&1; do
+# El servidor temporal de inicialización solo escucha por socket; esperar TCP.
+until docker exec "$container_name" pg_isready -h 127.0.0.1 -U postgres -d zigma_test >/dev/null 2>&1; do
     sleep 1
 done
 published_port=$(docker port "$container_name" 5432/tcp | sed -n 's/.*://p')
 jdbc_url="jdbc:postgresql://127.0.0.1:${published_port}/zigma_test"
 database_url="postgresql://postgres:postgres@127.0.0.1:${published_port}/zigma_test"
 
-cp -R "$project_root/db" "$temp_dir/db"
+cp -R "$application_root/db" "$temp_dir/db"
+# Los recursos del changelog se resuelven dentro de la copia descartable.
+export LIQUIBASE_SEARCH_PATH="$temp_dir"
 
 LIQUIBASE_BIN="$liquibase_bin" \
 LIQUIBASE_URL="$jdbc_url" \
 LIQUIBASE_USERNAME=postgres \
 LIQUIBASE_PASSWORD=postgres \
-LIQUIBASE_CHANGELOG="$temp_dir/db/changelog-root.yaml" \
+LIQUIBASE_CHANGELOG=db/changelog-root.yaml \
 "$migration_applier"
 
 # A second startup must be a no-op and must not duplicate schema objects.
@@ -50,7 +53,7 @@ LIQUIBASE_BIN="$liquibase_bin" \
 LIQUIBASE_URL="$jdbc_url" \
 LIQUIBASE_USERNAME=postgres \
 LIQUIBASE_PASSWORD=postgres \
-LIQUIBASE_CHANGELOG="$temp_dir/db/changelog-root.yaml" \
+LIQUIBASE_CHANGELOG=db/changelog-root.yaml \
 "$migration_applier"
 
 DATABASE_URL="$database_url" ZIGMA_ACTUAL_SCHEMA=public "$validator"
@@ -94,7 +97,7 @@ docker exec "$container_name" psql -U postgres -d zigma_test -v ON_ERROR_STOP=1 
 LIQUIBASE_COMMAND_URL="$jdbc_url" \
 LIQUIBASE_COMMAND_USERNAME=postgres \
 LIQUIBASE_COMMAND_PASSWORD=postgres \
-"$liquibase_bin" --changelog-file="$temp_dir/migration-case/changelog-root.yaml" \
+"$liquibase_bin" --changelog-file=migration-case/changelog-root.yaml \
     --default-schema-name=migration_case update >/dev/null
 docker exec "$container_name" psql -U postgres -d zigma_test -v ON_ERROR_STOP=1 -c \
     "DO \$\$ BEGIN
@@ -119,7 +122,7 @@ printf '%s\n' \
 if LIQUIBASE_COMMAND_URL="$jdbc_url" \
    LIQUIBASE_COMMAND_USERNAME=postgres \
    LIQUIBASE_COMMAND_PASSWORD=postgres \
-   "$liquibase_bin" --changelog-file="$temp_dir/migration-case/changelog-root.yaml" \
+   "$liquibase_bin" --changelog-file=migration-case/changelog-root.yaml \
        --default-schema-name=migration_case update >/dev/null 2>&1; then
     echo "Liquibase unexpectedly accepted a failing changeset" >&2
     exit 1
@@ -136,7 +139,7 @@ printf '\nSELECT 2;\n' >>"$temp_dir/db/changes/000001_baseline.sql"
 if LIQUIBASE_COMMAND_URL="$jdbc_url" \
    LIQUIBASE_COMMAND_USERNAME=postgres \
    LIQUIBASE_COMMAND_PASSWORD=postgres \
-   "$liquibase_bin" --changelog-file="$temp_dir/db/changelog-root.yaml" update >/dev/null 2>&1; then
+   "$liquibase_bin" --changelog-file=db/changelog-root.yaml update >/dev/null 2>&1; then
     echo "Liquibase unexpectedly accepted a modified changeset" >&2
     exit 1
 fi

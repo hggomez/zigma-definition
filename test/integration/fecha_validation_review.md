@@ -1,5 +1,9 @@
 # Checkpoint: validación civil de Fecha
 
+Nota de mantenimiento: este informe conserva los resultados históricos. El backend
+temporal fue retirado; la cobertura HTTP actual vive en `run_rest_postgres.sh` y
+`rest_values_http.py`, con PostgreSQL descartable.
+
 Estado: checkpoint aprobado por el usuario e implementación completada.
 Las secciones de baseline y rojos conservan lo observado antes de modificar
 producción; la verificación final figura al cierre. Los cambios previos del usuario
@@ -37,7 +41,7 @@ Además:
 - `test/aida_rest_test.zig`: se actualizó el caso que aceptaba `2025-02-30`.
   Ahora exige `InvalidValue` y falla con la implementación actual. Sus otros dos
   tests pasan.
-- `test/integration/run_testing_backend.py`: exige 400 para fechas inválidas,
+- La integración HTTP de aquel checkpoint exigía 400 para fechas inválidas,
   comprueba que POST no cree una fila y que PUT o filtros rechazados no alteren el
   estado. Conserva las comprobaciones de null y agrega extremos, bisiesto y ambos
   formatos de query. Falla porque POST de `2025-02-30` devuelve 201.

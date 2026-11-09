@@ -12,10 +12,6 @@ pub const PackageFiles = struct {
     frontend_js: std.Build.LazyPath,
     frontend_html: std.Build.LazyPath,
     frontend_api_config: std.Build.LazyPath,
-    testing_backend: std.Build.LazyPath,
-    std_http: std.Build.LazyPath,
-    rest: std.Build.LazyPath,
-    memory_repository: std.Build.LazyPath,
 };
 
 pub fn filesHere(b: *std.Build) PackageFiles {
@@ -26,10 +22,6 @@ pub fn filesHere(b: *std.Build) PackageFiles {
         .frontend_js = b.path("src/frontend/main.js"),
         .frontend_html = b.path("src/frontend/index.html"),
         .frontend_api_config = b.path("src/frontend/api_config.js"),
-        .testing_backend = b.path("src/testing_backend/main.zig"),
-        .std_http = b.path("src/rest/std_http.zig"),
-        .rest = b.path("src/rest/api.zig"),
-        .memory_repository = b.path("src/testing_backend/memory_repository.zig"),
     };
 }
 
@@ -41,22 +33,15 @@ pub fn filesFromDependency(dep: *std.Build.Dependency) PackageFiles {
         .frontend_js = dep.path("src/frontend/main.js"),
         .frontend_html = dep.path("src/frontend/index.html"),
         .frontend_api_config = dep.path("src/frontend/api_config.js"),
-        .testing_backend = dep.path("src/testing_backend/main.zig"),
-        .std_http = dep.path("src/rest/std_http.zig"),
-        .rest = dep.path("src/rest/api.zig"),
-        .memory_repository = dep.path("src/testing_backend/memory_repository.zig"),
     };
 }
 
 pub const AppOptions = struct {
     files: PackageFiles,
     system_root: std.Build.LazyPath,
-    /// Controlador REST del consumidor (`Api`, codecs), requerido por el backend en memoria.
-    rest_root: std.Build.LazyPath,
-    /// Módulo opcional que provee `@import("aida")` a `rest_root`, compartido con el sistema.
-    aida_root: ?std.Build.LazyPath = null,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    /// Contrato expuesto como `@import("contract")` a system_root.
+    /// Si se omite, usa system_root como raíz del contrato.
+    contract_root: ?std.Build.LazyPath = null,
     /// Mapa opcional del consumidor `dominio → widget`, instalado como `widgets.js`.
     widgets_js: ?std.Build.LazyPath = null,
     /// Título opcional de la pestaña, instalado como `title.js` generado.
@@ -64,9 +49,10 @@ pub const AppOptions = struct {
 };
 
 pub const App = struct {
-    testing_backend: *std.Build.Step.Compile,
     frontend: *std.Build.Step.Compile,
-    run_testing_backend: *std.Build.Step.Run,
+    /// Directorio instalado y paso que lo prepara, para conectarlos a addRuntime.
+    frontend_directory: std.Build.LazyPath,
+    frontend_step: *std.Build.Step,
 };
 
 fn zigmaModule(
@@ -99,83 +85,11 @@ fn jsonModule(
     });
 }
 
-/// Compila un backend de pruebas en memoria y un frontend WASM desde el mismo `system`.
-/// (`type_defs` + `entity_defs`; `seeds` opcional). Cada target tiene sus propias
-/// instancias de `zigma` / `zigma_json` / `system`: nativo y WASM no comparten módulos.
+/// Compila e instala el frontend WASM desde `system` (`type_defs` + `entity_defs`).
+/// Su target es wasm32-freestanding y su optimización .small, independientes del backend.
 pub fn addApp(b: *std.Build, opts: AppOptions) App {
     const files = opts.files;
-
-    const zigma_native = zigmaModule(b, files, opts.target, opts.optimize);
-    const aida_root = opts.aida_root orelse opts.system_root;
-    const aida_native = b.createModule(.{
-        .root_source_file = aida_root,
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = zigma_native },
-        },
-    });
-    const system_native = b.createModule(.{
-        .root_source_file = opts.system_root,
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = zigma_native },
-            .{ .name = "aida", .module = aida_native },
-        },
-    });
-    const rest_native = b.createModule(.{
-        .root_source_file = files.rest,
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = zigma_native },
-        },
-    });
-    const app_rest_native = b.createModule(.{
-        .root_source_file = opts.rest_root,
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = zigma_native },
-            .{ .name = "zigma_rest", .module = rest_native },
-            .{ .name = "aida", .module = aida_native },
-        },
-    });
-    const memory_repo_native = b.createModule(.{
-        .root_source_file = files.memory_repository,
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .imports = &.{
-            .{ .name = "zigma_rest", .module = rest_native },
-        },
-    });
-
-    const std_http_native = b.createModule(.{
-        .root_source_file = files.std_http,
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .imports = &.{
-            .{ .name = "zigma_rest", .module = rest_native },
-        },
-    });
-    const testing_backend = b.addExecutable(.{
-        .name = "testing-backend",
-        .root_module = b.createModule(.{
-            .root_source_file = files.testing_backend,
-            .target = opts.target,
-            .optimize = opts.optimize,
-            .imports = &.{
-                .{ .name = "zigma", .module = zigma_native },
-                .{ .name = "zigma_rest", .module = rest_native },
-                .{ .name = "system", .module = system_native },
-                .{ .name = "app_rest", .module = app_rest_native },
-                .{ .name = "memory_repository", .module = memory_repo_native },
-                .{ .name = "zigma_std_http", .module = std_http_native },
-            },
-        }),
-    });
-    b.installArtifact(testing_backend);
+    const contract_root = opts.contract_root orelse opts.system_root;
 
     const wasm_target = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
@@ -185,8 +99,8 @@ pub fn addApp(b: *std.Build, opts: AppOptions) App {
 
     const zigma_wasm = zigmaModule(b, files, wasm_target, wasm_optimize);
     const json_wasm = jsonModule(b, files, zigma_wasm, wasm_target, wasm_optimize);
-    const aida_wasm = b.createModule(.{
-        .root_source_file = aida_root,
+    const contract_wasm = b.createModule(.{
+        .root_source_file = contract_root,
         .target = wasm_target,
         .optimize = wasm_optimize,
         .imports = &.{
@@ -199,7 +113,7 @@ pub fn addApp(b: *std.Build, opts: AppOptions) App {
         .optimize = wasm_optimize,
         .imports = &.{
             .{ .name = "zigma", .module = zigma_wasm },
-            .{ .name = "aida", .module = aida_wasm },
+            .{ .name = "contract", .module = contract_wasm },
         },
     });
 
@@ -254,15 +168,10 @@ pub fn addApp(b: *std.Build, opts: AppOptions) App {
         frontend_step.dependOn(&install_widgets.step);
     }
 
-    const run_testing_backend = b.addRunArtifact(testing_backend);
-    run_testing_backend.has_side_effects = true;
-    const testing_backend_step = b.step("testing-backend", "Ejecutar el backend de pruebas en memoria (sin PostgreSQL)");
-    testing_backend_step.dependOn(&run_testing_backend.step);
-
     return .{
-        .testing_backend = testing_backend,
         .frontend = frontend,
-        .run_testing_backend = run_testing_backend,
+        .frontend_directory = .{ .relative = .{ .base = .install_prefix, .sub_path = "frontend" } },
+        .frontend_step = frontend_step,
     };
 }
 
@@ -272,10 +181,7 @@ pub fn addAppFromDep(
     dep: *std.Build.Dependency,
     opts: struct {
         system_root: std.Build.LazyPath,
-        rest_root: std.Build.LazyPath,
-        aida_root: ?std.Build.LazyPath = null,
-        target: std.Build.ResolvedTarget,
-        optimize: std.builtin.OptimizeMode,
+        contract_root: ?std.Build.LazyPath = null,
         widgets_js: ?std.Build.LazyPath = null,
         title: ?[]const u8 = null,
     },
@@ -283,10 +189,7 @@ pub fn addAppFromDep(
     return addApp(b, .{
         .files = filesFromDependency(dep),
         .system_root = opts.system_root,
-        .rest_root = opts.rest_root,
-        .aida_root = opts.aida_root,
-        .target = opts.target,
-        .optimize = opts.optimize,
+        .contract_root = opts.contract_root,
         .widgets_js = opts.widgets_js,
         .title = opts.title,
     });

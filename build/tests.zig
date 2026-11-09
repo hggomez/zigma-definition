@@ -52,7 +52,7 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
         .root_source_file = b.path("examples/aida/src/system.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "aida", .module = modules.aida }},
+        .imports = &.{.{ .name = "contract", .module = modules.aida }},
     });
     const run_entity_tests = addTestRun(b, target, optimize, "test/concrete_entity_test.zig", &.{
         .{ .name = "zigma", .module = modules.zigma },
@@ -100,7 +100,7 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     });
 
     const run_postgres_migration_tool_tests = addTestRun(b, target, optimize, "migration_tools/postgres_migration_tool.zig", &.{
-        .{ .name = "aida_postgres", .module = modules.aida_postgres },
+        .{ .name = "application_postgres", .module = modules.aida_postgres },
         .{ .name = "zigma_postgres_migrations", .module = modules.postgres_migrations },
     });
 
@@ -185,26 +185,71 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
 
 fn addLauncherTests(b: *std.Build, aida: AidaArtifacts) *std.Build.Step {
     const test_aida_launcher = b.addSystemCommand(&.{"python3"});
-    test_aida_launcher.addFileArg(b.path("test/integration/run_aida_test.py"));
+    test_aida_launcher.addFileArg(b.path("test/integration/run_launcher_test.py"));
     test_aida_launcher.addArtifactArg(aida.launcher);
     const test_aida_launcher_step = b.step("test-aida-launcher", "Probar arranque, configuración y cierre conjunto (Python 3; sin PostgreSQL)");
     test_aida_launcher_step.dependOn(&test_aida_launcher.step);
     return test_aida_launcher_step;
 }
 
+fn addMigrationToolTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, modules: Modules) *std.Build.Step {
+    const run = b.addSystemCommand(&.{"python3"});
+    run.addFileArg(b.path("test/integration/run_migration_tool_test.py"));
+    inline for (.{ false, true }) |extended| {
+        const options = b.addOptions();
+        options.addOption(bool, "extended", extended);
+        const application_postgres = b.createModule(.{
+            .root_source_file = b.path("test/integration/migration_application.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zigma", .module = modules.zigma },
+                .{ .name = "zigma_postgres_ddl", .module = modules.postgres_ddl },
+                .{ .name = "zigma_postgres_migrations", .module = modules.postgres_migrations },
+                .{ .name = "fixture_options", .module = options.createModule() },
+            },
+        });
+        const tool = b.addExecutable(.{
+            .name = if (extended) "extended-consumer-migration-tool" else "base-consumer-migration-tool",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("migration_tools/postgres_migration_tool.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "application_postgres", .module = application_postgres },
+                    .{ .name = "zigma_postgres_migrations", .module = modules.postgres_migrations },
+                },
+            }),
+        });
+        run.addArtifactArg(tool);
+    }
+    run.has_side_effects = true;
+    const step = b.step("test-migration-tool", "Test migration files with an independent consumer (Python 3; no PostgreSQL)");
+    step.dependOn(&run.step);
+    const consumer = b.addSystemCommand(&.{"python3"});
+    consumer.addFileArg(b.path("test/integration/run_migration_consumer_test.py"));
+    consumer.addArg(b.graph.zig_exe);
+    consumer.has_side_effects = true;
+    step.dependOn(&consumer.step);
+    return step;
+}
+
 fn addLocalTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, modules: Modules, unit_tests: *std.Build.Step, launcher_tests: *std.Build.Step) void {
     // Reutiliza las suites del consumidor sin duplicar sus módulos ni fixtures.
-    const test_aida_consumer = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test-backend", "test-frontend" });
-    test_aida_consumer.addArg(b.fmt("-Dtarget={s}", .{target.query.zigTriple(b.allocator) catch @panic("OOM")}));
-    test_aida_consumer.addArg(b.fmt("-Dcpu={s}", .{target.query.serializeCpuAlloc(b.allocator) catch @panic("OOM")}));
-    test_aida_consumer.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
-    if (target.query.ofmt) |ofmt| test_aida_consumer.addArg(b.fmt("-Dofmt={s}", .{@tagName(ofmt)}));
-    if (target.query.dynamic_linker) |linker| test_aida_consumer.addArg(b.fmt("-Ddynamic-linker={s}", .{linker.get() orelse ""}));
+    const test_aida_consumer = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test-frontend" });
     test_aida_consumer.setCwd(b.path("examples/aida"));
     test_aida_consumer.has_side_effects = true;
-    const test_local_step = b.step("test-local", "Probar Zig, frontend, backend en memoria y lanzador (Node y Python; sin PostgreSQL)");
+    const test_local_step = b.step("test-local", "Probar Zig, frontend, transporte HTTP y lanzador (Node y Python; sin PostgreSQL)");
     test_local_step.dependOn(unit_tests);
     test_local_step.dependOn(launcher_tests);
+    test_local_step.dependOn(addMigrationToolTests(b, target, optimize, modules));
+    const runtime_consumer = b.addSystemCommand(&.{"python3"});
+    runtime_consumer.addFileArg(b.path("test/integration/run_runtime_consumer_test.py"));
+    runtime_consumer.addArg(b.graph.zig_exe);
+    runtime_consumer.has_side_effects = true;
+    const runtime_test_step = b.step("test-runtime", "Test the shared launcher and build API with an independent consumer");
+    runtime_test_step.dependOn(&runtime_consumer.step);
+    test_local_step.dependOn(runtime_test_step);
     test_local_step.dependOn(&test_aida_consumer.step);
     const test_build_commands = b.addSystemCommand(&.{"python3"});
     test_build_commands.addFileArg(b.path("test/integration/build_commands_test.py"));
@@ -295,14 +340,63 @@ fn addPostgresTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     );
     rest_postgres_test_step.dependOn(&run_rest_postgres_integration.step);
 
+    const runtime_backend = b.addSystemCommand(&.{"python3"});
+    runtime_backend.addFileArg(b.path("test/integration/run_runtime_consumer_test.py"));
+    runtime_backend.addArg(b.graph.zig_exe);
+    runtime_backend.addArg("--with-libpq");
+    inline for (.{
+        .{ "libpq-prefix", modules.libpq_prefix },
+        .{ "libpq-include", modules.libpq_include },
+        .{ "libpq-lib", modules.libpq_lib },
+    }) |option| {
+        if (option[1]) |value|
+            runtime_backend.addArg(b.fmt("--{s}={s}", .{ option[0], value }));
+    }
+    runtime_backend.addArg("RuntimeConsumerTest.test_backend_guard_and_migration_failure");
+    runtime_backend.has_side_effects = true;
+    const runtime_backend_step = b.step("test-runtime-backend", "Test the shared PostgreSQL entry and migration ordering (requires libpq)");
+    runtime_backend_step.dependOn(&runtime_backend.step);
+    rest_postgres_test_step.dependOn(runtime_backend_step);
+
     const run_migration_tests = b.addSystemCommand(&.{"sh"});
     run_migration_tests.addFileArg(b.path("test/integration/run_migrations.sh"));
     run_migration_tests.addArtifactArg(aida.schema_validator);
     run_migration_tests.addArtifactArg(aida.migration_applier);
     run_migration_tests.addArg(liquibase_bin);
-    run_migration_tests.addDirectoryArg(b.path("."));
+    run_migration_tests.addDirectoryArg(b.path("examples/aida"));
     const migration_test_step = b.step("test-migrations", "Run Liquibase migration tests against disposable PostgreSQL");
     migration_test_step.dependOn(&run_migration_tests.step);
+    const consumer_acceptance = b.addSystemCommand(&.{"python3"});
+    consumer_acceptance.addFileArg(b.path("test/integration/run_migration_consumer_test.py"));
+    consumer_acceptance.addArg(b.graph.zig_exe);
+    consumer_acceptance.addArg("--liquibase");
+    consumer_acceptance.addArg(liquibase_bin);
+    inline for (.{
+        .{ "libpq-prefix", modules.libpq_prefix },
+        .{ "libpq-include", modules.libpq_include },
+        .{ "libpq-lib", modules.libpq_lib },
+    }) |option| {
+        if (option[1]) |value|
+            consumer_acceptance.addArg(b.fmt("--{s}={s}", .{ option[0], value }));
+    }
+    consumer_acceptance.addArg("MigrationConsumerBuildTest.test_acceptance_rejects_wrong_sql_then_accepts_consumer_history");
+    consumer_acceptance.has_side_effects = true;
+    migration_test_step.dependOn(&consumer_acceptance.step);
+    const runtime_integration = b.addSystemCommand(&.{"python3"});
+    runtime_integration.addFileArg(b.path("test/integration/run_runtime_consumer_test.py"));
+    runtime_integration.addArg(b.graph.zig_exe);
+    runtime_integration.addArgs(&.{ "--liquibase", liquibase_bin });
+    inline for (.{
+        .{ "libpq-prefix", modules.libpq_prefix },
+        .{ "libpq-include", modules.libpq_include },
+        .{ "libpq-lib", modules.libpq_lib },
+    }) |option| {
+        if (option[1]) |value|
+            runtime_integration.addArg(b.fmt("--{s}={s}", .{ option[0], value }));
+    }
+    runtime_integration.addArg("RuntimeConsumerTest.test_real_migrations_frontend_and_persistent_crud");
+    runtime_integration.has_side_effects = true;
+    migration_test_step.dependOn(&runtime_integration.step);
 }
 
 fn addCompileErrors(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, modules: Modules, steps: UnitSteps) void {

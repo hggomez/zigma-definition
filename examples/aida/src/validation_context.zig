@@ -1,8 +1,8 @@
 //! La aplicación elige el día civil; el contrato y las reglas no leen el reloj.
 const std = @import("std");
-const aida = @import("aida");
+const contract = @import("contract");
 
-pub const ValidationContext = struct { today: aida.Fecha };
+pub const ValidationContext = struct { today: contract.Fecha };
 
 /// Política de AIDA: UTC−03:00 fijo, independiente de la zona del sistema operativo.
 pub fn contextFromTimestamp(seconds: i64) error{InvalidDate}!ValidationContext {
@@ -23,7 +23,7 @@ pub fn contextFromTimestamp(seconds: i64) error{InvalidDate}!ValidationContext {
     }
     const year_day: epoch.YearAndDay = .{ .year = year, .day = @intCast(remaining) };
     const month_day = year_day.calculateMonthDay();
-    const today: aida.Fecha = .{ .@"año" = year, .mes = month_day.month.numeric(), .@"día" = @as(u8, month_day.day_index) + 1 };
+    const today: contract.Fecha = .{ .@"año" = year, .mes = month_day.month.numeric(), .@"día" = @as(u8, month_day.day_index) + 1 };
     try today.validate();
     return .{ .today = today };
 }

@@ -1,16 +1,16 @@
-//! Referencias capturadas antes de implementar el modelo normalizado.
-//! Cambiar las firmas de las APIs no debe cambiar estos bytes.
+//! Referencias independientes del modelo normalizado, actualizadas con el contrato AIDA.
+//! Cambiar la implementación de los generadores no debe cambiar estos bytes.
 const std = @import("std");
 const postgres = @import("aida_postgres");
 
-test "AIDA baseline DDL remains byte-identical to its pre-model reference" {
+test "AIDA baseline DDL matches its independent reference" {
     try std.testing.expectEqualStrings(
         @embedFile("fixtures/aida-baseline-before-model.sql"),
         postgres.baseline_ddl,
     );
 }
 
-test "AIDA snapshot remains byte-identical to its pre-model reference" {
+test "AIDA snapshot matches its independent reference" {
     try std.testing.expectEqualStrings(
         @embedFile("fixtures/aida-snapshot-before-model.json"),
         postgres.schema_snapshot,

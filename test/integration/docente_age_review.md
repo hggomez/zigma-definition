@@ -1,5 +1,9 @@
 # Validación de edad de docente — verificación
 
+Nota de mantenimiento: los resultados conservan el estado de aquel checkpoint.
+La implementación temporal en memoria fue retirada; la cobertura HTTP actual usa
+PostgreSQL descartable.
+
 Implementación realizada después de aprobar los casos preparados, el 29 de octubre
 de 2026. El checkpoint incluyó 25 tests Zig, tres rechazos de compilación, un
 servidor de contexto controlado y casos HTTP compartidos por ambos backends.

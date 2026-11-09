@@ -1,5 +1,8 @@
 # Revisión del refactor JSON y frontend
 
+Informe histórico de ese refactor. El backend temporal de aquella revisión fue
+retirado; las instrucciones de ejecución siguientes usan las suites vigentes.
+
 El checkpoint de tests rojos fue revisado y se implementaron el catálogo basado en
 Model, la escritura con std.json y los controles de nulabilidad. Los cambios previos
 del arranque conjunto y la configuración del frontend se conservan.
@@ -39,7 +42,6 @@ Desde `examples/aida`:
 
 ```sh
 zig build test-frontend --summary all
-zig build test-backend --summary all
 ```
 
 `test-json` ejecuta las pruebas JSON anteriores y los nuevos casos de escaping y
@@ -53,13 +55,13 @@ grande. Comprueba el protocolo de buffers, las solicitudes emitidas y sus valore
 Las funciones JavaScript de controles escalares se ejecutan en un contexto aislado
 con elementos mínimos; no sustituyen las comprobaciones visuales siguientes.
 
-`test-backend` usa un proceso y puerto propios, sin PostgreSQL. Incluye texto que
-necesita escaping, conservación de null al editar otro campo, booleanos
-null/false/true y fechas presentes/ausentes.
+Para la cobertura HTTP vigente, desde la raíz ejecutá
+`zig build test-rest-postgres -Dlibpq-prefix=...`: usa una base descartable y comprueba
+escaping, conservación de null al editar, booleanos null/false/true y fechas.
 
 ## Comprobación de navegador después de implementar
 
-Usar frontend y backend de pruebas con procesos y puertos propios. No utilizar la
+Usar el frontend y el servidor PostgreSQL con una base descartable, procesos y puertos propios. No utilizar la
 base de datos del usuario. Verificar tanto la interfaz como el cuerpo HTTP enviado.
 
 1. Crear una materia con comillas, barra invertida y Unicode en la denominación;

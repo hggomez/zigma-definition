@@ -1,9 +1,9 @@
-//! Aplicación del historial de AIDA sin iniciar HTTP: valida el snapshot en compilación
+//! Aplicación del historial del consumidor sin iniciar HTTP: valida el snapshot en compilación
 //! y solicita a Liquibase que aplique las migraciones versionadas en runtime.
 
 const std = @import("std");
 const liquibase = @import("zigma_liquibase_runner");
-const schema_guard = @import("aida_schema_guard");
+const schema_guard = @import("schema_guard");
 
 comptime {
     // El estado deseado en compilación debe coincidir con el snapshot aceptado versionado.
@@ -27,5 +27,5 @@ pub fn main(init: std.process.Init) !void {
         .schema_name = init.environ_map.get("LIQUIBASE_SCHEMA") orelse "public",
     });
 
-    std.debug.print("AIDA Liquibase migrations applied successfully\n", .{});
+    std.debug.print("Liquibase migrations applied successfully\n", .{});
 }

@@ -2,14 +2,14 @@
 
 const zigma = @import("zigma");
 const rest = @import("zigma_rest");
-const aida = @import("aida");
+const contract = @import("contract");
 const fecha_wire = @import("fecha_wire.zig");
 const context = @import("validation_context.zig");
 pub const ValidationContext = context.ValidationContext;
 pub const ContextProvider = context.ContextProvider;
 pub const contextFromTimestamp = context.contextFromTimestamp;
 
-pub const codecs = rest.defineCodecs(aida.type_defs, zigma.merge(.{
+pub const codecs = rest.defineCodecs(contract.type_defs, zigma.merge(.{
     rest.common_codecs,
     .{
         .fecha = fecha_wire.codec,
@@ -20,8 +20,8 @@ pub const codecs = rest.defineCodecs(aida.type_defs, zigma.merge(.{
 /// Permite probar directamente el codec de Fecha.
 pub const date_codec = fecha_wire.codec;
 
-fn validateDocenteBusinessRules(value: aida.Docente, request_context: ValidationContext) ?rest.BusinessRuleViolation {
-    aida.validarDocente(value, request_context.today) catch |err| return switch (err) {
+fn validateDocenteBusinessRules(value: contract.Docente, request_context: ValidationContext) ?rest.BusinessRuleViolation {
+    contract.validarDocente(value, request_context.today) catch |err| return switch (err) {
         error.TeoricoRequiereCincoAniosExperiencia => .{
             .code = "teorico_requires_five_years_experience",
             .message = "A docente with cargo 'teorico' requires at least 5 years of experiencia",
@@ -48,8 +48,8 @@ fn validateDocenteBusinessRules(value: aida.Docente, request_context: Validation
     return null;
 }
 
-pub const business_validators = rest.defineBusinessValidators(aida.Model, .{
-    .docentes = rest.BusinessValidator(aida.Docente, ValidationContext){ .validate = validateDocenteBusinessRules },
+pub const business_validators = rest.defineBusinessValidators(contract.Model, .{
+    .docentes = rest.BusinessValidator(contract.Docente, ValidationContext){ .validate = validateDocenteBusinessRules },
 });
 
-pub const Api = rest.Api(aida.Model, codecs, business_validators);
+pub const Api = rest.Api(contract.Model, codecs, business_validators);

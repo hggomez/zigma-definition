@@ -1,7 +1,8 @@
-//! Flujo del repositorio para snapshots y archivos de drafts de migraciones Liquibase.
+//! Flujo de archivos de la aplicación para snapshots y drafts Liquibase.
+//! `application_postgres` publica `schema_snapshot` y `baseline_ddl`.
 
 const std = @import("std");
-const postgres = @import("aida_postgres");
+const postgres = @import("application_postgres");
 const migrations = @import("zigma_postgres_migrations");
 
 // Las rutas relativas al repositorio son una política fija de esta herramienta.

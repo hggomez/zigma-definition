@@ -1,11 +1,14 @@
-# Referencias anteriores al modelo normalizado
+# Referencias de regresión de AIDA
 
-Capturadas de los generadores actuales antes de cambiar sus APIs. El snapshot
-coincide byte por byte con `db/schema.snapshot.json`. Estos archivos son referencias
-de regresión; no se deben regenerar para hacer pasar los tests del refactor.
+Estas referencias se capturaron antes del modelo normalizado y conservan sus nombres
+originales. Se actualizaron explícitamente con los campos `esImportador` y
+`fecha_nacimiento` del contrato de AIDA. El snapshot coincide byte por byte con
+[`examples/aida/db/schema.snapshot.json`](../../examples/aida/db/schema.snapshot.json).
+No se deben regenerar automáticamente para hacer pasar un refactor de los generadores;
+los cambios del contrato requieren revisar las expectativas y actualizar estos hashes.
 
 | Archivo | SHA-256 |
 |---|---|
-| `aida-baseline-before-model.sql` | `3c6ad2d155f3fdeae29c96a93dc43e30a622a0caccbed4c7d1a16a21dc8da444` |
-| `aida-bootstrap-before-model.sql` | `7a6d3299f1f25bf8d019c5b4810bf66c88938158f2abb09d6596e00f3b4b5c2c` |
-| `aida-snapshot-before-model.json` | `83989128c7df6892319e5383c09c5912577569454fc9198c9a5d16064aa61f0b` |
+| `aida-baseline-before-model.sql` | `0f2a4c19d1b01e860f4605223fc64d8edff9b066a6fea5b2cde7050fcb31ea8b` |
+| `aida-bootstrap-before-model.sql` | `673f041874023dfa5ace9273afb11563252efc0ff9af1b20c6185ede9f0ca08a` |
+| `aida-snapshot-before-model.json` | `ad7b33e81d0204f14e86c4ce6b7bea07afcc04ae65f24af663b1a467adfee717` |

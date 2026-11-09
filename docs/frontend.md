@@ -10,14 +10,16 @@ This document is the layer in detail: first how the pieces sit together, then ev
 
 ## 1. Mid-high level: parts and how they interact
 
-Three runtimes, one `system` file compiled twice (host vs `wasm32-freestanding`). The descriptor (`zigma`) does not import generators. Both generators import `zigma` and the injected `system`.
+El contrato se evalúa para WASM y para el servidor nativo. `addAppFromDep` construye el frontend; `addRuntimeFromDep` compone el servidor con el contrato y la API de la aplicación. El descriptor (`zigma`) no importa generadores.
 
 ```mermaid
 flowchart TB
   subgraph compile["Compile time — examples/aida"]
     aida["aida.zig<br/>type_defs + entity_defs"]
-    sys["system.zig<br/>re-exports Defs + optional seeds"]
-    addApp["build.zig addAppFromDep"]
+    sys["system.zig<br/>re-exports Defs"]
+    addApp["examples/aida/build.zig: addAppFromDep"]
+    runtime["build/aida.zig: addRuntime"]
+    aida --> runtime
     aida --> sys
     sys --> addApp
   end
@@ -28,13 +30,11 @@ flowchart TB
     js["frontend/main.js<br/>copied as-is"]
     titlejs["frontend/title.js<br/>generated document.title"]
     wjs["frontend/widgets.js<br/>optional consumer copy"]
-    bin["bin/testing-backend"]
     addApp -->|"compile main.zig<br/>wasm32, rdynamic, export memory"| wasm
     addApp -->|"copy"| html
     addApp -->|"copy"| js
     addApp -->|"WriteFile title.js"| titlejs
     addApp -->|"copy if widgets_js"| wjs
-    addApp -->|"compile testing_backend/main.zig<br/>host target"| bin
   end
 
   subgraph browser["Browser — origin :8000"]
@@ -51,8 +51,12 @@ flowchart TB
   subgraph server["Backend — :8080"]
     transport["std_http.serve<br/>HTTP + CORS"]
     api["API REST de AIDA"]
-    lists["MemoryRepository<br/>filas en memoria"]
-    bin --> transport --> api --> lists
+    bin["src/server.zig<br/>aida-backend"]
+    repository["crud.Repository(Model)"]
+    db["PostgreSQL"]
+    runtime --> bin
+    bin -->|"Liquibase update"| db
+    bin --> transport --> api --> repository --> db
   end
 
   mainjs -->|"GET/POST /api/{entity}<br/>PUT/DELETE /api/{entity}?pk…"| bin
@@ -62,8 +66,8 @@ flowchart TB
 
 | Boundary | Contract |
 | --- | --- |
-| `system.zig` → WASM | Same `type_defs` / `entity_defs` baked into `frontend.wasm`. El catálogo se genera con `stringifyEntityCatalog(Model, buf)` sobre `Model.info`. Seeds are **not** in WASM. |
-| `system.zig` → HTTP | Same Defs plus optional `seeds`. Seeds se convierten a celdas del repositorio en memoria al iniciar. |
+| `system.zig` → WASM | Same `type_defs` / `entity_defs` baked into `frontend.wasm`. El catálogo se genera con `stringifyEntityCatalog(Model, buf)` sobre `Model.info`. |
+| Contrato + REST → servidor | `contract.Model` y `application_rest.Api` comparten los tipos nativos. Los datos iniciales pertenecen al historial SQL de la aplicación. |
 | HTML → JS | Shell only: `#entity-nav`, `#sheet-title`, `#sheet-table` (`thead`/`tbody`/`tfoot`), `#status`. `<script src="title.js">` sets `document.title` from `addApp` `.title` (empty if omitted). No columns until JS runs. |
 | JS → WASM exports | Pointer/length accessors plus `build_row(entity_index)` / `create_row(entity_index)`. `entity_index` is field order on `entity_defs` (same order as the catalog array). |
 | WASM → JS import | `env.js_send_post(ptr, len)`: Zig has already written row JSON into `json_buf`; JS reads that slice and `fetches` `POST`. Zig does **not** await the Promise (the POST is fire-and-forget from WASM’s point of view; JS still `await`s inside the import). |
@@ -128,11 +132,9 @@ Notation: `file: function` then callees. Browser APIs are included when they are
 
 ```
 examples/aida/build.zig
-  └─ @import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .rest_root, .aida_root?, .widgets_js?, .title?, .target, .optimize })
+  └─ @import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .contract_root?, .widgets_js?, .title? })
        └─ build.zig: addApp
-            ├─ zigma + aida/system + REST + repositorio en memoria + std_http (host)
-            │    └─ testing-backend executable ← src/testing_backend/main.zig
-            ├─ zigma + zigma_json + aida/system         (wasm32-freestanding, .small)
+            ├─ zigma + zigma_json + contract/system         (wasm32-freestanding, .small)
             │    └─ frontend executable ← src/frontend/main.zig
             │         .entry = .disabled, .rdynamic, .export_memory
             ├─ install artifact → zig-out/frontend/frontend.wasm
@@ -273,8 +275,9 @@ loadRows()
 Backend:
 
 ```text
-testing_backend/main.zig: main
-  MemoryRepository.init → seed → app_rest.Api.init
+src/server.zig: main
+  liquibase.update → libpq.connect → setSearchPath
+  application_rest.Api.init → crud.Repository(Model).init
   std_http.serve
     acepta la conexión y construye una Request
     api.handle(GET /api/{entity}?filtros)
@@ -547,16 +550,17 @@ JS does not call this explicitly; `fetch` does.
 | `src/frontend/main.js` | Nav + table from catalog; packing; GET/POST/PUT/DELETE; optional `./widgets.js` |
 | `src/frontend/index.html` | Empty shell + CSS; loads `title.js` and `api-config.js` before `main.js` |
 | `src/frontend/api_config.js` | URL por defecto de la API; `run-aida` la configura en runtime |
-| `src/testing_backend/main.zig` | Compone API, repositorio, seeds y `std_http.serve` |
-| `src/testing_backend/memory_repository.zig` | CRUD en memoria para pruebas |
+| `src/server.zig` | Compone Liquibase, libpq, la API del consumidor y `std_http.serve` |
+| `src/postgres/crud.zig` | Repositorio SQL derivado de Model |
 | `src/rest/std_http.zig` | Socket adapter for `zigma_rest`; CORS + `OPTIONS` |
 | `examples/aida/src/aida.zig` | Domain Defs (vocabulary fixture) |
-| `examples/aida/src/system.zig` | Wired as `system` (Defs + demo seeds) |
+| `examples/aida/src/system.zig` | Wired as `system` (Defs) |
 | `examples/aida/src/widgets.js` | Domain type → widget (`fecha` date picker) |
 | `examples/aida/build.zig` | Consumer: `addAppFromDep` |
-| `build.zig` `addApp` | Native HTTP + WASM + copy of html/js (+ generated `title.js`, optional `widgets.js`) |
+| `build.zig` `addApp` | WASM + copy of html/js (+ generated `title.js`, optional `widgets.js`) |
 
-Nothing is written to disk at runtime. Restarting the backend restores `seeds`.
+El backend persiste las modificaciones en PostgreSQL; reiniciarlo conserva las filas.
+Los datos de demostración de AIDA se aplican una vez mediante su historial Liquibase.
 
 
 ## Verificación
@@ -564,6 +568,7 @@ Nothing is written to disk at runtime. Restarting the backend restores `seeds`.
 En la raíz, `zig build test-json` verifica serialización y catálogo, con contratos
 AIDA y alternativos. Desde `examples/aida`, `zig build test-frontend` usa Node y el
 WASM compilado para verificar tipos, nulabilidad, errores de buffers y controles
-escalares; `zig build test-backend` verifica HTTP en un proceso propio (Python 3).
+escalares. Desde la raíz, `zig build test-rest-postgres` verifica HTTP con PostgreSQL
+descartable, incluidos escaping, CORS, nulabilidad y fechas.
 La guía de comprobaciones visuales está en
 [frontend_review.md](../test/integration/frontend_review.md).

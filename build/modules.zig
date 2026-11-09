@@ -18,6 +18,10 @@ pub const Modules = struct {
     liquibase_runner: *std.Build.Module,
     aida_postgres: *std.Build.Module,
     postgres_libpq: *std.Build.Module,
+    // Conserva las opciones ya declaradas para reenviarlas al paquete de prueba.
+    libpq_prefix: ?[]const u8,
+    libpq_include: ?[]const u8,
+    libpq_lib: ?[]const u8,
 };
 
 /// Crea una sola instancia de cada módulo para el target y la optimización elegidos.
@@ -80,7 +84,7 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .imports = &.{
             .{ .name = "zigma", .module = zigma_mod },
             .{ .name = "zigma_rest", .module = rest_mod },
-            .{ .name = "aida", .module = aida_mod },
+            .{ .name = "contract", .module = aida_mod },
         },
     });
 
@@ -184,5 +188,8 @@ pub fn create(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.bui
         .liquibase_runner = liquibase_runner_mod,
         .aida_postgres = aida_postgres_mod,
         .postgres_libpq = postgres_libpq_mod,
+        .libpq_prefix = libpq_prefix,
+        .libpq_include = libpq_include,
+        .libpq_lib = libpq_lib,
     };
 }

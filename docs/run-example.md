@@ -1,62 +1,49 @@
-# Ejecutar el frontend con el backend de pruebas
+# Ejecutar AIDA y su frontend
 
-El ejemplo `examples/aida/` consume el framework y compila un frontend WASM y un
-backend de pruebas en memoria. Ambos usan el contrato de AIDA. El backend reutiliza
-la API REST y el transporte `std_http` del servidor PostgreSQL; no requiere base de
-datos, libpq ni Liquibase. Al terminar el proceso se pierden las modificaciones.
-
-La arquitectura del frontend está en [frontend.md](frontend.md); la composición del
-build, en [build.md](build.md).
-
-Para iniciar el frontend con el backend real y PostgreSQL, desde la raíz ejecutá
-`zig build run-aida` con las opciones de libpq y las variables de conexión del
-[README](../README.md#arrancar-aida-con-postgresql). Ese comando gestiona ambos servidores
-y su cierre. Los pasos siguientes corresponden al backend de pruebas en memoria.
+AIDA usa el frontend WASM del framework y el servidor compartido `src/server.zig`,
+que aplica el historial de Liquibase y persiste mediante PostgreSQL. Su composición
+está en `build/aida.zig`. La arquitectura del frontend está en [frontend.md](frontend.md)
+y la del build, en [build.md](build.md).
 
 ## Inicio rápido
 
-Desde la raíz del repositorio, en una terminal:
+Prepará PostgreSQL, libpq, Liquibase y las variables de conexión siguiendo el
+[README](../README.md#arrancar-aida-con-postgresql). Desde la raíz:
 
 ```sh
-cd examples/aida
-zig build testing-backend
+zig build run-aida -Dlibpq-prefix=/opt/homebrew/opt/libpq
 ```
 
-El mensaje inicial indica `Testing backend (in memory) listening on http://127.0.0.1:8080/api`.
+El comando compila el frontend, inicia el backend y espera a que termine de aplicar
+las migraciones. Abrí `http://127.0.0.1:8000/`. Ctrl+C cierra ambos procesos.
+El historial vive en `examples/aida/db/`; los procesos arrancan desde `examples/aida/`
+para resolver `db/changelog-root.yaml`. Los datos de demostración se incorporan por
+el changeset SQL aceptado y las modificaciones persisten al reiniciar.
 
-En otra terminal, también desde la raíz:
+## Compilar o servir el frontend por separado
+
+Desde `examples/aida/`:
 
 ```sh
-cd examples/aida
-zig build frontend
-python3 -m http.server 8000 --directory zig-out/frontend
+zig build
+zig build test-frontend # Node; catálogo, controles y WASM
+python3 -m http.server 8000 --bind 127.0.0.1 --directory zig-out/frontend
 ```
 
-Abrí <http://localhost:8000/>. La página consulta el backend en el puerto 8080 y permite
-listar, crear, modificar y eliminar filas. CORS se resuelve en el transporte compartido.
-Los seeds se cargan al iniciar el backend; reiniciarlo restaura esos datos.
-
-## Compilación y configuración
-
-Desde `examples/aida/`, `zig build` instala ambos artefactos:
-
-- `zig-out/bin/testing-backend`: ejecutable del backend de pruebas.
-- `zig-out/frontend/`: `frontend.wasm`, HTML, JavaScript, título y widgets del ejemplo.
-
-También podés ejecutar el binario directamente:
+`zig build` instala únicamente `zig-out/frontend/`: WASM, HTML, JavaScript, título
+y widgets. Compilar o probar el frontend no requiere libpq ni una base de datos.
+Para consultar o modificar filas desde la página debe estar disponible la API.
+Podés iniciarla por separado, desde la raíz y con las mismas variables de conexión:
 
 ```sh
-./zig-out/bin/testing-backend
+zig build run-aida-rest -Dlibpq-prefix=/opt/homebrew/opt/libpq
 ```
 
-`HTTP_ADDRESS` y `HTTP_PORT` permiten cambiar la dirección y el puerto. Los valores por
-default son `127.0.0.1` y `8080`. Cuando servís el frontend de forma independiente, su URL
-de API está en `src/frontend/api_config.js`; si cambiás el puerto del backend de pruebas,
-ajustá esa configuración y recompilá el frontend. El arranque conjunto `run-aida` configura
-la URL automáticamente mediante la respuesta de `/api-config.js`.
-
-Este servidor anuncia su dirección al iniciar; la lectura de solicitudes, CORS,
-límites y respuestas HTTP quedan a cargo de `src/rest/std_http.zig`.
+`HTTP_ADDRESS` y `HTTP_PORT` configuran la API (default `127.0.0.1:8080`). Cuando
+servís los archivos por separado, `api-config.js` configura `globalThis.ZIGMA_API_BASE`;
+si cambiás la URL de la API, ajustá ese archivo en tu despliegue. El lanzador conjunto
+resuelve la configuración automáticamente y acepta `FRONTEND_PORT` (default `8000`)
+y `ZIGMA_STARTUP_TIMEOUT` (default `120` segundos).
 
 ## Probar la API
 
@@ -84,42 +71,40 @@ curl -i -X PUT 'http://localhost:8080/api/materias?materia=REDES' \
 curl -i -X DELETE 'http://localhost:8080/api/materias?materia=REDES'
 ```
 
-Desde `examples/aida/`, esta comprobación requiere Python 3 y usa un proceso y puerto
-propios, sin modificar los datos de otro backend que esté ejecutándose:
+## Verificaciones
+
+Desde la raíz, `zig build test-local` prueba Zig, frontend, consumidores, transporte
+HTTP y lanzador sin servicios externos. Para probar CRUD, CORS, valores nullable,
+fechas y reglas con una base PostgreSQL descartable:
 
 ```sh
-zig build test-backend
-zig build test-frontend # requiere Node; ejecuta el WASM y controles escalares
+zig build test-rest-postgres -Dlibpq-prefix=/opt/homebrew/opt/libpq
+zig build test-migrations -Dlibpq-prefix=/opt/homebrew/opt/libpq -Dliquibase-bin=/ruta/a/liquibase
 ```
 
-Verifica seeds, CORS, filtros, CRUD, reglas de negocio y que el reinicio descarte los
-cambios. El repositorio en memoria no reproduce todas las restricciones y garantías de
-PostgreSQL; las integraciones con la base se ejecutan por separado.
-
-Desde la raíz, `zig build test-local` coordina estas dos suites junto con la suite Zig,
-los tests del lanzador y los nombres públicos de comandos, sin requerir PostgreSQL.
+Las integraciones usan procesos, puertos y bases propios. `test-migrations` también
+comprueba el runtime de un consumidor independiente, su frontend y la persistencia
+tras reiniciar el backend.
 
 ## Archivos principales
 
 | Archivo | Responsabilidad |
 | --- | --- |
 | `examples/aida/src/aida.zig` | Contrato de AIDA. |
-| `examples/aida/src/system.zig` | Contrato y seeds del ejemplo. |
+| `examples/aida/src/system.zig` | Adaptador del contrato para el frontend. |
 | `examples/aida/src/rest.zig` | Codecs y API de AIDA, compartidos con el servidor PostgreSQL. |
 | `examples/aida/src/validation_context.zig` | Obtiene el día civil por solicitud (UTC−03:00 fijo) para validar edad. |
 | `examples/aida/src/postgres.zig` | Mappings y artefactos PostgreSQL del contrato. |
-| `examples/aida/src/main.zig` | Entrada de AIDA con PostgreSQL y frontend; la raíz la ejecuta con `zig build run-aida`. |
-| `examples/aida/src/server.zig` | Backend real con Liquibase, libpq y HTTP. |
-| `examples/aida/build.zig` | Compone el frontend y backend de pruebas; publica `test-backend` y `test-frontend`. |
-| `src/testing_backend/main.zig` | Inicializa API, seeds y repositorio; llama a `std_http.serve`. |
-| `src/testing_backend/memory_repository.zig` | CRUD en memoria. |
+| `examples/aida/db/` | Historial de migraciones y snapshot aceptado de AIDA. |
+| `src/runtime/launcher.zig` | Lanzador compartido; AIDA lo compone con `addRuntime` y lo ejecuta con `zig build run-aida`. |
+| `src/server.zig` | Backend compartido con Liquibase, libpq y la API del consumidor. |
+| `examples/aida/build.zig` | Compone e instala el frontend; publica `frontend` y `test-frontend`. |
 | `src/rest/std_http.zig` | Transporte HTTP compartido y CORS. |
 | `src/frontend/` | Cliente WASM y recursos de la página. |
 
 El módulo REST del consumidor publica `Api`. Si `Api.ValidationContext` no es
 `void`, también publica `ContextProvider`, inicializable con `.io`, cuyo método
-`get()` devuelve el contexto o un error. AIDA lo comparte entre el backend en
-memoria y el servidor PostgreSQL; toma la fecha una vez por solicitud. Con contexto
-`void`, el backend de pruebas usa automáticamente `std_http.EmptyContextProvider`.
+`get()` devuelve el contexto o un error. El servidor toma la fecha una vez por solicitud. Con contexto
+`void`, usa automáticamente `std_http.EmptyContextProvider`.
 
 Para ejecutar AIDA con PostgreSQL y migraciones, consultá el [README](../README.md).

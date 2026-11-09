@@ -3,18 +3,18 @@
 
 const std = @import("std");
 const rest = @import("zigma_rest");
-const aida = @import("aida");
+const contract = @import("contract");
 
-fn dateToPostgres(allocator: std.mem.Allocator, fecha: aida.Fecha) rest.CodecError![]const u8 {
+fn dateToPostgres(allocator: std.mem.Allocator, fecha: contract.Fecha) rest.CodecError![]const u8 {
     const iso = fecha.toIso() catch return error.InvalidValue;
     return allocator.dupe(u8, &iso);
 }
 
 fn dateFromQuery(allocator: std.mem.Allocator, value: []const u8) rest.CodecError![]const u8 {
-    if (aida.Fecha.fromIso(value)) |fecha| {
+    if (contract.Fecha.fromIso(value)) |fecha| {
         return dateToPostgres(allocator, fecha);
     } else |_| {}
-    const fecha = std.json.parseFromSliceLeaky(aida.Fecha, allocator, value, .{}) catch |err| return switch (err) {
+    const fecha = std.json.parseFromSliceLeaky(contract.Fecha, allocator, value, .{}) catch |err| return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         else => error.InvalidValue,
     };
@@ -22,7 +22,7 @@ fn dateFromQuery(allocator: std.mem.Allocator, value: []const u8) rest.CodecErro
 }
 
 fn dateFromJson(allocator: std.mem.Allocator, value: std.json.Value) rest.CodecError![]const u8 {
-    const fecha = std.json.parseFromValueLeaky(aida.Fecha, allocator, value, .{}) catch |err| return switch (err) {
+    const fecha = std.json.parseFromValueLeaky(contract.Fecha, allocator, value, .{}) catch |err| return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
         else => error.InvalidValue,
     };
@@ -30,7 +30,7 @@ fn dateFromJson(allocator: std.mem.Allocator, value: std.json.Value) rest.CodecE
 }
 
 fn dateToJson(allocator: std.mem.Allocator, value: []const u8) rest.CodecError!std.json.Value {
-    const fecha = aida.Fecha.fromIso(value) catch return error.InvalidValue;
+    const fecha = contract.Fecha.fromIso(value) catch return error.InvalidValue;
     var object: std.json.ObjectMap = .empty;
     errdefer object.deinit(allocator);
     try object.put(allocator, "año", .{ .integer = fecha.@"año" });

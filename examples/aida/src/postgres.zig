@@ -16,9 +16,6 @@ pub const type_mappings = postgres_ddl.defineTypeMappings(zigma.merge(.{
     },
 }));
 
-// Los dos artefactos siguientes son strings comptime derivados de las mismas
-// entidades y mappings. Tienen distintos propósitos: JSON es el modelo aceptado
-// para comparar; SQL crea un schema físico nuevo.
 pub const schema_snapshot = postgres_migrations.createSchemaSnapshot(
     aida.Model,
     type_mappings,
