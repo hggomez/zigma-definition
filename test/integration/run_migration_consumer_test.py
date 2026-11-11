@@ -26,13 +26,21 @@ class MigrationConsumerBuildTest(unittest.TestCase):
         workspace = tempfile.TemporaryDirectory(prefix="zigma migration consumer ")
         self.addCleanup(workspace.cleanup)
         self.root = Path(workspace.name).resolve()
+        # El consumidor recibe fuentes exclusivamente desde src/, sin una carpeta
+        # adicional de herramientas ni aplicaciones del repositorio de desarrollo.
+        framework = self.root / "framework"
+        framework.mkdir()
+        for name in ("build.zig", "build.zig.zon"):
+            shutil.copyfile(ROOT / name, framework / name)
+        shutil.copytree(ROOT / "build", framework / "build")
+        (framework / "src").symlink_to(ROOT / "src", target_is_directory=True)
         shutil.copyfile(ROOT / "test/integration/migration_consumer_build.zig", self.root / "build.zig")
         shutil.copyfile(ROOT / "test/integration/migration_application.zig", self.root / "postgres.zig")
         (self.root / "build.zig.zon").write_text(
             '.{ .name = .migration_consumer, .version = "0.0.0", '
             '.fingerprint = 0x61be1bea1581417f, '
             '.minimum_zig_version = "0.17.0-dev.1818+7051f8e73", '
-            '.dependencies = .{ .zigma_definition = .{ .path = ' + json.dumps(os.path.relpath(ROOT, self.root)) + ' } }, '
+            '.dependencies = .{ .zigma_definition = .{ .path = "framework" } }, '
             '.paths = .{ "build.zig", "build.zig.zon", "postgres.zig", "db" } }\n'
         )
 

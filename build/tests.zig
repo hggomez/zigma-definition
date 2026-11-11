@@ -4,18 +4,19 @@
 
 const std = @import("std");
 const Modules = @import("modules.zig").Modules;
-const AidaArtifacts = @import("aida.zig").Artifacts;
+const fixtures = @import("test_fixtures.zig");
+const AidaArtifacts = fixtures.Aida;
 
 pub fn addSteps(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     modules: Modules,
-    aida: AidaArtifacts,
     liquibase_bin: []const u8,
 ) void {
+    const aida = fixtures.createAida(b, target, optimize, modules);
     const unit = addUnitTests(b, target, optimize, modules, aida);
-    addCompileErrors(b, target, optimize, modules, unit);
+    addCompileErrors(b, target, optimize, modules, aida, unit);
     const launcher = addLauncherTests(b, aida);
     addLocalTests(b, target, optimize, modules, unit.all, launcher);
     addPostgresTests(b, target, optimize, modules, aida, liquibase_bin);
@@ -44,7 +45,7 @@ fn addTestRun(
 fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, modules: Modules, aida: AidaArtifacts) UnitSteps {
     const run_tests = addTestRun(b, target, optimize, "test/aida_test.zig", &.{
         .{ .name = "zigma", .module = modules.zigma },
-        .{ .name = "aida", .module = modules.aida },
+        .{ .name = "aida", .module = aida.modules.contract },
     });
 
     const model_test_step = b.step("test-model", "Test normalized contract metadata and generated model types");
@@ -52,11 +53,11 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
         .root_source_file = b.path("examples/aida/src/system.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = &.{.{ .name = "contract", .module = modules.aida }},
+        .imports = &.{.{ .name = "contract", .module = aida.modules.contract }},
     });
     const run_entity_tests = addTestRun(b, target, optimize, "test/concrete_entity_test.zig", &.{
         .{ .name = "zigma", .module = modules.zigma },
-        .{ .name = "aida", .module = modules.aida },
+        .{ .name = "aida", .module = aida.modules.contract },
         .{ .name = "aida_system", .module = aida_system },
     });
     model_test_step.dependOn(&run_entity_tests.step);
@@ -69,8 +70,8 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     }) |file| {
         const run_model_tests = addTestRun(b, target, optimize, b.fmt("test/{s}", .{file}), &.{
             .{ .name = "zigma", .module = modules.zigma },
-            .{ .name = "aida", .module = modules.aida },
-            .{ .name = "aida_postgres", .module = modules.aida_postgres },
+            .{ .name = "aida", .module = aida.modules.contract },
+            .{ .name = "aida_postgres", .module = aida.modules.postgres },
             .{ .name = "zigma_rest", .module = modules.rest },
             .{ .name = "zigma_postgres_ddl", .module = modules.postgres_ddl },
             .{ .name = "zigma_postgres_migrations", .module = modules.postgres_migrations },
@@ -81,26 +82,26 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
 
     const run_postgres_ddl_tests = addTestRun(b, target, optimize, "test/postgres_ddl_test.zig", &.{
         .{ .name = "zigma", .module = modules.zigma },
-        .{ .name = "aida", .module = modules.aida },
+        .{ .name = "aida", .module = aida.modules.contract },
         .{ .name = "zigma_postgres_ddl", .module = modules.postgres_ddl },
     });
 
     const run_postgres_executor_ddl_tests = addTestRun(b, target, optimize, "test/postgres_executor_ddl_test.zig", &.{
         .{ .name = "zigma", .module = modules.zigma },
-        .{ .name = "aida", .module = modules.aida },
+        .{ .name = "aida", .module = aida.modules.contract },
         .{ .name = "zigma_postgres_ddl", .module = modules.postgres_ddl },
         .{ .name = "zigma_postgres_executor_ddl", .module = modules.postgres_executor_ddl },
     });
 
     const run_postgres_migrations_tests = addTestRun(b, target, optimize, "test/postgres_migrations_test.zig", &.{
         .{ .name = "zigma", .module = modules.zigma },
-        .{ .name = "aida", .module = modules.aida },
+        .{ .name = "aida", .module = aida.modules.contract },
         .{ .name = "zigma_postgres_ddl", .module = modules.postgres_ddl },
         .{ .name = "zigma_postgres_migrations", .module = modules.postgres_migrations },
     });
 
-    const run_postgres_migration_tool_tests = addTestRun(b, target, optimize, "migration_tools/postgres_migration_tool.zig", &.{
-        .{ .name = "application_postgres", .module = modules.aida_postgres },
+    const run_postgres_migration_tool_tests = addTestRun(b, target, optimize, "src/postgres/migrations/tools/postgres_migration_tool.zig", &.{
+        .{ .name = "application_postgres", .module = aida.modules.postgres },
         .{ .name = "zigma_postgres_migrations", .module = modules.postgres_migrations },
     });
 
@@ -126,8 +127,8 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     const run_typed_validation_tests = addTestRun(b, target, optimize, "test/typed_business_validation_test.zig", &.{
         .{ .name = "zigma", .module = modules.zigma },
         .{ .name = "zigma_rest", .module = modules.rest },
-        .{ .name = "aida", .module = modules.aida },
-        .{ .name = "aida_rest", .module = modules.aida_rest },
+        .{ .name = "aida", .module = aida.modules.contract },
+        .{ .name = "aida_rest", .module = aida.modules.rest },
     });
 
     const run_postgres_crud_tests = addTestRun(b, target, optimize, "test/postgres_crud_test.zig", &.{
@@ -137,18 +138,18 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     });
 
     const run_aida_rest_tests = addTestRun(b, target, optimize, "test/aida_rest_test.zig", &.{
-        .{ .name = "aida_rest", .module = modules.aida_rest },
+        .{ .name = "aida_rest", .module = aida.modules.rest },
         .{ .name = "zigma_rest", .module = modules.rest },
     });
 
     const run_json_tests = addTestRun(b, target, optimize, "test/json_test.zig", &.{
         .{ .name = "zigma", .module = modules.zigma },
-        .{ .name = "aida", .module = modules.aida },
+        .{ .name = "aida", .module = aida.modules.contract },
         .{ .name = "zigma_json", .module = modules.json },
     });
     const run_json_model_tests = addTestRun(b, target, optimize, "test/json_model_test.zig", &.{
         .{ .name = "zigma", .module = modules.zigma },
-        .{ .name = "aida", .module = modules.aida },
+        .{ .name = "aida", .module = aida.modules.contract },
         .{ .name = "zigma_json", .module = modules.json },
     });
     const test_json_step = b.step("test-json", "Probar serialización JSON y catálogo del modelo normalizado");
@@ -171,8 +172,8 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     for ([_][]const u8{ "fecha_test.zig", "fecha_codec_test.zig", "fecha_rest_test.zig", "docente_age_test.zig", "docente_age_rest_test.zig", "validation_context_test.zig" }) |file| {
         const run_fecha_tests = addTestRun(b, target, optimize, b.fmt("test/{s}", .{file}), &.{
             .{ .name = "zigma", .module = modules.zigma },
-            .{ .name = "aida", .module = modules.aida },
-            .{ .name = "aida_rest", .module = modules.aida_rest },
+            .{ .name = "aida", .module = aida.modules.contract },
+            .{ .name = "aida_rest", .module = aida.modules.rest },
             .{ .name = "zigma_rest", .module = modules.rest },
         });
         test_step.dependOn(&run_fecha_tests.step);
@@ -212,7 +213,7 @@ fn addMigrationToolTests(b: *std.Build, target: std.Build.ResolvedTarget, optimi
         const tool = b.addExecutable(.{
             .name = if (extended) "extended-consumer-migration-tool" else "base-consumer-migration-tool",
             .root_module = b.createModule(.{
-                .root_source_file = b.path("migration_tools/postgres_migration_tool.zig"),
+                .root_source_file = b.path("src/postgres/migrations/tools/postgres_migration_tool.zig"),
                 .target = target,
                 .optimize = optimize,
                 .imports = &.{
@@ -231,6 +232,19 @@ fn addMigrationToolTests(b: *std.Build, target: std.Build.ResolvedTarget, optimi
     consumer.addArg(b.graph.zig_exe);
     consumer.has_side_effects = true;
     step.dependOn(&consumer.step);
+    const acceptor = b.addExecutable(.{
+        .name = "test-migration-acceptor",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/postgres/migrations/tools/accept_migration.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const acceptance = b.addSystemCommand(&.{"python3"});
+    acceptance.addFileArg(b.path("test/integration/run_accept_migration_test.py"));
+    acceptance.addArtifactArg(acceptor);
+    acceptance.has_side_effects = true;
+    step.dependOn(&acceptance.step);
     return step;
 }
 
@@ -281,7 +295,7 @@ fn addPostgresTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zigma", .module = modules.zigma },
-                .{ .name = "aida", .module = modules.aida },
+                .{ .name = "aida", .module = aida.modules.contract },
                 .{ .name = "zigma_postgres_ddl", .module = modules.postgres_ddl },
                 .{ .name = "zigma_postgres_executor_ddl", .module = modules.postgres_executor_ddl },
                 .{ .name = "zigma_postgres_libpq", .module = modules.postgres_libpq },
@@ -296,8 +310,8 @@ fn addPostgresTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "aida", .module = modules.aida },
-                .{ .name = "aida_postgres", .module = modules.aida_postgres },
+                .{ .name = "aida", .module = aida.modules.contract },
+                .{ .name = "aida_postgres", .module = aida.modules.postgres },
                 .{ .name = "zigma_postgres_ddl", .module = modules.postgres_ddl },
                 .{ .name = "zigma_postgres_executor_ddl", .module = modules.postgres_executor_ddl },
                 .{ .name = "zigma_postgres_libpq", .module = modules.postgres_libpq },
@@ -312,8 +326,8 @@ fn addPostgresTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "aida", .module = modules.aida },
-                .{ .name = "aida_rest", .module = modules.aida_rest },
+                .{ .name = "aida", .module = aida.modules.contract },
+                .{ .name = "aida_rest", .module = aida.modules.rest },
                 .{ .name = "zigma_postgres_crud", .module = modules.postgres_crud },
                 .{ .name = "zigma_postgres_libpq", .module = modules.postgres_libpq },
                 .{ .name = "zigma_std_http", .module = modules.std_http },
@@ -358,6 +372,22 @@ fn addPostgresTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     runtime_backend_step.dependOn(&runtime_backend.step);
     rest_postgres_test_step.dependOn(runtime_backend_step);
 
+    const aida_classpath = b.addSystemCommand(&.{"python3"});
+    aida_classpath.addFileArg(b.path("test/integration/run_aida_classpath_test.py"));
+    aida_classpath.addArg(b.graph.zig_exe);
+    inline for (.{
+        .{ "libpq-prefix", modules.libpq_prefix },
+        .{ "libpq-include", modules.libpq_include },
+        .{ "libpq-lib", modules.libpq_lib },
+    }) |option| {
+        if (option[1]) |value|
+            aida_classpath.addArg(b.fmt("--{s}={s}", .{ option[0], value }));
+    }
+    aida_classpath.has_side_effects = true;
+    const aida_classpath_step = b.step("test-aida-classpath", "Test AIDA JDBC discovery from different directories (requires libpq)");
+    aida_classpath_step.dependOn(&aida_classpath.step);
+    rest_postgres_test_step.dependOn(aida_classpath_step);
+
     const run_migration_tests = b.addSystemCommand(&.{"sh"});
     run_migration_tests.addFileArg(b.path("test/integration/run_migrations.sh"));
     run_migration_tests.addArtifactArg(aida.schema_validator);
@@ -399,7 +429,7 @@ fn addPostgresTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     migration_test_step.dependOn(&runtime_integration.step);
 }
 
-fn addCompileErrors(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, modules: Modules, steps: UnitSteps) void {
+fn addCompileErrors(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, modules: Modules, aida: AidaArtifacts, steps: UnitSteps) void {
     for (compile_error_cases ++ model_compile_error_cases ++ entity_compile_error_cases) |case| {
         const case_obj = b.addObject(.{
             .name = case.file[0 .. case.file.len - 4],
@@ -409,7 +439,7 @@ fn addCompileErrors(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
                 .optimize = optimize,
                 .imports = &.{
                     .{ .name = "zigma", .module = modules.zigma },
-                    .{ .name = "aida", .module = modules.aida },
+                    .{ .name = "aida", .module = aida.modules.contract },
                     .{ .name = "zigma_postgres_ddl", .module = modules.postgres_ddl },
                     .{ .name = "zigma_postgres_migrations", .module = modules.postgres_migrations },
                     .{ .name = "zigma_rest", .module = modules.rest },

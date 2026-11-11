@@ -24,30 +24,22 @@ pub const Migrations = struct {
     schema_check: *std.Build.Step.Run,
     schema_validator: *std.Build.Step.Compile,
     migration_applier: *std.Build.Step.Compile,
+    migration_acceptor: *std.Build.Step.Compile,
 };
 
 /// Registra init-migrations, check-schema, migration, accept-migration y apply-migrations.
-/// No conecta el guard al step por defecto: el consumidor decide qué artefactos protege.
-/// init/migration/accept pueden compilarse antes de que el snapshot exista o coincida.
+/// El consumidor decide qué artefactos protege y qué compila por defecto.
 pub fn addMigrations(
     b: *std.Build,
     framework_root: std.Build.LazyPath,
     modules: MigrationModules,
     opts: MigrationOptions,
 ) Migrations {
+    const result = createArtifacts(b, framework_root, modules, opts);
     const project_root = opts.project_root orelse b.path(".");
-    const tool = b.addExecutable(.{
-        .name = "postgres-migration-tool",
-        .root_module = b.createModule(.{
-            .root_source_file = framework_root.path(b, "migration_tools/postgres_migration_tool.zig"),
-            .target = opts.target,
-            .optimize = opts.optimize,
-            .imports = &.{
-                .{ .name = "application_postgres", .module = opts.application_postgres },
-                .{ .name = "zigma_postgres_migrations", .module = modules.schema },
-            },
-        }),
-    });
+    const tool = result.migration_tool;
+    const validator = result.schema_validator;
+    const applier = result.migration_applier;
 
     const init = b.addRunArtifact(tool);
     init.addArg("init");
@@ -55,12 +47,7 @@ pub fn addMigrations(
     init.has_side_effects = true;
     b.step("init-migrations", "Create the initial Liquibase baseline and accepted snapshot").dependOn(&init.step);
 
-    const check = b.addRunArtifact(tool);
-    check.addArg("check");
-    check.setCwd(project_root);
-    // Lee el historial del filesystem, que puede cambiar sin recompilar la herramienta.
-    check.has_side_effects = true;
-    b.step("check-schema", "Compare the application with its accepted PostgreSQL snapshot").dependOn(&check.step);
+    b.step("check-schema", "Compare the application with its accepted PostgreSQL snapshot").dependOn(&result.schema_check.step);
 
     const draft = b.addRunArtifact(tool);
     draft.addArg("draft");
@@ -70,8 +57,53 @@ pub fn addMigrations(
     draft.has_side_effects = true;
     b.step("migration", "Create a Liquibase SQL draft for the current entity changes").dependOn(&draft.step);
 
+    const apply = b.addRunArtifact(applier);
+    apply.setCwd(project_root);
+    apply.has_side_effects = true;
+    b.step("apply-migrations", "Apply the accepted Liquibase history without starting HTTP").dependOn(&apply.step);
+
+    const accept = b.addRunArtifact(result.migration_acceptor);
+    accept.addArtifactArg(tool);
+    accept.addArtifactArg(validator);
+    accept.addArg(opts.liquibase_bin);
+    accept.addDirectoryArg(project_root);
+    accept.setCwd(project_root);
+    accept.has_side_effects = true;
+    b.step("accept-migration", "Verify the draft in disposable PostgreSQL, then accept it").dependOn(&accept.step);
+
+    return result;
+}
+
+/// Declara herramientas y guard sin publicar comandos ni agregarlos al paso por defecto.
+/// Permite reutilizar los mismos artefactos en las suites del framework.
+pub fn createArtifacts(
+    b: *std.Build,
+    framework_root: std.Build.LazyPath,
+    modules: MigrationModules,
+    opts: MigrationOptions,
+) Migrations {
+    const project_root = opts.project_root orelse b.path(".");
+    const tool = b.addExecutable(.{
+        .name = "postgres-migration-tool",
+        .root_module = b.createModule(.{
+            .root_source_file = framework_root.path(b, "src/postgres/migrations/tools/postgres_migration_tool.zig"),
+            .target = opts.target,
+            .optimize = opts.optimize,
+            .imports = &.{
+                .{ .name = "application_postgres", .module = opts.application_postgres },
+                .{ .name = "zigma_postgres_migrations", .module = modules.schema },
+            },
+        }),
+    });
+
+    const check = b.addRunArtifact(tool);
+    check.addArg("check");
+    check.setCwd(project_root);
+    // Lee el historial del filesystem, que puede cambiar sin recompilar la herramienta.
+    check.has_side_effects = true;
+
     const guard_module = b.createModule(.{
-        .root_source_file = framework_root.path(b, "migration_tools/schema_guard.zig"),
+        .root_source_file = framework_root.path(b, "src/postgres/migrations/tools/schema_guard.zig"),
         .target = opts.target,
         .optimize = opts.optimize,
         .imports = &.{.{ .name = "application_postgres", .module = opts.application_postgres }},
@@ -84,7 +116,7 @@ pub fn addMigrations(
     const validator = b.addExecutable(.{
         .name = "postgres-schema-validator",
         .root_module = b.createModule(.{
-            .root_source_file = framework_root.path(b, "migration_tools/postgres_schema_validator.zig"),
+            .root_source_file = framework_root.path(b, "src/postgres/migrations/tools/postgres_schema_validator.zig"),
             .target = opts.target,
             .optimize = opts.optimize,
             .imports = &.{
@@ -96,7 +128,7 @@ pub fn addMigrations(
     const applier = b.addExecutable(.{
         .name = "apply-migrations",
         .root_module = b.createModule(.{
-            .root_source_file = framework_root.path(b, "migration_tools/apply_migrations.zig"),
+            .root_source_file = framework_root.path(b, "src/postgres/migrations/tools/apply_migrations.zig"),
             .target = opts.target,
             .optimize = opts.optimize,
             .imports = &.{
@@ -105,27 +137,21 @@ pub fn addMigrations(
             },
         }),
     });
-    const apply = b.addRunArtifact(applier);
-    apply.setCwd(project_root);
-    apply.has_side_effects = true;
-    b.step("apply-migrations", "Apply the accepted Liquibase history without starting HTTP").dependOn(&apply.step);
-
-    const accept = b.addSystemCommand(&.{"sh"});
-    accept.addFileArg(framework_root.path(b, "migration_tools/accept_migration.sh"));
-    accept.addArtifactArg(tool);
-    accept.addArtifactArg(validator);
-    accept.addArg(opts.liquibase_bin);
-    accept.addDirectoryArg(project_root);
-    accept.setCwd(project_root);
-    accept.has_side_effects = true;
-    b.step("accept-migration", "Verify the draft in disposable PostgreSQL, then accept it").dependOn(&accept.step);
-
+    const acceptor = b.addExecutable(.{
+        .name = "accept-migration",
+        .root_module = b.createModule(.{
+            .root_source_file = framework_root.path(b, "src/postgres/migrations/tools/accept_migration.zig"),
+            .target = opts.target,
+            .optimize = opts.optimize,
+        }),
+    });
     return .{
         .migration_tool = tool,
         .schema_guard = guard,
         .schema_check = check,
         .schema_validator = validator,
         .migration_applier = applier,
+        .migration_acceptor = acceptor,
     };
 }
 

@@ -538,6 +538,13 @@ Después de editar el contrato, `zig build migration` genera el draft aunque el 
 esté en rojo. `zig build accept-migration` reproduce y valida el cambio con Docker,
 Liquibase y libpq antes de actualizar los archivos. `zig build apply-migrations` aplica
 el historial aceptado usando las variables `LIQUIBASE_*`; no requiere libpq.
+La aceptación usa `src/postgres/migrations/tools/accept_migration.zig`, un coordinador
+nativo para macOS/Linux, sin shell ni utilidades Unix auxiliares. El arranque del
+PostgreSQL descartable tiene un plazo de 120 segundos, configurable mediante
+`ZIGMA_MIGRATION_STARTUP_TIMEOUT` (segundos, admite fracciones). Ante errores o
+SIGINT/SIGTERM, cancela los procesos hijos y limpia el contenedor y sus archivos
+temporales. Una promoción de archivos ya iniciada se deja terminar para conservar
+la asociación entre SQL y snapshot.
 Liquibase necesita el driver JDBC PostgreSQL. Si lo instalaste en `liquibase_libs/`
 de otro directorio, exportá `LIQUIBASE_CLASSPATH` con la ruta absoluta al JAR o
 instalalo en `lib/` de Liquibase para que esté disponible desde tu `project_root`.
@@ -554,9 +561,11 @@ const dep = b.dependency("zigma_definition", .{
 ```
 
 El helper devuelve los artefactos `migration_tool`, `schema_guard`, `schema_check`,
-`schema_validator` y `migration_applier` para integrarlos con tus propios pasos.
-`addMigrations` ofrece la composición de bajo nivel con módulos ya creados; AIDA
-lo utiliza en [build/aida.zig](../build/aida.zig).
+`schema_validator`, `migration_applier` y `migration_acceptor` para integrarlos con tus propios pasos.
+`addMigrations` ofrece la composición de bajo nivel con módulos ya creados. AIDA usa
+la API pública `addMigrationsFromDep` en
+[examples/aida/build/application.zig](../examples/aida/build/application.zig), igual que
+un consumidor independiente.
 
 Aceptar una migración actualiza el historial del proyecto. Aplicarla modifica la
 base de un ambiente. Reejecutar DDL de creación no reemplaza ese flujo. Si ya usás

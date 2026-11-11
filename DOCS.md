@@ -313,7 +313,7 @@ src/
 `build/runtime.zig` implementa `addRuntime` y `addRuntimeFromDep`, reexportados por
 `build.zig`. Componen dos ejecutables compartidos: `src/runtime/launcher.zig` y
 `src/server.zig`. AIDA los usa como `aida-launcher` y `aida-backend`, con
-los comandos `run-aida` y `run-aida-rest` definidos en `build/aida.zig`.
+los comandos `run` y `run-backend` definidos en `examples/aida/build/application.zig`.
 
 El helper recibe `contract` (publica `Model`), `application_rest` (publica `Api`),
 `schema_guard` (obtenido de `addMigrationsFromDep`), `frontend_directory`, `target`
@@ -342,7 +342,7 @@ a partir de `HTTP_ADDRESS` y `HTTP_PORT`; `FRONTEND_PORT` configura el puerto de
 página y `ZIGMA_STARTUP_TIMEOUT`, la espera inicial (120 segundos por defecto).
 Ctrl+C cierra el servidor estático y el grupo de procesos del backend, incluido
 Liquibase si aún está ejecutándose. Usa grupos POSIX en macOS/Linux; Python solo
-participa en las pruebas. `check-aida` compila todo sin arrancarlo y
+participa en las pruebas. `check` compila todo sin arrancarlo y
 `test-aida-launcher` prueba el ciclo de vida con procesos simulados.
 
 `addAppFromDep` compila e instala únicamente el frontend WASM y sus recursos. Recibe
@@ -400,7 +400,7 @@ de ese motor. Los nombres públicos de módulos (`zigma`, `zigma_rest`,
 * `src/server.zig`: composición compartida Liquibase → libpq → REST → `std.http`.
 * `src/runtime/launcher.zig`: supervisión del backend y servidor del frontend.
 * `examples/aida/db/`: snapshot aceptado, changelog raíz, changesets inmutables y drafts de AIDA.
-* `migration_tools/`: comandos de desarrollo para crear, aceptar y aplicar migraciones,
+* `src/postgres/migrations/tools/`: comandos de desarrollo para crear, aceptar y aplicar migraciones,
   y comparar estructuralmente schemas vía `pg_catalog`.
 * `test/*_test.zig`: tests positivos del descriptor, el DDL y el executor.
 * `test/compile_errors/*.zig`: fragmentos que deben fallar la compilación, con el mensaje de
@@ -511,14 +511,15 @@ dos artefactos históricos, relativos a su raíz:
 * `db/schema.snapshot.json`: último modelo canónico aceptado.
 * `db/changes/*.sql`: changesets Liquibase formatted-SQL, ordenados por revisión.
 
-En AIDA ese directorio es `examples/aida/db/`. Los comandos de la raíz delegan en
+En AIDA ese directorio es `examples/aida/db/`. Sus comandos se invocan desde
 `examples/aida/`, conservando las rutas lógicas `db/changes/...` que Liquibase utiliza
 para identificar los changesets. La mudanza del directorio no modifica su SQL ni sus checksums.
 
-`migration_tools/schema_guard.zig` embebe el snapshot del consumidor inyectado por el build
-y lo compara en compilación. Además, el build normal de la raíz
+`src/postgres/migrations/tools/schema_guard.zig` embebe el snapshot del consumidor inyectado por el build
+y lo compara en compilación. Además, el build normal de AIDA
 ejecuta `check-schema`, que muestra un draft legible cuando existe drift. Ninguno de esos dos
-chequeos abre una conexión.
+chequeos abre una conexión. El build por defecto del framework no comprueba schemas;
+sus tests mantienen la cobertura de AIDA mediante fixtures privados.
 
 Las herramientas reciben un módulo `application_postgres` con dos declaraciones públicas
 convertibles a `[]const u8`: `schema_snapshot` (JSON canónico) y `baseline_ddl` (SQL inicial
@@ -526,12 +527,12 @@ sin `IF NOT EXISTS`). No requieren que el módulo publique `Model` ni sus mappin
 `addMigrationsFromDep(b, dep, .{ .application_postgres = postgres_module, .target = target,
 .optimize = optimize })` registra `init-migrations`, `check-schema`, `migration`,
 `accept-migration` y `apply-migrations` en el build consumidor. El historial se resuelve
-en `db/` del consumidor, o de `project_root` si se indica. AIDA usa el mismo helper mediante
-`addMigrations`, compartiendo sus módulos existentes y pasando `examples/aida/` como
-`project_root` desde el build raíz.
+en `db/` del consumidor, o de `project_root` si se indica. AIDA usa
+`addMigrationsFromDep` desde su propio build, con su módulo PostgreSQL privado
+y el `project_root` por defecto (la raíz del ejemplo).
 
-El resultado devuelve `migration_tool`, `schema_guard`, `schema_check`, `schema_validator`
-y `migration_applier`. Para proteger el build por defecto, conectá
+El resultado devuelve `migration_tool`, `schema_guard`, `schema_check`, `schema_validator`,
+`migration_applier` y `migration_acceptor`. Para proteger el build por defecto, conectá
 `b.default_step.dependOn(&migrations.schema_guard.step)`. Para proteger un servidor, inyectá
 `migrations.schema_guard.root_module` como `schema_guard` y referencialo en comptime.
 El helper no agrega automáticamente esa dependencia: crear o aceptar un historial debe
@@ -539,6 +540,13 @@ seguir siendo posible cuando el snapshot todavía no existe o está desactualiza
 `init-migrations`, `check-schema` y `migration` no requieren libpq ni servicios;
 `accept-migration` requiere libpq, Docker y Liquibase, y `apply-migrations` requiere Liquibase
 y la conexión configurada por ambiente. Las fuentes están incluidas en el paquete publicado.
+
+`src/postgres/migrations/tools/accept_migration.zig` coordina la aceptación en macOS/Linux
+sin shell: reproduce el historial y el draft en PostgreSQL descartable, verifica su
+catálogo y solo entonces solicita la promoción de archivos. El arranque tiene un plazo
+de 120 segundos, configurable con `ZIGMA_MIGRATION_STARTUP_TIMEOUT`. Al fallar o recibir
+SIGINT/SIGTERM cancela los procesos hijos y limpia los recursos temporales; si ya comenzó
+la promoción final de archivos, la deja terminar para no separar SQL y snapshot.
 
 Los comandos cotidianos para revisar cambios, generar un draft y aceptarlo están en
 [la guía de uso](README.md#cambiar-el-contrato). El flujo usa Liquibase Community 5.0.4;
@@ -575,8 +583,8 @@ LIQUIBASE_BIN=/ruta/a/liquibase \
 zig build apply-migrations
 ```
 
-Este comando, `run-aida` y `run-aida-rest` se invocan desde la raíz del repositorio,
-pero sus procesos se ejecutan en `examples/aida/`. `LIQUIBASE_CHANGELOG` es relativo
+En AIDA, este comando, `run` y `run-backend` se invocan desde `examples/aida/`.
+`LIQUIBASE_CHANGELOG` es relativo
 a ese directorio. Para ejecutar el servidor directamente, usá el mismo directorio de
 trabajo o configurá el changelog y el search path de Liquibase explícitamente.
 
@@ -674,7 +682,7 @@ opciones también se aplican a los demás pasos que compilan consumidores de lib
 `schema_ddl` en compilación; en runtime lee `DATABASE_URL` y aplica el SQL mediante el
 ejecutor transaccional. No expone un comando público de arranque.
 
-La aplicación real usa `run-aida` o `run-aida-rest`, que aplican el historial aceptado
+La aplicación real usa `run` o `run-backend`, que aplican el historial aceptado
 de Liquibase. `apply-migrations` permite aplicar ese historial y terminar sin HTTP.
 El generador DDL y su ejecutor siguen disponibles como módulos independientes.
 

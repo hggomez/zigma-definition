@@ -1,13 +1,22 @@
 const std = @import("std");
-const zigma_build = @import("zigma_definition");
+const application = @import("build/application.zig");
 
 pub fn build(b: *std.Build) void {
-    const zigma_dep = b.dependency("zigma_definition", .{});
-    const app = zigma_build.addAppFromDep(b, zigma_dep, .{
-        .system_root = b.path("src/system.zig"),
-        .contract_root = b.path("src/aida.zig"),
-        .widgets_js = b.path("src/widgets.js"),
-        .title = "aida",
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const zigma_dep = b.dependency("zigma_definition", .{
+        .target = target,
+        .optimize = optimize,
+        .@"libpq-prefix" = b.option([]const u8, "libpq-prefix", "Prefix containing libpq include/ and lib/"),
+        .@"libpq-include" = b.option([]const u8, "libpq-include", "Directory containing libpq-fe.h"),
+        .@"libpq-lib" = b.option([]const u8, "libpq-lib", "Directory containing the libpq library"),
+    });
+    const liquibase_bin = b.option([]const u8, "liquibase-bin", "Path to the Liquibase CLI") orelse
+        b.graph.environ_map.get("LIQUIBASE_BIN") orelse "liquibase";
+    const app = application.addSteps(b, zigma_dep, .{
+        .target = target,
+        .optimize = optimize,
+        .liquibase_bin = liquibase_bin,
     });
 
     // Variante de prueba del frontend real: fuerza el límite del buffer del catálogo.

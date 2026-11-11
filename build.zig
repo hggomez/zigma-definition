@@ -8,7 +8,6 @@ const app = @import("build/app.zig");
 const migrations = @import("build/migrations.zig");
 const runtime = @import("build/runtime.zig");
 const project_modules = @import("build/modules.zig");
-const aida_build = @import("build/aida.zig");
 const tests = @import("build/tests.zig");
 
 // API de build del paquete: los consumidores conservan sus imports y llamadas.
@@ -38,13 +37,7 @@ pub fn build(b: *std.Build) void {
 
     // Publicar módulos y declarar ejecutables todavía no los compila ni ejecuta.
     const modules = project_modules.create(b, target, optimize);
-    const aida = aida_build.addSteps(b, target, optimize, modules, liquibase_bin);
-
-    // Sin comando explícito, zig build comprueba el schema aceptado de AIDA.
-    // El arranque del servidor pertenece únicamente a run-aida/run-aida-rest.
-    b.default_step.dependOn(&aida.schema_guard.step);
-    b.default_step.dependOn(&aida.schema_check.step);
-
-    // Las suites reutilizan los mismos módulos y artefactos, sin duplicarlos.
-    tests.addSteps(b, target, optimize, modules, aida, liquibase_bin);
+    // El build por defecto publica la biblioteca sin construir ninguna aplicación.
+    // Los fixtures solo se compilan al seleccionar las suites correspondientes.
+    tests.addSteps(b, target, optimize, modules, liquibase_bin);
 }

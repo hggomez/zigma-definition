@@ -1,7 +1,8 @@
 # zigma-definition
 
 Framework en Zig que deriva tipos, CRUD REST y estructura PostgreSQL desde un contrato
-compartido. Incluye AIDA como aplicación de ejemplo.
+compartido. El repositorio incluye AIDA como aplicación de ejemplo independiente;
+el paquete distribuido del framework no contiene `examples/`.
 
 Esta es la guía de uso. La explicación del contrato, los módulos y las APIs está en
 [DOCS.md](DOCS.md). El proyecto se inspira en parte de
@@ -27,7 +28,7 @@ una vez por solicitud con UTC−03:00 fijo; los rechazos de negocio devuelven HT
 - Para ejecutar AIDA con PostgreSQL: PostgreSQL, headers y biblioteca de **libpq**, y **Liquibase Community
   5.0.4** con un entorno Java compatible y el driver JDBC PostgreSQL.
 - Docker para la base local del ejemplo, las integraciones y la aceptación de migraciones.
-- Node y Python 3 para `test-local`; `run-aida` usa un lanzador Zig en macOS/Linux
+- Node y Python 3 para `test-local`; `run` usa un lanzador Zig en macOS/Linux
   y no requiere Python. Las pruebas Zig de `test` no requieren Node ni Python.
 
 Comprobá Liquibase y agregá su driver una sola vez:
@@ -37,18 +38,28 @@ liquibase --version                 # Debe informar 5.0.4.
 liquibase lpm add postgresql
 ```
 
-Si el driver queda en `liquibase_libs/` del proyecto, exportá `LIQUIBASE_CLASSPATH`
-con la ruta absoluta a su JAR. Así también estará disponible en las pruebas que
-ejecutan Liquibase desde un paquete consumidor temporal o un `project_root` distinto.
+Desde AIDA, `run` y `run-backend` detectan primero los JAR de su propio
+`liquibase_libs/`; si no hay, buscan en el `liquibase_libs/` de la dependencia
+(la raíz del repositorio durante el desarrollo) y pasan sus rutas absolutas a Liquibase. No importa el
+directorio desde el que invoques el build ni la versión en el nombre del JAR.
+Si definís `LIQUIBASE_CLASSPATH`, se respeta su valor; usá rutas absolutas porque
+Liquibase se ejecuta desde `examples/aida/`. Si no hay JAR locales, se conserva
+la búsqueda habitual de la instalación de Liquibase.
+
+Para otros comandos de migración o paquetes consumidores, instalá el driver en
+el `lib/` de Liquibase o configurá `LIQUIBASE_CLASSPATH` con su ruta absoluta.
 
 La [instalación de Liquibase en Linux](DOCS.md#instalación-de-liquibase-en-linux) está en
-la documentación. Todos los comandos siguientes se ejecutan desde la raíz del repositorio.
+la documentación. Los comandos de la aplicación se ejecutan desde `examples/aida/`;
+los comandos de pruebas del framework se ejecutan desde la raíz del repositorio.
 
 Los ejemplos usan `-Dlibpq-prefix=/opt/homebrew/opt/libpq` para macOS con Homebrew.
 En Linux podés reemplazar esa opción por rutas independientes, consultadas con `pg_config`:
 
+Desde `examples/aida/`:
+
 ```sh
-zig build check-aida \
+zig build check \
   -Dlibpq-include="$(pg_config --includedir)" \
   -Dlibpq-lib="$(pg_config --libdir)"
 ```
@@ -60,13 +71,15 @@ de los headers y la biblioteca de desarrollo en la máquina donde compilás.
 
 ## Comandos habituales
 
-| Comando desde la raíz | Uso |
-| --- | --- |
-| `zig build run-aida` | Iniciar backend PostgreSQL y frontend. Requiere conexión y libpq. |
-| `zig build check-aida` | Compilar aplicación y lanzador sin ejecutarlos. Requiere libpq. |
-| `zig build test-local` | Verificar Zig, frontend, transporte HTTP y lanzador; sin PostgreSQL. |
-| `zig build check-schema` | Comparar el contrato con el snapshot aceptado. |
-| `zig build migration` / `zig build accept-migration` | Preparar y verificar un cambio de schema. |
+| Directorio | Comando | Uso |
+| --- | --- | --- |
+| Raíz | `zig build` | Configurar la biblioteca, sin construir aplicaciones ni comprobar schemas. |
+| Raíz | `zig build test-local` | Verificar Zig, frontend, transporte HTTP y lanzador; sin PostgreSQL. |
+| `examples/aida` | `zig build` | Instalar backend, lanzador y frontend; requiere libpq, sin conectar a la DB. |
+| `examples/aida` | `zig build run` | Iniciar backend PostgreSQL y frontend. Requiere conexión y libpq. |
+| `examples/aida` | `zig build check` | Compilar aplicación y comprobar su schema sin ejecutarla. |
+| `examples/aida` | `zig build check-schema` | Comparar el contrato con el snapshot aceptado. |
+| `examples/aida` | `zig build migration` / `zig build accept-migration` | Preparar y verificar un cambio de schema. |
 
 Las opciones de libpq de los ejemplos siguientes se agregan a los comandos que la usan.
 
@@ -76,11 +89,11 @@ Desde la raíz:
 
 ```sh
 cd examples/aida
-zig build
+zig build frontend
 zig build test-frontend # requiere Node; catálogo, controles y WASM
 ```
 
-`zig build` instala únicamente `zig-out/frontend/`. Para listar y modificar filas,
+`zig build frontend` instala únicamente `zig-out/frontend/`, sin requerir libpq. Para listar y modificar filas,
 la página necesita la API PostgreSQL. El arranque conjunto se describe a continuación;
 [la guía del ejemplo](docs/run-example.md) también explica cómo servir el frontend
 por separado.
@@ -109,7 +122,7 @@ apagado, inicialo con `docker start zigma-dev`.
 
 ### 2. Configurar la conexión e iniciar backend y frontend
 
-Usá estas credenciales para la base local anterior, o reemplazalas por las de tu base:
+Desde `examples/aida/`, usá estas credenciales para la base local anterior, o reemplazalas por las de tu base:
 
 ```sh
 export DATABASE_URL="postgresql://zigma:secret@localhost:5433/zigma_dev"
@@ -117,7 +130,7 @@ export LIQUIBASE_URL="jdbc:postgresql://localhost:5433/zigma_dev"
 export LIQUIBASE_USERNAME="zigma"
 export LIQUIBASE_PASSWORD="secret"
 
-zig build run-aida -Dlibpq-prefix=/opt/homebrew/opt/libpq
+zig build run -Dlibpq-prefix=/opt/homebrew/opt/libpq
 ```
 
 El comando compila ambos componentes, inicia el backend real y espera a que aplique las
@@ -128,7 +141,7 @@ de demostración una vez; las modificaciones posteriores persisten al reiniciar.
 Si el backend falla, el lanzador termina; `Ctrl+C` detiene backend y frontend juntos.
 AIDA usa el [lanzador compartido](src/runtime/launcher.zig) y el
 [servidor PostgreSQL compartido](src/server.zig), compuestos en
-[`build/aida.zig`](build/aida.zig) mediante `addRuntime`.
+[`examples/aida/build/application.zig`](examples/aida/build/application.zig) mediante `addRuntimeFromDep`.
 Una aplicación nueva puede usar `addRuntimeFromDep`; ver la
 [guía de adopción](docs/new-application.md#componer-el-servidor-y-el-lanzador).
 
@@ -137,11 +150,11 @@ Podés configurar `HTTP_ADDRESS`, `HTTP_PORT`, `FRONTEND_PORT` (default 8000) y
 Si Liquibase no está en el PATH, exportá `LIQUIBASE_BIN` con la ruta de su ejecutable.
 `ZIGMA_STARTUP_TIMEOUT` permite ajustar los 120 segundos de espera inicial.
 
-Para ejecutar solo el backend, seguí usando `zig build run-aida-rest` con las mismas
+Para ejecutar solo el backend, seguí usando `zig build run-backend` con las mismas
 opciones de libpq. Para compilar ambos sin iniciarlos:
 
 ```sh
-zig build check-aida -Dlibpq-prefix=/opt/homebrew/opt/libpq
+zig build check -Dlibpq-prefix=/opt/homebrew/opt/libpq
 ```
 
 ### 3. Probar la API
@@ -161,8 +174,8 @@ las nuevas migraciones aceptadas.
 
 ## Cambiar el contrato
 
-El historial de AIDA está en `examples/aida/db/`. Los comandos siguientes se invocan
-desde la raíz del repositorio y el build los ejecuta dentro de `examples/aida/`.
+El historial de AIDA está en `examples/aida/db/`. Ejecutá los comandos siguientes
+desde `examples/aida/`.
 
 1. Editá las entidades en [examples/aida/src/aida.zig](examples/aida/src/aida.zig) o los mappings SQL en
    [examples/aida/src/postgres.zig](examples/aida/src/postgres.zig).
@@ -187,7 +200,7 @@ desde la raíz del repositorio y el build los ejecuta dentro de `examples/aida/`
 
    ```sh
    zig build accept-migration -Dlibpq-prefix=/opt/homebrew/opt/libpq
-   zig build
+   zig build -Dlibpq-prefix=/opt/homebrew/opt/libpq
    ```
 
    La aceptación ejecuta el historial y el borrador en PostgreSQL descartable, verifica su
@@ -198,6 +211,10 @@ desde la raíz del repositorio y el build los ejecuta dentro de `examples/aida/`
 Los archivos aceptados de `examples/aida/db/changes/` se conservan: los cambios siguientes llevan una
 migración nueva. Para `accept-migration`, podés indicar un ejecutable específico mediante
 `-Dliquibase-bin=/ruta/a/liquibase`.
+El coordinador de aceptación está escrito en Zig y vive en
+`src/postgres/migrations/tools/`. En macOS/Linux no necesita shell ni utilidades Unix
+auxiliares. El arranque de PostgreSQL tiene un límite de 120 segundos, ajustable con
+`ZIGMA_MIGRATION_STARTUP_TIMEOUT`; al cancelar, limpia los procesos y recursos temporales.
 
 `init-migrations` se usa una sola vez al crear un historial nuevo. Este repositorio ya
 incluye su historial: un clon sobre una base vacía sigue el arranque normal.
@@ -206,7 +223,7 @@ Consultá [inicialización y tests](DOCS.md#inicialización-y-tests) para más d
 Para aplicar las migraciones aceptadas y terminar sin iniciar HTTP, usá
 `zig build apply-migrations` con las mismas variables `LIQUIBASE_*`. Este comando no
 requiere libpq; no crea ni acepta borradores.
-Tanto este comando como `run-aida` y `run-aida-rest` ejecutan desde `examples/aida/`:
+Tanto este comando como `run` y `run-backend` ejecutan desde `examples/aida/`:
 el changelog por defecto sigue siendo `db/changelog-root.yaml`. Las rutas relativas
 configuradas por ambiente se resuelven desde allí; usá rutas absolutas para recursos externos.
 
@@ -229,13 +246,13 @@ Para trabajar sobre una parte, siguen disponibles `test` (solo suite Zig y schem
 `test-model`, `test-json` y `test-aida-launcher`. Desde `examples/aida/` también podés
 ejecutar `test-frontend` por separado.
 
-Compilar la aplicación sin ejecutarla:
+Compilar la aplicación sin ejecutarla, seleccionando su build desde la raíz:
 
 ```sh
-zig build check-aida -Dlibpq-prefix=/opt/homebrew/opt/libpq
+zig build --build-file examples/aida/build.zig check -Dlibpq-prefix=/opt/homebrew/opt/libpq
 ```
 
-`check-aida-rest` conserva la comprobación de compilación exclusiva del backend.
+`check-backend` conserva la comprobación de compilación exclusiva del backend.
 
 Integraciones con PostgreSQL descartable; requieren Docker y libpq. La última también
 requiere Liquibase 5.0.4:

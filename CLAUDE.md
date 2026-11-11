@@ -72,21 +72,32 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `test/integration/postgres_bootstrap.zig`: auxiliar de las integraciones DDL/REST que
   usa los mappings PostgreSQL de AIDA; no tiene comando público de arranque.
 * `examples/aida/db/`: snapshot aceptado, baseline/changesets inmutables y directorio
-  del único draft de AIDA. Los comandos de la raíz se ejecutan desde `examples/aida/`.
-* `migration_tools/postgres_migration_tool.zig`: workflow de init/check/draft/accept-files.
+  del único draft de AIDA. Sus comandos se invocan desde `examples/aida/`.
+* `src/postgres/migrations/tools/postgres_migration_tool.zig`: workflow de init/check/draft/accept-files.
   Recibe `application_postgres` (`schema_snapshot` + `baseline_ddl`), igual que el validador.
-* `migration_tools/schema_guard.zig`: compara en comptime el snapshot deseado del consumidor
+* `src/postgres/migrations/tools/schema_guard.zig`: compara en comptime el snapshot deseado del consumidor
   con su archivo aceptado, inyectado por el build; no conoce AIDA ni su Model.
-* `migration_tools/apply_migrations.zig`: aplica el historial aceptado y termina sin iniciar HTTP;
+* `src/postgres/migrations/tools/apply_migrations.zig`: aplica el historial aceptado y termina sin iniciar HTTP;
   se ejecuta mediante `zig build apply-migrations` y también desde `test-migrations`.
-* `migration_tools/postgres_schema_validator.zig`: comparación SSOT↔`pg_catalog` en un schema esperado
+* `src/postgres/migrations/tools/postgres_schema_validator.zig`: comparación SSOT↔`pg_catalog` en un schema esperado
   temporal; se usa al aceptar migraciones y en las integraciones PostgreSQL.
+* `src/postgres/migrations/tools/accept_migration.zig`: coordina Docker, Liquibase, validación
+  y aceptación sin shell en macOS/Linux. Limpia procesos y recursos ante SIGINT/SIGTERM;
+  `ZIGMA_MIGRATION_STARTUP_TIMEOUT` limita el arranque de PostgreSQL (120 segundos por defecto).
+  `test/integration/run_accept_migration_test.py` lo prueba con procesos simulados.
 * `build.zig`: opciones generales, conexiones del grafo y API pública del build.
-* `build/modules.zig`: módulos publicados e imports compartidos; configuración de libpq.
+* `build/modules.zig`: módulos del framework e imports compartidos; configuración de libpq.
+  No registra módulos de aplicaciones concretas.
 * `build/app.zig`: implementación de `addApp` / `addAppFromDep`, reexportadas por la raíz.
   Compilan e instalan el frontend WASM para consumidores como `examples/aida/`;
   el `build()` de la librería no instala esa app.
-* `build/aida.zig`: composición de AIDA con los helpers de runtime y migraciones.
+* `examples/aida/build.zig` y `build/application.zig`: build completo del consumidor.
+  Usan `addAppFromDep`, `addMigrationsFromDep` y `addRuntimeFromDep` mediante
+  `zigma_definition`; instalan frontend, backend y lanzador en el build por defecto.
+  `run`, `run-backend`, `check`, `check-backend` y migraciones pertenecen al ejemplo.
+* `build/test_fixtures.zig`: módulos privados de AIDA y herramientas de las suites.
+  No importa el build del ejemplo ni registra comandos de aplicación. El build
+  por defecto del framework funciona sin `examples/` ni snapshot aceptado.
 * `build/runtime.zig`: `addRuntime` / `addRuntimeFromDep`; declara backend, lanzador
   y ejecuciones por separado. El consumidor elige comandos e instalación.
 * `build/migrations.zig`: `addMigrations` / `addMigrationsFromDep`, composición reutilizable
@@ -110,9 +121,9 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `zig build test-json`: serialización y catálogo del modelo; incluye escaping y buffers.
 * Desde `examples/aida/`, `zig build test-frontend`: catálogo, nulabilidad, controles
   escalares y protocolo del WASM compilado; requiere Node.
-* `zig build check-aida -Dlibpq-prefix=...`: compila backend real y frontend sin ejecutarlos.
+* Desde `examples/aida/`, `zig build check -Dlibpq-prefix=...`: compila backend real y frontend sin ejecutarlos.
 * `zig build test-aida-launcher`: prueba el arranque y cierre conjunto con procesos simulados
-  (Python 3); `zig build run-aida -Dlibpq-prefix=...` inicia la aplicación configurada.
+  (Python 3); desde `examples/aida/`, `zig build run -Dlibpq-prefix=...` inicia la aplicación configurada.
 * `zig build test`: suite de runtime, asserts comptime, casos de no-compila y comprobación
   del snapshot aceptado. Las integraciones con servicios externos se ejecutan por separado.
 * `zig build test-model`: pruebas del modelo normalizado y sus consumidores, incluidos

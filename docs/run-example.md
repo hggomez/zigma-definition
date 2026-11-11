@@ -2,16 +2,16 @@
 
 AIDA usa el frontend WASM del framework y el servidor compartido `src/server.zig`,
 que aplica el historial de Liquibase y persiste mediante PostgreSQL. Su composición
-está en `build/aida.zig`. La arquitectura del frontend está en [frontend.md](frontend.md)
+está en `examples/aida/build/application.zig`. La arquitectura del frontend está en [frontend.md](frontend.md)
 y la del build, en [build.md](build.md).
 
 ## Inicio rápido
 
 Prepará PostgreSQL, libpq, Liquibase y las variables de conexión siguiendo el
-[README](../README.md#arrancar-aida-con-postgresql). Desde la raíz:
+[README](../README.md#arrancar-aida-con-postgresql). Desde `examples/aida/`:
 
 ```sh
-zig build run-aida -Dlibpq-prefix=/opt/homebrew/opt/libpq
+zig build run -Dlibpq-prefix=/opt/homebrew/opt/libpq
 ```
 
 El comando compila el frontend, inicia el backend y espera a que termine de aplicar
@@ -20,23 +20,37 @@ El historial vive en `examples/aida/db/`; los procesos arrancan desde `examples/
 para resolver `db/changelog-root.yaml`. Los datos de demostración se incorporan por
 el changeset SQL aceptado y las modificaciones persisten al reiniciar.
 
+`run` y `run-backend` buscan primero los JAR en `liquibase_libs/` de AIDA y,
+si no hay, en el de la dependencia Zigma (la raíz del repositorio en desarrollo).
+Configuran sus rutas absolutas. Un `LIQUIBASE_CLASSPATH` explícito
+tiene prioridad; si no hay JAR locales, Liquibase conserva su búsqueda habitual.
+Desde otro directorio, indicá el build del ejemplo:
+
+```sh
+zig build --build-file /ruta/a/zigma-definition/examples/aida/build.zig run \
+  -Dlibpq-prefix=/opt/homebrew/opt/libpq
+```
+
+El build por defecto de AIDA instala backend, lanzador y frontend y requiere libpq.
+La raíz del repositorio mantiene los comandos de pruebas del framework.
+
 ## Compilar o servir el frontend por separado
 
 Desde `examples/aida/`:
 
 ```sh
-zig build
+zig build frontend
 zig build test-frontend # Node; catálogo, controles y WASM
 python3 -m http.server 8000 --bind 127.0.0.1 --directory zig-out/frontend
 ```
 
-`zig build` instala únicamente `zig-out/frontend/`: WASM, HTML, JavaScript, título
+`zig build frontend` instala únicamente `zig-out/frontend/`: WASM, HTML, JavaScript, título
 y widgets. Compilar o probar el frontend no requiere libpq ni una base de datos.
 Para consultar o modificar filas desde la página debe estar disponible la API.
-Podés iniciarla por separado, desde la raíz y con las mismas variables de conexión:
+Podés iniciarla por separado, desde `examples/aida/` y con las mismas variables de conexión:
 
 ```sh
-zig build run-aida-rest -Dlibpq-prefix=/opt/homebrew/opt/libpq
+zig build run-backend -Dlibpq-prefix=/opt/homebrew/opt/libpq
 ```
 
 `HTTP_ADDRESS` y `HTTP_PORT` configuran la API (default `127.0.0.1:8080`). Cuando
@@ -96,9 +110,9 @@ tras reiniciar el backend.
 | `examples/aida/src/validation_context.zig` | Obtiene el día civil por solicitud (UTC−03:00 fijo) para validar edad. |
 | `examples/aida/src/postgres.zig` | Mappings y artefactos PostgreSQL del contrato. |
 | `examples/aida/db/` | Historial de migraciones y snapshot aceptado de AIDA. |
-| `src/runtime/launcher.zig` | Lanzador compartido; AIDA lo compone con `addRuntime` y lo ejecuta con `zig build run-aida`. |
+| `src/runtime/launcher.zig` | Lanzador compartido; AIDA lo compone con `addRuntimeFromDep` y lo ejecuta con `zig build run`. |
 | `src/server.zig` | Backend compartido con Liquibase, libpq y la API del consumidor. |
-| `examples/aida/build.zig` | Compone e instala el frontend; publica `frontend` y `test-frontend`. |
+| `examples/aida/build.zig` | Build completo de AIDA: frontend, backend, lanzador, migraciones y pruebas del frontend. |
 | `src/rest/std_http.zig` | Transporte HTTP compartido y CORS. |
 | `src/frontend/` | Cliente WASM y recursos de la página. |
 

@@ -4,18 +4,13 @@
     .fingerprint = 0x80e6c10ecfc91c39, // Changing this has security and trust implications.
     .minimum_zig_version = "0.17.0-dev.1818+7051f8e73",
     .dependencies = .{},
-    // Archivos publicados: incluye los auxiliares de integración usados por AIDA.
-    // Los tests unitarios y docs/ permanecen exclusivamente en el repositorio.
+    // La biblioteca no distribuye aplicaciones ni historiales de base de datos.
+    // Conserva los auxiliares de integración usados por consumidores y ejemplos.
     .paths = .{
         "build.zig",
         "build",
         "build.zig.zon",
         "src",
-        "examples/aida/build.zig",
-        "examples/aida/build.zig.zon",
-        "examples/aida/src",
-        "examples/aida/db",
-        "migration_tools",
         "test/integration",
         "README.md",
         "DOCS.md",

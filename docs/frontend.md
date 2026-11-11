@@ -2,7 +2,7 @@
 
 How to run the example: [run-example.md](run-example.md). Build graph: [build.md](build.md). Vocabulary (Defs → Infos): [zigma.md](zigma.md).
 
-The page is **not** HTML/JS emitted from Zig at compile time. `src/frontend/` is a generic client: it knows `zigma`, `zigma_json`, and a `system` module (`type_defs` + `entity_defs`). The aida example is a consumer package: `examples/aida/build.zig` calls `addAppFromDep` with `src/system.zig` as `system`, `src/widgets.js` as `widgets_js`, and `title = "aida"`. The table is built **at runtime** from entity Infos that live in the WASM module. JS never imports a concrete system; domain-type widgets are an optional consumer map loaded from `./widgets.js`.
+The page is **not** HTML/JS emitted from Zig at compile time. `src/frontend/` is a generic client: it knows `zigma`, `zigma_json`, and a `system` module (`type_defs` + `entity_defs`). The aida example is a consumer package: `examples/aida/build/application.zig` calls `addAppFromDep` with `src/system.zig` as `system`, `src/widgets.js` as `widgets_js`, and `title = "aida"`. The table is built **at runtime** from entity Infos that live in the WASM module. JS never imports a concrete system; domain-type widgets are an optional consumer map loaded from `./widgets.js`.
 
 This document is the layer in detail: first how the pieces sit together, then every function call on each user flow.
 
@@ -17,8 +17,8 @@ flowchart TB
   subgraph compile["Compile time — examples/aida"]
     aida["aida.zig<br/>type_defs + entity_defs"]
     sys["system.zig<br/>re-exports Defs"]
-    addApp["examples/aida/build.zig: addAppFromDep"]
-    runtime["build/aida.zig: addRuntime"]
+    addApp["examples/aida/build/application.zig: addAppFromDep"]
+    runtime["examples/aida/build/application.zig: addRuntimeFromDep"]
     aida --> runtime
     aida --> sys
     sys --> addApp
@@ -71,7 +71,7 @@ flowchart TB
 | HTML → JS | Shell only: `#entity-nav`, `#sheet-title`, `#sheet-table` (`thead`/`tbody`/`tfoot`), `#status`. `<script src="title.js">` sets `document.title` from `addApp` `.title` (empty if omitted). No columns until JS runs. |
 | JS → WASM exports | Pointer/length accessors plus `build_row(entity_index)` / `create_row(entity_index)`. `entity_index` is field order on `entity_defs` (same order as the catalog array). |
 | WASM → JS import | `env.js_send_post(ptr, len)`: Zig has already written row JSON into `json_buf`; JS reads that slice and `fetches` `POST`. Zig does **not** await the Promise (the POST is fire-and-forget from WASM’s point of view; JS still `await`s inside the import). |
-| JS → HTTP | `api-config.js` configura `globalThis.ZIGMA_API_BASE` (default `http://localhost:8080/api`); `run-aida` lo sirve con la URL real del backend. CORS `*` mediante el transporte compartido `zigma_std_http`. Identity for PUT/DELETE is the query string (pk fields). POST has no query. GET may include equality filters. PUT body omits PKs. Domain values (including `fecha` objects) follow the codecs / WASM row JSON. |
+| JS → HTTP | `api-config.js` configura `globalThis.ZIGMA_API_BASE` (default `http://localhost:8080/api`); `run` desde `examples/aida/` lo sirve con la URL real del backend. CORS `*` mediante el transporte compartido `zigma_std_http`. Identity for PUT/DELETE is the query string (pk fields). POST has no query. GET may include equality filters. PUT body omits PKs. Domain values (including `fecha` objects) follow the codecs / WASM row JSON. |
 
 **Responsibility split (why WASM exists)**
 
@@ -131,7 +131,7 @@ Notation: `file: function` then callees. Browser APIs are included when they are
 ### 3.1 Build (no browser)
 
 ```
-examples/aida/build.zig
+examples/aida/build/application.zig
   └─ @import("zigma_definition").addAppFromDep(b, dep, .{ .system_root, .contract_root?, .widgets_js?, .title? })
        └─ build.zig: addApp
             ├─ zigma + zigma_json + contract/system         (wasm32-freestanding, .small)
@@ -549,14 +549,14 @@ JS does not call this explicitly; `fetch` does.
 | `src/json.zig` | `stringifyEntityCatalog`, `stringifyRecord`, `parseFieldValue`, `fieldStorage` |
 | `src/frontend/main.js` | Nav + table from catalog; packing; GET/POST/PUT/DELETE; optional `./widgets.js` |
 | `src/frontend/index.html` | Empty shell + CSS; loads `title.js` and `api-config.js` before `main.js` |
-| `src/frontend/api_config.js` | URL por defecto de la API; `run-aida` la configura en runtime |
+| `src/frontend/api_config.js` | URL por defecto de la API; `run` desde `examples/aida/` la configura en runtime |
 | `src/server.zig` | Compone Liquibase, libpq, la API del consumidor y `std_http.serve` |
 | `src/postgres/crud.zig` | Repositorio SQL derivado de Model |
 | `src/rest/std_http.zig` | Socket adapter for `zigma_rest`; CORS + `OPTIONS` |
 | `examples/aida/src/aida.zig` | Domain Defs (vocabulary fixture) |
 | `examples/aida/src/system.zig` | Wired as `system` (Defs) |
 | `examples/aida/src/widgets.js` | Domain type → widget (`fecha` date picker) |
-| `examples/aida/build.zig` | Consumer: `addAppFromDep` |
+| `examples/aida/build/application.zig` | Consumer: `addAppFromDep` y `addRuntimeFromDep` |
 | `build.zig` `addApp` | WASM + copy of html/js (+ generated `title.js`, optional `widgets.js`) |
 
 El backend persiste las modificaciones en PostgreSQL; reiniciarlo conserva las filas.
