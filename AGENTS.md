@@ -14,8 +14,10 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | Framework / Model.info / tipos derivados | `src/core/model.zig`, `test/system_model_test.zig`, `test/model_consumers_test.zig` |
 | Helpers internos de nombres | `src/core/names.zig` |
 | Example system (records, entities, `Cargo`) | `examples/aida/src/aida.zig` |
-| Fecha: calendario, ISO y codecs REST | `examples/aida/src/aida.zig`, `examples/aida/src/fecha_wire.zig`, `test/fecha_test.zig`, `test/fecha_codec_test.zig`, `test/fecha_rest_test.zig`, `test/fixtures/fail_once_allocator.zig`, `test/integration/fecha_validation_review.md` |
+| Fecha: calendario, ISO y codecs REST | `examples/aida/src/aida.zig`, `examples/aida/src/fecha_wire.zig`, `examples/aida/test/fecha_test.zig`, `examples/aida/test/fecha_codec_test.zig`, `examples/aida/test/fecha_rest_test.zig`, `examples/aida/test/fixtures/fail_once_allocator.zig`, `test/integration/fecha_validation_review.md` |
 | Example application (frontend, backend, migrations, own `build.zig`) | `examples/aida/` |
+| Supermercado: MER, tipos y cálculo comercial | `examples/supermercado/README.md`, `examples/supermercado/build.zig`, `examples/supermercado/build.zig.zon`, `examples/supermercado/build/tests.zig`, `examples/supermercado/test/model_test.zig`, `examples/supermercado/test/pricing_test.zig`, `examples/supermercado/test/postgres_test.zig`, `examples/supermercado/test/compile_errors/`, `examples/supermercado/src/supermercado.zig`, `examples/supermercado/src/system.zig`, `examples/supermercado/src/postgres.zig`, `examples/supermercado/src/pricing.zig` |
+| Supermercado: composición CRUD, frontend y migraciones | `examples/supermercado/README.md`, `examples/supermercado/build/tests.zig`, `examples/supermercado/build/modules.zig`, `examples/supermercado/build/application.zig`, `examples/supermercado/src/rest.zig`, `examples/supermercado/src/instant.zig`, `examples/supermercado/src/instant_wire.zig`, `examples/supermercado/db/`, `examples/supermercado/test/rest_test.zig`, `examples/supermercado/test/fixtures/validation_repository.zig`, `examples/supermercado/test/integration/frontend_test.mjs`, `examples/supermercado/test/integration/application_test.py` |
 | Positive tests (runtime + comptime asserts) | `test/aida_test.zig` |
 | Expected compile failures | `test/compile_errors/<case>.zig` **and** the matching entry in `compile_error_cases` in `build/tests.zig` |
 | JSON stringify of record instances / schema | `src/json.zig` + `test/json_test.zig` (+ `test/tiny_system.zig` for the non-aida contract) |
@@ -27,8 +29,8 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | CRUD HTTP con PostgreSQL / CORS y valores | `test/integration/run_rest_postgres.sh`, `test/integration/rest_values_http.py`, `test/integration/docente_age_http.py` |
 | API REST / routing / secuencia CRUD | `src/rest/api.zig`, `src/rest/types.zig`, `test/rest_test.zig` |
 | Entrada y salida REST / codecs | `src/rest/request.zig`, `src/rest/response.zig`, `src/rest/codecs.zig`, `test/rest_test.zig` |
-| Validadores REST actuales | `src/rest/validation.zig`, `examples/aida/src/rest.zig`, `test/aida_rest_test.zig`, `test/rest_test.zig`, `test/typed_business_validation_test.zig`, `test/fixtures/validation_repository.zig` |
-| Edad de docente / contexto por solicitud | `examples/aida/src/aida.zig`, `examples/aida/src/validation_context.zig`, `examples/aida/src/rest.zig`, `src/rest/validation.zig`, `src/rest/std_http.zig`, `test/docente_age_test.zig`, `test/docente_age_rest_test.zig`, `test/validation_context_test.zig`, `test/integration/context_server.zig`, `test/integration/run_context_test.py`, `test/integration/docente_age_http.py` |
+| Validadores REST actuales | `src/rest/validation.zig`, `examples/aida/src/rest.zig`, `examples/aida/test/aida_rest_test.zig`, `test/rest_test.zig`, `test/typed_business_validation_test.zig`, `test/fixtures/validation_repository.zig` |
+| Edad de docente / contexto por solicitud | `examples/aida/src/aida.zig`, `examples/aida/src/validation_context.zig`, `examples/aida/src/rest.zig`, `src/rest/validation.zig`, `src/rest/std_http.zig`, `examples/aida/test/docente_age_test.zig`, `examples/aida/test/docente_age_rest_test.zig`, `test/validation_context_test.zig`, `examples/aida/test/validation_context_test.zig`, `test/integration/context_server.zig`, `test/integration/run_context_test.py`, `test/integration/docente_age_http.py` |
 | Lanzador compartido / arranque conjunto de AIDA | `src/runtime/launcher.zig`, `test/integration/run_launcher_test.py`, `examples/aida/build/application.zig`, `src/frontend/api_config.js` |
 | Runtime de un consumidor / `addRuntimeFromDep` | `build/runtime.zig`, `src/server.zig`, `test/integration/runtime_consumer_build.zig`, `test/integration/runtime_contract.zig`, `test/integration/runtime_rest.zig`, `test/integration/runtime_postgres.zig`, `test/integration/run_runtime_consumer_test.py` |
 | AIDA PostgreSQL y aplicación del historial | `examples/aida/src/postgres.zig`, `src/server.zig`, `examples/aida/db/`, `src/postgres/migrations/tools/apply_migrations.zig`, `test/integration/run_migrations.sh` |
@@ -36,9 +38,10 @@ Do not scan the repo. Open only the files listed for the task. Design rules, TDD
 | Diff, nombres y drafts SQL de migraciones | `src/postgres/migrations/diff.zig`, `src/postgres/migrations/draft.zig`, `test/postgres_migrations_test.zig` |
 | Bootstrap exclusivo de integraciones / comandos públicos | `test/integration/postgres_bootstrap.zig`, `test/integration/build_commands_test.py`, `build/tests.zig`, `examples/aida/build/application.zig` |
 | Entrada del build / módulos publicados / libpq | `build.zig`, `build/modules.zig`, `docs/build.md` |
-| Composición y módulos del ejemplo AIDA | `examples/aida/build/application.zig`, `build.zig`, `build/tests.zig`, `test/integration/build_commands_test.py`, `test/integration/run_aida_classpath_test.py` |
+| Composición y módulos del ejemplo AIDA | `examples/aida/build/application.zig`, `build.zig`, `build/tests.zig`, `test/integration/build_commands_test.py`, `examples/aida/test/integration/run_classpath_test.py` |
 | `addApp`, `addAppFromDep`, frontend del consumidor | `build/app.zig`, `examples/aida/build.zig` |
 | Migraciones para aplicaciones consumidoras / contrato `application_postgres` | `build/migrations.zig`, `src/postgres/migrations/tools/schema_guard.zig`, `src/postgres/migrations/tools/postgres_migration_tool.zig`, `src/postgres/migrations/tools/postgres_schema_validator.zig`, `src/postgres/migrations/tools/apply_migrations.zig`, `docs/new-application.md`, `test/integration/migration_application.zig`, `test/integration/migration_consumer_build.zig`, `test/integration/run_migration_tool_test.py`, `test/integration/run_migration_consumer_test.py` |
+| Tests propios de AIDA / publicación y delegación | `examples/aida/build/tests.zig`, `examples/aida/build/modules.zig`, `examples/aida/test/`, `examples/aida/build.zig.zon`, `test/integration/build_commands_test.py` |
 | Grafo de tests locales e integraciones / fixtures privados | `build/tests.zig`, `build/test_fixtures.zig` |
 | Aceptación de migraciones / procesos, señales y limpieza | `src/postgres/migrations/tools/accept_migration.zig`, `test/integration/run_accept_migration_test.py`, `build/migrations.zig` |
 | Package name, zig version, published paths | `build.zig.zon` |
@@ -109,7 +112,10 @@ frontend generado. El lanzador usa `ZIGMA_STARTUP_TIMEOUT` y no importa el domin
 ## Tests
 
 `zig build test` ejecuta las suites Zig de contrato, modelo, JSON, REST, PostgreSQL sin
-servicios, herramientas de migración, rechazos de compilación y comprobación del snapshot.
+servicios, herramientas de migración y rechazos de compilación; delega los tests de
+dominio y del snapshot a `zig build test` de AIDA.
+Desde `examples/aida/`, `test` prueba 54 casos de dominio y tres rechazos de Cargo;
+`test-local` agrega `test-frontend` y `test-classpath` queda separado porque requiere libpq.
 `zig build test-local` agrega el lanzador, los comandos públicos, consumidores independientes,
 el transporte HTTP y `test-frontend`; requiere Node y Python, pero no libpq ni servicios externos.
 
@@ -118,6 +124,8 @@ desde cero; también prueba el coordinador de aceptación con procesos simulados
 y limpieza. Está incluido en `test-local` y solo necesita Python, sin servicios.
 
 Adding a rejection: new file under `test/compile_errors/`, then a `{ .file, .expected }` in `build/tests.zig`. Matching is **per line**: full framework `@compileError` text, or `at("file.zig")` for unstable native compiler messages. See `CLAUDE.md` for `/?/` wildcards.
+Los rechazos específicos de AIDA siguen la misma convención dentro de
+`examples/aida/test/compile_errors/` y `examples/aida/build/tests.zig`.
 
 TDD: write the failing test first, show the red, **wait for review before implementing**.
 
@@ -143,4 +151,4 @@ WASM exports: `schema_ptr`, `schema_len`, `input_ptr`, `input_len`, `lengths_ptr
 `build.zig.zon` `.paths`: `build.zig`, `build.zig.zon`, `build/`, `src`,
 `test/integration`, `README.md`, `DOCS.md`, `LICENSE`.
 `examples/`, los tests unitarios y `docs/` no forman parte del paquete; los auxiliares
-de integración sí. AIDA es un paquete separado con su propio `build/`, `src/` y `db/`.
+de integración sí. AIDA es un paquete separado con su propio `build/`, `src/`, `db/` y `test/`.

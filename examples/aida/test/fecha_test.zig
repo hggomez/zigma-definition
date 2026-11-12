@@ -6,7 +6,7 @@ fn date(year: u16, month: u8, day: u8) Fecha {
     return .{ .@"año" = year, .mes = month, .@"día" = day };
 }
 
-test "Fecha validates inclusive year bounds and rejects invalid components" {
+test "Fecha valida los límites inclusivos del año y rechaza componentes inválidos" {
     try date(1, 1, 1).validate();
     try date(9999, 12, 31).validate();
     for ([_]Fecha{
@@ -19,7 +19,7 @@ test "Fecha validates inclusive year bounds and rejects invalid components" {
     }
 }
 
-test "Fecha applies Gregorian leap years including century exceptions" {
+test "Fecha aplica los años bisiestos gregorianos y las excepciones de siglo" {
     for ([_]u16{ 4, 400, 1600, 2000, 2024 }) |year| try date(year, 2, 29).validate();
     for ([_]u16{ 1, 100, 1500, 1900, 2025, 2100, 9999 }) |year| {
         try date(year, 2, 28).validate();
@@ -28,7 +28,7 @@ test "Fecha applies Gregorian leap years including century exceptions" {
     try std.testing.expectError(error.InvalidDate, date(2024, 2, 30).validate());
 }
 
-test "Fecha checks the last day of every month" {
+test "Fecha comprueba el último día de cada mes" {
     const last_days = [_]u8{ 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
     for (last_days, 1..) |last_day, month| {
         try date(2025, @intCast(month), last_day).validate();
@@ -36,7 +36,7 @@ test "Fecha checks the last day of every month" {
     }
 }
 
-test "Fecha ISO accepts exactly ten ASCII bytes with real calendar dates" {
+test "Fecha ISO acepta exactamente diez bytes ASCII y fechas reales del calendario" {
     for ([_][]const u8{
         "",            "2024-2-29",   "2024-02-9",    "024-02-29",            "10000-01-01",
         "+024-02-29",  "2024-+2-29",  "2024-02-+9",   "2024-02--1",           "2024/02/29",
@@ -48,7 +48,7 @@ test "Fecha ISO accepts exactly ten ASCII bytes with real calendar dates" {
     }) |bytes| try std.testing.expectError(error.InvalidDate, Fecha.fromIso(bytes));
 }
 
-test "Fecha ISO round trips preserve leading zeroes and all components" {
+test "La conversión de ida y vuelta ISO conserva los ceros iniciales y los componentes" {
     const values = [_]Fecha{ date(1, 1, 1), date(42, 3, 9), date(2000, 2, 29), date(2024, 12, 31), date(9999, 12, 31) };
     const strings = [_][]const u8{ "0001-01-01", "0042-03-09", "2000-02-29", "2024-12-31", "9999-12-31" };
     for (values, strings) |value, bytes| {
@@ -59,7 +59,7 @@ test "Fecha ISO round trips preserve leading zeroes and all components" {
     }
 }
 
-test "Fecha operations run at comptime without implicit literal validation" {
+test "Las operaciones de Fecha funcionan en compilación sin validar implícitamente los literales" {
     const leap = comptime try Fecha.fromIso("2000-02-29");
     comptime try leap.validate();
     const iso = comptime try leap.toIso();

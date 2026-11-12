@@ -63,6 +63,15 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   por los ejemplos y usado como fixture de tests.
 * `examples/aida/`: app de ejemplo que depende del paquete; `src/system.zig` expone el
   contrato para el frontend WASM que compone `build.zig`.
+* `examples/supermercado/`: consumidor independiente con ocho entidades del MER,
+  frontend WASM, API CRUD con validaciones por fila e historial propio `db/`.
+  `build/modules.zig` comparte módulos nativos; `build/application.zig` compone los
+  helpers públicos del framework. `test` reúne 43 pruebas Zig, cuatro rechazos y schema;
+  `test-local` agrega Node y Python, sin servicios. `test-application` permite activar
+  libpq y PostgreSQL real en Docker. Las descripciones están en español.
+  `src/instant.zig` comparte calendario entre pricing y codecs REST. Los importes son
+  centavos enteros; los instantes públicos, UTC con milisegundos. El flujo transaccional
+  de caja y la inmutabilidad comercial quedan para la siguiente etapa.
 * `examples/aida/src/postgres.zig`: mappings y proyección PostgreSQL compartida de AIDA.
 * `examples/aida/src/rest.zig`: codecs y validadores de negocio de AIDA para REST.
 * `src/runtime/launcher.zig`: lanzador genérico para macOS/Linux; sirve el frontend,
@@ -95,6 +104,9 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   Usan `addAppFromDep`, `addMigrationsFromDep` y `addRuntimeFromDep` mediante
   `zigma_definition`; instalan frontend, backend y lanzador en el build por defecto.
   `run`, `run-backend`, `check`, `check-backend` y migraciones pertenecen al ejemplo.
+* `examples/aida/build/modules.zig`: módulos nativos privados compartidos por aplicación y tests.
+* `examples/aida/build/tests.zig`: suites propias, tres rechazos de Cargo, schema, frontend
+  y classpath. `examples/aida/test/` y sus fixtures forman parte del paquete AIDA.
 * `build/test_fixtures.zig`: módulos privados de AIDA y herramientas de las suites.
   No importa el build del ejemplo ni registra comandos de aplicación. El build
   por defecto del framework funciona sin `examples/` ni snapshot aceptado.
@@ -105,7 +117,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `build/tests.zig`: suites locales, integraciones y casos esperados de no-compila.
   `docs/build.md` explica módulos, artefactos, ejecución y dependencias para leer el grafo.
 * `test/*_test.zig`: pruebas de comportamiento (runtime y asserts comptime), incluidos
-  el contrato de AIDA, JSON, modelo normalizado, REST y PostgreSQL.
+  el contrato del framework con AIDA como fixture, JSON, modelo normalizado, REST y PostgreSQL.
+  Las reglas de AIDA, Fecha, codecs y referencias propias viven en `examples/aida/test/`.
 * `test/compile_errors/*.zig`: fragmentos que **deben fallar** la compilación; `build/tests.zig`
   los compila con `expect_errors` (el paso tiene éxito solo si el error coincide) y los
   cuelga del step `test`. La lista de casos con su mensaje esperado está en `build/tests.zig`.
@@ -119,6 +132,9 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
 * `zig build test-runtime-backend -Dlibpq-prefix=...`: guard, contexto void y fallo de
   migración antes de conectar; incluido en `test-rest-postgres`.
 * `zig build test-json`: serialización y catálogo del modelo; incluye escaping y buffers.
+* Desde `examples/aida/`, `zig build test` prueba dominio, REST, schema y rechazos sin servicios.
+  `zig build test-local` agrega el frontend; `test-classpath -Dlibpq-prefix=...` prueba JDBC.
+  El `test` raíz delega al consumidor una sola vez, conservando target y optimización.
 * Desde `examples/aida/`, `zig build test-frontend`: catálogo, nulabilidad, controles
   escalares y protocolo del WASM compilado; requiere Node.
 * Desde `examples/aida/`, `zig build check -Dlibpq-prefix=...`: compila backend real y frontend sin ejecutarlos.
@@ -139,7 +155,8 @@ CLAUDE.md y valen acá, adaptados al lenguaje.
   `std.http`, libpq y PostgreSQL descartable, incluidos CORS, escaping, nulabilidad
   y fechas mediante `test/integration/rest_values_http.py`.
 * `python3 test/integration/build_commands_test.py`: comprueba los nombres públicos del
-  build mediante `--help`; no inicia aplicaciones ni aplica migraciones.
+  build, el empaquetado real de AIDA y la ejecución y propagación de fallos de sus suites.
+  No inicia aplicaciones ni aplica migraciones.
 
 ## Decisiones de diseño
 

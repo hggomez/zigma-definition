@@ -1,6 +1,6 @@
 const aida = @import("aida");
 
-test "cargo validation does not activate when puede_dirigir is null" {
+test "La validación de Cargo no se activa cuando puede_dirigir es nulo" {
     try aida.validarCargo(.{
         .cargo = "AY1",
         .denominacion = "Ayudante de primera",
@@ -9,7 +9,7 @@ test "cargo validation does not activate when puede_dirigir is null" {
     });
 }
 
-test "cargo validation accepts a missing denomination even when puede_dirigir is true" {
+test "La validación de Cargo acepta una denominación ausente aunque pueda dirigir" {
     try aida.validarCargo(.{
         .cargo = "AY1",
         .denominacion = null,

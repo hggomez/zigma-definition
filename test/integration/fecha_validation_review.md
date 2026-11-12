@@ -32,13 +32,13 @@ Son **25 tests Zig nuevos**, registrados en `test` y por lo tanto en `test-local
 
 | Archivo | Casos | Cobertura | Resultado en el checkpoint |
 | --- | --- | --- | --- |
-| `test/fecha_test.zig` | 6 | Rango 1–9999, componentes inválidos, bisiestos gregorianos, límites de cada mes, ISO ASCII estricto, ceros iniciales, round trips y comptime. | No compilan: faltan `Fecha.validate`, `fromIso` y `toIso`. |
-| `test/fecha_codec_test.zig` | 6 | ISO y objeto JSON en query, objeto en body, rechazo de fechas imposibles, orden año/mes/día, ownership y fallos de asignación. | 3 pasan y 3 fallan. |
-| `test/fecha_rest_test.zig` | 13 | POST/PUT/filtros antes de consultar o escribir; null sin codec; valores válidos; errores almacenados sanitizados; propagación de memoria y cleanup. Usa un contrato auxiliar con y sin validador. | 3 pasan y 10 fallan. |
+| `examples/aida/test/fecha_test.zig` | 6 | Rango 1–9999, componentes inválidos, bisiestos gregorianos, límites de cada mes, ISO ASCII estricto, ceros iniciales, round trips y comptime. | No compilan: faltan `Fecha.validate`, `fromIso` y `toIso`. |
+| `examples/aida/test/fecha_codec_test.zig` | 6 | ISO y objeto JSON en query, objeto en body, rechazo de fechas imposibles, orden año/mes/día, ownership y fallos de asignación. | 3 pasan y 3 fallan. |
+| `examples/aida/test/fecha_rest_test.zig` | 13 | POST/PUT/filtros antes de consultar o escribir; null sin codec; valores válidos; errores almacenados sanitizados; propagación de memoria y cleanup. Usa un contrato auxiliar con y sin validador. | 3 pasan y 10 fallan. |
 
 Además:
 
-- `test/aida_rest_test.zig`: se actualizó el caso que aceptaba `2025-02-30`.
+- `examples/aida/test/aida_rest_test.zig`: se actualizó el caso que aceptaba `2025-02-30`.
   Ahora exige `InvalidValue` y falla con la implementación actual. Sus otros dos
   tests pasan.
 - La integración HTTP de aquel checkpoint exigía 400 para fechas inválidas,
@@ -98,7 +98,7 @@ No se debilitó ninguna comprobación aprobada.
 | Comprobación | Resultado final |
 | --- | --- |
 | Nuevos tests de Fecha | 25/25 pasan: 6 de dominio, 6 de codecs y 13 de REST. |
-| `test/aida_rest_test.zig` | 3/3 pasan, incluido el rechazo de `2025-02-30`. |
+| `examples/aida/test/aida_rest_test.zig` | 3/3 pasan, incluido el rechazo de `2025-02-30`. |
 | `zig build test-local` | 169/174 tests Zig pasan; solo los mismos cinco fallos históricos. Backend en memoria, frontend, lanzador y comandos pasan. |
 | `zig build` | Pasa; snapshot aceptado vigente. |
 | `zig build check-aida -Dlibpq-prefix=/opt/homebrew/opt/libpq` | Pasa. |

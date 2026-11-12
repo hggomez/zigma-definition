@@ -2,8 +2,6 @@
 const std = @import("std");
 const zigma = @import("zigma");
 const rest = @import("zigma_rest");
-const aida = @import("aida");
-const aida_rest = @import("aida_rest");
 const fixture = @import("fixtures/validation_repository.zig");
 const allocator = std.testing.allocator;
 const Context = struct { minimum: i64, request_id: []const u8 };
@@ -108,34 +106,4 @@ test "an API without validators has a void context and no preparatory SELECT" {
     }, {});
     defer allocator.free(response.body);
     try std.testing.expect(response.status == 200 and repository.select_calls == 0 and repository.update_calls == 1);
-}
-
-test "AIDA context converts UTC timestamps at the Argentina civil day boundary" {
-    // 2026-10-28 02:59:59 y 03:00:00 UTC: medianoche en UTC-03:00.
-    const before = try aida_rest.contextFromTimestamp(1793156399);
-    const after = try aida_rest.contextFromTimestamp(1793156400);
-    try std.testing.expect(std.meta.eql(before.today, aida.Fecha{ .@"año" = 2026, .mes = 10, .@"día" = 27 }));
-    try std.testing.expect(std.meta.eql(after.today, aida.Fecha{ .@"año" = 2026, .mes = 10, .@"día" = 28 }));
-}
-
-test "AIDA context conversion crosses year and leap day boundaries" {
-    const cases = [_]struct { seconds: i64, expected: aida.Fecha }{
-        .{ .seconds = 1798772400, .expected = .{ .@"año" = 2027, .mes = 1, .@"día" = 1 } },
-        .{ .seconds = 1709175600, .expected = .{ .@"año" = 2024, .mes = 2, .@"día" = 29 } },
-        .{ .seconds = 1709262000, .expected = .{ .@"año" = 2024, .mes = 3, .@"día" = 1 } },
-        .{ .seconds = -62135586000, .expected = .{ .@"año" = 1, .mes = 1, .@"día" = 1 } },
-        .{ .seconds = -2208978000, .expected = .{ .@"año" = 1900, .mes = 1, .@"día" = 1 } },
-        .{ .seconds = 253402311599, .expected = .{ .@"año" = 9999, .mes = 12, .@"día" = 31 } },
-    };
-    for (cases) |case| {
-        const context = try aida_rest.contextFromTimestamp(case.seconds);
-        try std.testing.expect(std.meta.eql(context.today, case.expected));
-    }
-}
-
-test "AIDA context rejects timestamps outside Fecha without overflow" {
-    try std.testing.expectError(error.InvalidDate, aida_rest.contextFromTimestamp(-62135586001));
-    try std.testing.expectError(error.InvalidDate, aida_rest.contextFromTimestamp(253402311600));
-    try std.testing.expectError(error.InvalidDate, aida_rest.contextFromTimestamp(std.math.minInt(i64)));
-    try std.testing.expectError(error.InvalidDate, aida_rest.contextFromTimestamp(std.math.maxInt(i64)));
 }

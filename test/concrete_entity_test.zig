@@ -4,6 +4,134 @@ const aida = @import("aida");
 const system = @import("aida_system");
 const contract = @import("compile_errors/fixtures/concrete_entities.zig");
 
+test "entityDefinition preserves the exact literal and all metadata before normalization" {
+    // La definición se valida sin construir Entity ni Framework.
+    const definition = zigma.entityDefinition(contract.type_defs, contract.thing_def);
+    try std.testing.expect(@TypeOf(definition) == @TypeOf(contract.thing_def));
+    try std.testing.expect(definition.pk.len == 3);
+    try std.testing.expect(definition.fields.id.nullable);
+    try std.testing.expect(!@hasField(@TypeOf(definition.fields.tenant), "nullable"));
+    try std.testing.expect(!@hasField(@TypeOf(definition.fields.note), "label"));
+    try std.testing.expectEqualStrings("tenant", definition.fks.parent.fields[0]);
+
+    var expected: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer expected.deinit();
+    try std.json.Stringify.value(contract.thing_def, .{}, &expected.writer);
+    var actual: std.Io.Writer.Allocating = .init(std.testing.allocator);
+    defer actual.deinit();
+    try std.json.Stringify.value(definition, .{}, &actual.writer);
+    try std.testing.expectEqualStrings(expected.written(), actual.written());
+}
+
+test "entityDefinition accepts compact inline fields and feeds Entity and Framework" {
+    const definition = zigma.entityDefinition(zigma.common_type_defs, .{
+        .fields = .{
+            .sku = .{ .type = "text" },
+            .name = .{ .type = "text", .label = "Nombre", .nullable = false, .is_name = true },
+            .stock = .{ .type = "integer", .nullable = false },
+            .active = .{ .type = "boolean", .nullable = false },
+            .notes = .{ .type = "text" },
+        },
+        .pk = .{"sku"},
+    });
+    inline for (.{ "uks", "fks", "rules" }) |name| {
+        try std.testing.expect(!@hasField(@TypeOf(definition), name));
+    }
+    const Product = zigma.Entity(zigma.common_type_defs, definition);
+    const Model = zigma.Framework(zigma.common_type_defs, zigma.defineEntities(.{
+        .products = .{ .Type = Product, .definition = definition },
+    }));
+    const row: Product = .{
+        .sku = "P-001",
+        .name = "Cuaderno",
+        .stock = 0,
+        .active = false,
+        .notes = null,
+    };
+    try std.testing.expect(Model.Row("products") == Product);
+    try std.testing.expect(@FieldType(Product, "sku") == []const u8);
+    try std.testing.expect(@FieldType(Product, "stock") == i64);
+    try std.testing.expect(@FieldType(Product, "active") == bool);
+    try std.testing.expect(@FieldType(Product, "notes") == ?[]const u8);
+    try std.testing.expect(row.stock == 0 and !row.active and row.notes == null);
+    try std.testing.expect(!Model.info.products.fields.sku.nullable);
+    try std.testing.expect(Model.info.products.fields.notes.nullable);
+    try std.testing.expect(Model.info.products.fields.name.is_name);
+    inline for (.{ "uks", "fks", "rules" }) |name| {
+        try std.testing.expect(@typeInfo(@TypeOf(@field(Model.info.products, name))).@"struct".field_names.len == 0);
+    }
+    // La nulabilidad efectiva pertenece a la entidad; la Def conserva la omisión.
+    try std.testing.expect(!@hasField(@TypeOf(definition.fields.sku), "nullable"));
+}
+
+test "entityDefinition composes reusable records and extracted primary keys" {
+    const base = zigma.entityDefinition(contract.type_defs, .{
+        .fields = contract.fields,
+        .pk = .{ "tenant", "id" },
+    });
+    const definition = zigma.entityDefinition(contract.type_defs, .{
+        .fields = zigma.merge(.{ zigma.extractPk(base), .{
+            .sequence = .{ .type = "integer" },
+            .stamp = .{ .type = "stamp" },
+        } }),
+        .pk = zigma.mergePk(.{ base.pk, .{"sequence"} }),
+        .uks = .{},
+        .fks = .{},
+        .rules = .{},
+    });
+    const Row = zigma.Entity(contract.type_defs, definition);
+    const Record = zigma.RecordInstanceType(contract.type_defs, definition.fields);
+    try std.testing.expect(@FieldType(Row, "id") == i64);
+    try std.testing.expect(@FieldType(Row, "sequence") == i64);
+    try std.testing.expect(@FieldType(Row, "stamp") == ?contract.Stamp);
+    try std.testing.expect(@FieldType(Record, "id") == ?i64);
+    try std.testing.expect(definition.fields.id.nullable and base.fields.id.nullable);
+    try std.testing.expectEqualStrings("Identificador local", definition.fields.id.description);
+    try std.testing.expect(definition.pk.len == 3);
+    try std.testing.expectEqualStrings("tenant", definition.pk[0]);
+    try std.testing.expectEqualStrings("id", definition.pk[1]);
+    try std.testing.expectEqualStrings("sequence", definition.pk[2]);
+    inline for (.{ "uks", "fks", "rules" }) |name| {
+        try std.testing.expect(@typeInfo(@TypeOf(@field(definition, name))).@"struct".field_names.len == 0);
+    }
+}
+
+test "entityDefinition leaves FK target entities and keys for registration" {
+    const definition = zigma.entityDefinition(zigma.common_type_defs, .{
+        .fields = .{
+            .id = .{ .type = "integer" },
+            .parent_id = .{ .type = "integer" },
+        },
+        .pk = .{"id"},
+        .fks = .{ .parent = .{ .entity = "unregistered", .fields = .{ .parent_id = "unknown_key" } } },
+    });
+    try std.testing.expectEqualStrings("unregistered", definition.fks.parent.entity);
+    try std.testing.expectEqualStrings("unknown_key", definition.fks.parent.fields.parent_id);
+}
+
+test "entityDefinition supports circular and self registrations against complete PK and UK" {
+    const left = zigma.entityDefinition(contract.type_defs, contract.left_def);
+    const right = zigma.entityDefinition(contract.type_defs, contract.right_def);
+    const thing = zigma.entityDefinition(contract.type_defs, contract.thing_def);
+    const registrations = zigma.defineEntities(.{
+        .lefts = .{ .Type = zigma.Entity(contract.type_defs, left), .definition = left },
+        .rights = .{ .Type = zigma.Entity(contract.type_defs, right), .definition = right },
+        .things = .{ .Type = zigma.Entity(contract.type_defs, thing), .definition = thing },
+    });
+    const Model = zigma.Framework(contract.type_defs, registrations);
+    try std.testing.expect(Model.Row("things") == contract.Thing);
+    try std.testing.expect(Model.Row("lefts") == registrations.lefts.Type);
+    try std.testing.expect(Model.Row("rights") == registrations.rights.Type);
+    try std.testing.expectEqualStrings("code", Model.info.lefts.fks.right.fields.right_code);
+    try std.testing.expectEqualStrings("id", Model.info.rights.fks.left.fields.left_id);
+    try std.testing.expectEqualStrings("tenant", Model.info.things.fks.parent.fields.tenant);
+    try std.testing.expectEqualStrings("id", Model.info.things.fks.parent.fields.id);
+    try std.testing.expect(Model.info.things.pk.len == 2);
+    try std.testing.expectEqualStrings("label", Model.info.things.uks.by_label[0]);
+    try std.testing.expectEqualStrings("note", Model.info.things.rules.display.fields[0]);
+    try std.testing.expectEqualStrings("label", Model.info.things.rules.display.fields[1]);
+}
+
 fn isEnabled(value: contract.Thing) bool {
     return value.enabled;
 }

@@ -46,7 +46,7 @@ fn expectInvalidRequest(response: rest.Response) !void {
     try expectText("{\"error\":{\"code\":\"invalid_request\",\"message\":\"Request fields or values are invalid\"}}", response.body);
 }
 
-test "Fecha POST rejects impossible objects before repository calls with or without a validator" {
+test "POST rechaza fechas imposibles antes de acceder al repositorio con o sin validador" {
     inline for (.{ Api, ValidatedApi }) |ApiType| {
         for ([_][]const u8{
             "{\"id\":1,\"date\":{\"año\":2025,\"mes\":2,\"día\":30}}",
@@ -66,7 +66,7 @@ test "Fecha POST rejects impossible objects before repository calls with or with
     }
 }
 
-test "Fecha PUT rejects impossible objects before selecting rows for business validation" {
+test "PUT rechaza fechas imposibles antes de consultar filas para validar reglas" {
     inline for (.{ Api, ValidatedApi }) |ApiType| {
         Observer.calls = 0;
         var repository = Repository{ .rows = &.{cells} };
@@ -79,7 +79,7 @@ test "Fecha PUT rejects impossible objects before selecting rows for business va
     }
 }
 
-test "Fecha invalid filters reject GET PUT and DELETE before any repository call" {
+test "Los filtros de fecha inválidos rechazan GET PUT y DELETE antes de acceder al repositorio" {
     for ([_][]const u8{
         "/api/events?date=2025-02-30",
         "/api/events?date=%7B%22a%C3%B1o%22%3A1900%2C%22mes%22%3A2%2C%22d%C3%ADa%22%3A29%7D",
@@ -95,7 +95,7 @@ test "Fecha invalid filters reject GET PUT and DELETE before any repository call
     }
 }
 
-test "Fecha valid objects retain JSON representation and ISO repository parameters" {
+test "Las fechas válidas conservan su representación JSON y los parámetros ISO del repositorio" {
     var repository = Repository{ .expected_parameters = &.{
         .{ .name = "id", .value = "1" },
         .{ .name = "date", .value = "2000-02-29" },
@@ -108,7 +108,7 @@ test "Fecha valid objects retain JSON representation and ISO repository paramete
     try expectText("{\"id\":1,\"date\":{\"año\":2000,\"mes\":2,\"día\":29},\"note\":null}", response.body);
 }
 
-test "Fecha nullable POST PUT and stored results bypass date codecs" {
+test "Las fechas nulas en POST PUT y resultados almacenados no invocan codecs de fecha" {
     // Estos codecs fallarían si recibieran null; REST debe resolverlo por sí mismo.
     const NullApi = rest.Api(Model, oom_codecs, .{});
     for ([_][]const u8{ "{\"id\":1}", "{\"id\":1,\"date\":null}" }) |body| {
@@ -127,7 +127,7 @@ test "Fecha nullable POST PUT and stored results bypass date codecs" {
     try expectText("[{\"id\":1,\"date\":null,\"note\":\"original\"}]", response.body);
 }
 
-test "Fecha invalid stored values produce sanitized response errors and release results" {
+test "Las fechas almacenadas inválidas producen errores sin detalles internos y liberan resultados" {
     for ([_][]const u8{ "2025-02-30", "0000-01-01", "10000-01-01", "secret-invalid-date" }) |date| {
         var repository = Repository{ .rows = &.{&.{ "1", date, "original" }} };
         var api = Api.init(.{});
@@ -139,7 +139,7 @@ test "Fecha invalid stored values produce sanitized response errors and release 
     }
 }
 
-test "Fecha invalid stored values keep business conversion error and prevent PUT writes" {
+test "Las fechas almacenadas inválidas conservan el error de conversión e impiden escrituras PUT" {
     for ([_][]const u8{ "2025-02-30", "0000-01-01", "10000-01-01", "secret-invalid-date" }) |date| {
         Observer.calls = 0;
         var repository = Repository{ .rows = &.{&.{ "1", date, "original" }} };
@@ -176,7 +176,7 @@ fn expectMemoryError(result: anyerror!rest.Response, backing: std.mem.Allocator)
     } else |err| try expect(err == error.OutOfMemory);
 }
 
-test "Fecha input codec OutOfMemory propagates through POST and PUT without repository calls" {
+test "El fallo de memoria del codec de entrada se propaga por POST y PUT sin acceder al repositorio" {
     for ([_]rest.Method{ .POST, .PUT }) |method| {
         var repository = Repository{};
         var api = rest.Api(Model, oom_codecs, .{}).init(.{});
@@ -187,28 +187,28 @@ test "Fecha input codec OutOfMemory propagates through POST and PUT without repo
     }
 }
 
-test "Fecha query codec OutOfMemory propagates without repository calls" {
+test "El fallo de memoria del codec de consulta se propaga sin acceder al repositorio" {
     var repository = Repository{};
     var api = rest.Api(Model, oom_codecs, .{}).init(.{});
     try expectMemoryError(api.handle(allocator, &repository, request(.GET, "/api/events?date=2024-02-29", ""), {}), allocator);
     try expectNoCalls(repository);
 }
 
-test "Fecha result codec OutOfMemory propagates and releases the repository result" {
+test "El fallo de memoria del codec de resultados se propaga y libera el resultado del repositorio" {
     var repository = Repository{ .rows = &.{cells} };
     var api = rest.Api(Model, oom_codecs, .{}).init(.{});
     try expectMemoryError(api.handle(allocator, &repository, request(.GET, "/api/events", ""), {}), allocator);
     try expect(repository.deinit_calls == 1);
 }
 
-test "Fecha business conversion OutOfMemory propagates without updating" {
+test "El fallo de memoria al convertir filas para reglas se propaga sin actualizar" {
     var repository = Repository{ .rows = &.{cells} };
     var api = rest.Api(Model, oom_codecs, validators).init(.{});
     try expectMemoryError(api.handle(allocator, &repository, request(.PUT, "/api/events?id=1", "{\"note\":\"changed\"}"), {}), allocator);
     try expect(repository.update_calls == 0 and repository.deinit_calls == 1);
 }
 
-test "REST parsing OutOfMemory is not hidden by a successful error response allocation" {
+test "Una respuesta de error asignada con éxito no oculta el fallo de memoria del análisis REST" {
     // Sin filtros, la primera reserva pertenece al parsing del cuerpo. Después de
     // ese fallo el allocator vuelve a funcionar: un 400 incorrecto queda observable.
     var failing = FailOnceAllocator{ .backing = allocator, .fail_index = 0 };
@@ -228,7 +228,7 @@ fn allocationScenario(backing: std.mem.Allocator, req: rest.Request) !void {
     try expect(response.status == if (req.method == .POST) @as(u16, 201) else 200);
 }
 
-test "REST Fecha requests clean up and propagate all allocation failures" {
+test "Las solicitudes REST con Fecha liberan recursos y propagan todos los fallos de memoria" {
     for ([_]rest.Request{
         request(.POST, "/api/events", "{\"id\":1,\"date\":{\"año\":2024,\"mes\":2,\"día\":29}}"),
         request(.PUT, "/api/events?id=1", "{\"date\":{\"año\":2024,\"mes\":2,\"día\":29}}"),

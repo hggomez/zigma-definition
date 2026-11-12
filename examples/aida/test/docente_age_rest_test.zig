@@ -35,7 +35,7 @@ fn expectViolation(response: rest.Response, code: []const u8, message: []const u
     try std.testing.expectEqualStrings(message, violation.get("message").?.string);
 }
 
-test "POST rejects a teorico younger than thirty without inserting" {
+test "POST rechaza un docente teórico menor de treinta años sin insertar" {
     var repository = Repository{};
     var api = aida_rest.Api.init(.{});
     const response = try handle(&api, &repository, request(.POST, "{\"docente\":\"d1\",\"nombres\":\"Ada\",\"cargo\":\"teorico\",\"experiencia\":5,\"fecha_nacimiento\":{\"año\":1996,\"mes\":10,\"día\":29}}"));
@@ -44,7 +44,7 @@ test "POST rejects a teorico younger than thirty without inserting" {
     try std.testing.expect(repository.insert_calls == 0 and repository.select_calls == 0);
 }
 
-test "POST reports missing birth dates separately from insufficient experience" {
+test "POST distingue la fecha de nacimiento ausente de la experiencia insuficiente" {
     for ([_][]const u8{
         "{\"docente\":\"d1\",\"nombres\":\"Ada\",\"cargo\":\"teorico\",\"experiencia\":5}",
         "{\"docente\":\"d1\",\"nombres\":\"Ada\",\"cargo\":\"teorico\",\"experiencia\":5,\"fecha_nacimiento\":null}",
@@ -58,7 +58,7 @@ test "POST reports missing birth dates separately from insufficient experience" 
     }
 }
 
-test "POST reports future birth separately from calendar and experience errors" {
+test "POST distingue el nacimiento futuro de los errores de calendario y experiencia" {
     var repository = Repository{};
     var api = aida_rest.Api.init(.{});
     const response = try handle(&api, &repository, request(.POST, "{\"docente\":\"d1\",\"nombres\":\"Ada\",\"cargo\":\"teorico\",\"experiencia\":5,\"fecha_nacimiento\":{\"año\":2027,\"mes\":1,\"día\":1}}"));
@@ -67,7 +67,7 @@ test "POST reports future birth separately from calendar and experience errors" 
     try std.testing.expect(repository.insert_calls == 0);
 }
 
-test "POST accepts the exact thirtieth birthday and preserves ISO parameters" {
+test "POST acepta el trigésimo cumpleaños exacto y conserva los parámetros ISO" {
     const expected_cells = cells("d1", "teorico", "1996-10-28");
     var parameters: [names.len]rest.FieldValue = undefined;
     for (names, expected_cells, 0..) |name, value, i| parameters[i] = .{ .name = name, .value = value };
@@ -79,7 +79,7 @@ test "POST accepts the exact thirtieth birthday and preserves ISO parameters" {
     try std.testing.expectEqualStrings("{\"docente\":\"d1\",\"apellido\":null,\"nombres\":\"Ada\",\"cargo\":\"teorico\",\"email\":null,\"email_alternativo\":null,\"jefe\":null,\"telefono\":null,\"experiencia\":5,\"esImportador\":null,\"fecha_nacimiento\":{\"año\":1996,\"mes\":10,\"día\":28}}", response.body);
 }
 
-test "PUT changing only cargo uses stored birth and performs no rejected update" {
+test "PUT que cambia solo el cargo usa el nacimiento almacenado y no escribe si se rechaza" {
     const row = cells("d1", "practico", "1996-10-29");
     var repository = Repository{ .rows = &.{&row} };
     var api = aida_rest.Api.init(.{});
@@ -89,7 +89,7 @@ test "PUT changing only cargo uses stored birth and performs no rejected update"
     try std.testing.expect(repository.select_calls == 1 and repository.update_calls == 0 and repository.deinit_calls == 1);
 }
 
-test "PUT changing or clearing birth uses stored cargo" {
+test "PUT que cambia o borra el nacimiento usa el cargo almacenado" {
     for ([_][]const u8{ "{\"fecha_nacimiento\":null}", "{\"fecha_nacimiento\":{\"año\":1996,\"mes\":10,\"día\":29}}" }, 0..) |body, i| {
         const row = cells("d1", "teorico", "1996-10-28");
         var repository = Repository{ .rows = &.{&row} };
@@ -105,7 +105,7 @@ test "PUT changing or clearing birth uses stored cargo" {
     }
 }
 
-test "PUT validates all selected docentes before writing any" {
+test "PUT valida todos los docentes seleccionados antes de escribir alguno" {
     const first = cells("d1", "practico", "1996-10-28");
     const second = cells("d2", "practico", "1996-10-29");
     var repository = Repository{ .rows = &.{ &first, &second } };
@@ -116,7 +116,7 @@ test "PUT validates all selected docentes before writing any" {
     try std.testing.expect(repository.update_calls == 0 and repository.deinit_calls == 1);
 }
 
-test "non teorico may omit birth and the experience violation keeps its message" {
+test "Un docente no teórico puede omitir el nacimiento y el error de experiencia conserva su mensaje" {
     var repository = Repository{};
     var api = aida_rest.Api.init(.{});
     const accepted = try handle(&api, &repository, request(.POST, "{\"docente\":\"d1\",\"nombres\":\"Ada\",\"cargo\":\"practico\"}"));
@@ -128,7 +128,7 @@ test "non teorico may omit birth and the experience violation keeps its message"
     try std.testing.expect(repository.insert_calls == 1);
 }
 
-test "calendar failures remain 400 and GET does not retroactively validate business rules" {
+test "Los errores de calendario conservan el estado 400 y GET no revalida reglas de negocio" {
     const row = cells("d1", "teorico", "1996-10-29");
     var repository = Repository{ .rows = &.{&row} };
     var api = aida_rest.Api.init(.{});

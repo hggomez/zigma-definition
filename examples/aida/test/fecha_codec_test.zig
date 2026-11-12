@@ -3,7 +3,7 @@ const std = @import("std");
 const codec = @import("aida_rest").date_codec;
 const allocator = std.testing.allocator;
 
-test "Fecha codecs round trip bounds and preserve JSON field order" {
+test "Los codecs de Fecha conservan los límites y el orden de los campos JSON" {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     for ([_][]const u8{ "0001-01-01", "1900-02-28", "2000-02-29", "2024-02-29", "2100-02-28", "9999-12-31" }) |iso| {
@@ -20,7 +20,7 @@ test "Fecha codecs round trip bounds and preserve JSON field order" {
     }
 }
 
-test "Fecha query and stored codecs reject impossible or noncanonical ISO" {
+test "Los codecs de consulta y almacenamiento rechazan fechas ISO imposibles o no canónicas" {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     for ([_][]const u8{
@@ -33,7 +33,7 @@ test "Fecha query and stored codecs reject impossible or noncanonical ISO" {
     }
 }
 
-test "Fecha object codecs reject invalid calendar values and incompatible shapes" {
+test "Los codecs de objetos rechazan fechas inválidas y estructuras incompatibles" {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     for ([_][]const u8{
@@ -56,7 +56,7 @@ test "Fecha object codecs reject invalid calendar values and incompatible shapes
     }
 }
 
-test "Fecha codecs return data independent of their textual input" {
+test "Los codecs de Fecha devuelven datos independientes del texto de entrada" {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var source = "2024-02-29".*;
@@ -81,11 +81,11 @@ fn resultWithAllocationFailures(backing: std.mem.Allocator) !void {
     _ = try codec.postgresToJson(arena.allocator(), "2024-02-29");
 }
 
-test "Fecha query codec propagates all allocation failures and cleans partial parsing" {
+test "El codec de consulta propaga los fallos de memoria y libera el análisis parcial" {
     try std.testing.checkAllAllocationFailures(allocator, queryWithAllocationFailures, .{"2024-02-29"});
     try std.testing.checkAllAllocationFailures(allocator, queryWithAllocationFailures, .{"{\"año\":2024,\"mes\":2,\"día\":29}"});
 }
 
-test "Fecha stored codec propagates all allocation failures and cleans partial objects" {
+test "El codec de almacenamiento propaga los fallos de memoria y libera los objetos parciales" {
     try std.testing.checkAllAllocationFailures(allocator, resultWithAllocationFailures, .{});
 }

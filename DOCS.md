@@ -272,6 +272,9 @@ Los tests en `test/aida_test.zig` importan estas definiciones y verifican, para 
 vocabulario, tanto los casos positivos (en runtime y con `comptime std.debug.assert`) como los
 rechazos esperados en compilación, que viven aparte como fragmentos en `test/compile_errors/`
 (el equivalente de los `// @ts-expect-error` del repo TypeScript).
+Las reglas propias de Cargo y Docente, Fecha, sus codecs, el contexto civil y las
+referencias PostgreSQL viven en `examples/aida/test/`; los tres rechazos de Cargo
+están en su subdirectorio `compile_errors/`. Los registra `examples/aida/build/tests.zig`.
 
 ## Estructura
 
@@ -412,9 +415,12 @@ Enfoque TDD, avanzando de a pasos chicos: primero el test que muestra el problem
 implementación mínima que lo hace pasar. Los tests son fuertes: además de los positivos,
 prueban los rechazos esperados como casos de "no compila".
 
-`zig build test-model` verifica los tipos generados, la nulabilidad compartida, los
-diagnósticos de compilación y la igualdad de DDL/snapshot con las referencias anteriores.
-`zig build test` incluye ese conjunto y los demás tests de runtime y casos de no-compila.
+`zig build test-model` verifica los tipos generados, la nulabilidad compartida y los
+diagnósticos de compilación del framework.
+`zig build test` incluye ese conjunto y los demás tests de runtime y casos de no-compila,
+y delega al `test` de AIDA sus reglas y comprobaciones de schema.
+Desde `examples/aida/`, `zig build test-local` reúne sus pruebas y el frontend;
+`test-compile-errors` ejecuta únicamente los rechazos de Cargo.
 `zig build test-local` agrega los tests del lanzador, la interfaz de comandos del build
 la suite frontend/WASM, los consumidores independientes y el transporte HTTP con un proveedor controlado. Requiere Node y Python;
 las integraciones PostgreSQL continúan siendo pasos separados.
@@ -471,7 +477,8 @@ const postgres_libpq = b.dependency("zigma_definition", .{}).module("zigma_postg
 exe.root_module.addImport("zigma_postgres_libpq", postgres_libpq);
 ```
 
-El paquete también exporta `aida`, descripto en `examples/aida/src/aida.zig`.
+AIDA es un consumidor independiente: su contrato está en `examples/aida/src/aida.zig`
+y no se publica como módulo del framework.
 
 ## DDL inicial para PostgreSQL
 

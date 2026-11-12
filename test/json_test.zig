@@ -139,7 +139,7 @@ test "stringifies integer and boolean record fields" {
 }
 
 test "stringifies a fecha field as a JSON object" {
-    const clase: zigma.RecordInstanceType(aida.type_defs, aida.clase) = .{
+    const clase: zigma.RecordInstanceType(aida.type_defs, aida.clase_def.fields) = .{
         .periodo = "1C2024",
         .materia = "AlgoI",
         .orden = 1,

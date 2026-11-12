@@ -1,0 +1,10 @@
+.{
+    .name = .supermercado,
+    .version = "0.0.0",
+    .fingerprint = 0x24ec97b7e828f754,
+    .minimum_zig_version = "0.17.0-dev.1818+7051f8e73",
+    .dependencies = .{
+        .zigma_definition = .{ .path = "../.." },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "build", "src", "db", "test", "README.md" },
+}

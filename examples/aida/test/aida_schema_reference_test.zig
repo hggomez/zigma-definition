@@ -3,14 +3,14 @@
 const std = @import("std");
 const postgres = @import("aida_postgres");
 
-test "AIDA baseline DDL matches its independent reference" {
+test "El DDL inicial de AIDA coincide con su referencia independiente" {
     try std.testing.expectEqualStrings(
         @embedFile("fixtures/aida-baseline-before-model.sql"),
         postgres.baseline_ddl,
     );
 }
 
-test "AIDA snapshot matches its independent reference" {
+test "El snapshot de AIDA coincide con su referencia independiente" {
     try std.testing.expectEqualStrings(
         @embedFile("fixtures/aida-snapshot-before-model.json"),
         postgres.schema_snapshot,

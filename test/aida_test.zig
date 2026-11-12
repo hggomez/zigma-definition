@@ -1,6 +1,6 @@
-//! Port de aida-test.ts. Los casos positivos están acá; los negativos,
-//! equivalentes a @ts-expect-error de TypeScript, son los errores de compilación
-//! esperados de test/compile_errors, ejecutados mediante build.zig.
+//! Pruebas del descriptor con el vocabulario de AIDA como fixture.
+//! Los rechazos genéricos viven en test/compile_errors; las reglas propias de
+//! Cargo y Docente y sus rechazos pertenecen a examples/aida/test.
 
 const std = @import("std");
 const zigma = @import("zigma");
@@ -41,77 +41,6 @@ test "deduces the record instance type" {
         std.debug.assert(@FieldType(Cargo, "denominacion") == ?[]const u8);
         std.debug.assert(@FieldType(Cargo, "orden") == ?i64);
         std.debug.assert(@FieldType(Cargo, "puede_dirigir") == ?bool);
-    }
-}
-
-test "types record instances anywhere with Cargo" {
-    // Declaración tipada: el literal anónimo adquiere un tipo concreto
-    // mediante conversión implícita y comprobación contra el tipo declarado, acá mismo.
-    const titular: aida.Cargo = .{
-        .cargo = "TIT",
-        .denominacion = "Titular",
-        .orden = 1,
-        .puede_dirigir = true,
-    };
-    // Una instancia válida compila y supera la validación:
-    try aida.validarCargo(titular);
-    // Y la lógica de validación se ejecuta sobre la instancia tipada:
-    try std.testing.expectError(error.AyudanteNoPuedeDirigir, aida.validarCargo(.{
-        .cargo = "AY1",
-        .denominacion = "Ayudante de primera",
-        .orden = 5,
-        .puede_dirigir = true,
-    }));
-}
-
-// Casos de negocio compartidos por la entidad concreta.
-const docente_validation_cases = [_]struct {
-    cargo: ?[]const u8,
-    experiencia: ?i64,
-    valid: bool,
-}{
-    .{ .cargo = "teorico", .experiencia = 4, .valid = false },
-    .{ .cargo = "teorico", .experiencia = 5, .valid = true },
-    .{ .cargo = "teorico", .experiencia = 6, .valid = true },
-    .{ .cargo = "teorico", .experiencia = null, .valid = false },
-    .{ .cargo = " \tTEORICO\r\n", .experiencia = 4, .valid = false },
-    .{ .cargo = " \tTEORICO\r\n", .experiencia = 5, .valid = true },
-    .{ .cargo = "practico", .experiencia = 2, .valid = true },
-    .{ .cargo = "practico", .experiencia = null, .valid = true },
-    .{ .cargo = null, .experiencia = null, .valid = true },
-};
-
-fn expectDocenteValidation(valid: bool, actual: aida.DocenteValidationError!void) !void {
-    if (valid) {
-        try actual;
-    } else {
-        try std.testing.expectError(error.TeoricoRequiereCincoAniosExperiencia, actual);
-    }
-}
-
-test "row docente validation receives all fields but preserves experience cases with a valid birth date" {
-    const validate: *const fn (aida.Docente, aida.Fecha) aida.DocenteValidationError!void = aida.validarDocente;
-    for (docente_validation_cases) |case| {
-        // Docente exige la fila completa, incluso los campos ajenos a la regla.
-        var row: aida.Docente = .{
-            .docente = "d1",
-            .apellido = null,
-            .nombres = "Ada",
-            .cargo = case.cargo,
-            .email = null,
-            .email_alternativo = null,
-            .jefe = null,
-            .telefono = null,
-            .experiencia = case.experiencia,
-            .esImportador = null,
-            .fecha_nacimiento = .{ .@"año" = 1980, .mes = 1, .@"día" = 1 },
-        };
-        try expectDocenteValidation(case.valid, validate(row, .{ .@"año" = 2026, .mes = 10, .@"día" = 28 }));
-
-        row.nombres = "Grace";
-        row.telefono = "555-0100";
-        row.esImportador = true;
-        try expectDocenteValidation(case.valid, validate(row, .{ .@"año" = 2026, .mes = 10, .@"día" = 28 }));
     }
 }
 
@@ -173,13 +102,13 @@ test "extracts the pk fields with their exact types and order" {
 test "inherits pk fields into other entities" {
     // curso obtuvo todos sus campos de las PKs de periodos, materias y docentes:
     comptime {
-        const curso_names = fieldNames(@TypeOf(aida.curso));
+        const curso_names = fieldNames(@TypeOf(aida.curso_def.fields));
         std.debug.assert(curso_names.len == 3);
         std.debug.assert(eqlComptime(curso_names[0], "periodo"));
         std.debug.assert(eqlComptime(curso_names[1], "materia"));
         std.debug.assert(eqlComptime(curso_names[2], "docente"));
         // clase extiende la PK de cursos con sus propios campos:
-        const clase_names = fieldNames(@TypeOf(aida.clase));
+        const clase_names = fieldNames(@TypeOf(aida.clase_def.fields));
         std.debug.assert(clase_names.len == 5);
         std.debug.assert(eqlComptime(clase_names[0], "periodo"));
         std.debug.assert(eqlComptime(clase_names[1], "materia"));
@@ -194,7 +123,7 @@ test "inherits pk fields into other entities" {
 test "chains pk inheritance (clases → preguntas → opciones)" {
     try expectNames(aida.opcion_def.pk, &.{ "periodo", "materia", "orden", "pregunta", "opcion" });
     comptime {
-        const opcion_names = fieldNames(@TypeOf(aida.opcion));
+        const opcion_names = fieldNames(@TypeOf(aida.opcion_def.fields));
         std.debug.assert(opcion_names.len == 6);
         std.debug.assert(eqlComptime(opcion_names[0], "periodo"));
         std.debug.assert(eqlComptime(opcion_names[1], "materia"));
@@ -212,9 +141,9 @@ test "merges overlapping pks without repeating (inscripciones + clases)" {
     // presencias usa esa combinación como su PK:
     try expectNames(aida.presencia_def.pk, &.{ "periodo", "materia", "alumno", "orden" });
     // Y la combinación de campos elimina por sí misma los campos compartidos duplicados:
-    comptime std.debug.assert(fieldNames(@TypeOf(aida.presencia)).len == 4);
+    comptime std.debug.assert(fieldNames(@TypeOf(aida.presencia_def.fields)).len == 4);
     // Toda la cadena sigue deduciendo el tipo de instancia:
-    const Presencia = zigma.RecordInstanceType(aida.type_defs, aida.presencia);
+    const Presencia = zigma.RecordInstanceType(aida.type_defs, aida.presencia_def.fields);
     const una_presencia: Presencia = .{ .periodo = "2026-1c", .materia = "AlgoI", .alumno = "L1234", .orden = 1 };
     try expectEqualStrings("AlgoI", una_presencia.materia.?);
     try expect(una_presencia.orden.? == 1);
@@ -313,7 +242,7 @@ test "keeps map-form fks as they are" {
 // periodo y materia aparecen dos veces en la concatenación:
 const presencias_alt = .{
     .pk = aida.inscripcion_def.pk ++ aida.clase_def.pk,
-    .fields = aida.presencia,
+    .fields = aida.presencia_def.fields,
 };
 
 test "dedups the pk, so overlapping pks can be concatenated without mergePk" {

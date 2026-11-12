@@ -13,7 +13,8 @@ Esta guía construye un **inventario independiente de AIDA**, con una entidad
 `Product`, una regla que impide stock negativo y una interfaz web. El primer
 recorrido compila el frontend y prueba las reglas del dominio. La sección de
 PostgreSQL completa la aplicación ejecutable con una API persistente y un historial
-propio de migraciones.
+propio de migraciones. Como ejemplo completo con ocho entidades, claves compuestas,
+importes y fechas, consultá [Supermercado](../examples/supermercado/README.md).
 
 - [Preparar el proyecto](#1-preparar-el-proyecto).
 - [Definir el contrato](#2-definir-el-contrato).
@@ -88,18 +89,16 @@ const zigma = @import("zigma");
 
 pub const type_defs = zigma.defineTypes(zigma.common_type_defs);
 
-pub const product = zigma.record(type_defs, .{
-    .sku = .{ .type = "text", .label = "Código", .nullable = false },
-    .name = .{ .type = "text", .label = "Nombre", .nullable = false, .is_name = true },
-    .stock = .{ .type = "integer", .label = "Existencias", .nullable = false },
-    .active = .{ .type = "boolean", .label = "Activo", .nullable = false },
-    .notes = .{ .type = "text", .label = "Notas" },
-});
-
-pub const product_def = .{
-    .fields = product,
+pub const product_def = zigma.entityDefinition(type_defs, .{
+    .fields = .{
+        .sku = .{ .type = "text", .label = "Código" },
+        .name = .{ .type = "text", .label = "Nombre", .nullable = false, .is_name = true },
+        .stock = .{ .type = "integer", .label = "Existencias", .nullable = false },
+        .active = .{ .type = "boolean", .label = "Activo", .nullable = false },
+        .notes = .{ .type = "text", .label = "Notas" },
+    },
     .pk = .{"sku"},
-};
+});
 
 pub const Product = zigma.Entity(type_defs, product_def);
 
@@ -146,11 +145,19 @@ Las piezas se construyen en este orden:
 | Pieza | Responsabilidad en el inventario |
 | --- | --- |
 | `type_defs` | Asocia dominios con tipos Zig: `text` → `[]const u8`, `integer` → `i64`, `boolean` → `bool`. |
-| `product` | Describe los campos y su nulabilidad; es un record reutilizable. |
-| `product_def` | Agrega la PK y, cuando corresponda, UK, FK y metadatos de reglas. |
+| `product_def` | Describe y valida los campos, la PK y, cuando corresponda, UK, FK y metadatos de reglas. |
 | `Product` | Es el struct de datos generado, utilizable en funciones, variables y colecciones. |
 | `entity_defs` | Asocia `products`, nombre de tabla y ruta, con el tipo y su definición. |
 | `Model` | Reúne la interpretación normalizada y permite que los consumidores la compartan. |
+
+`entityDefinition` valida en comptime los dominios, los campos, la PK, las UK,
+los campos origen de las FK y las dependencias declaradas de reglas. Conserva el
+valor y su tipo literal exacto, sin completar defaults. `defineEntities` comprueba
+los destinos de las FK cuando ya se conocen las entidades del sistema.
+
+En este ejemplo los campos se escriben directamente en `.fields`. Si necesitás
+reutilizar un conjunto de campos, podés declararlo por separado con `zigma.record`
+y pasarlo en `.fields`; las claves y relaciones siguen en la definición de entidad.
 
 `Product` tiene `sku: []const u8`, `name: []const u8`, `stock: i64`,
 `active: bool` y `notes: ?[]const u8`. No se escribe otro struct con esos campos.
@@ -158,12 +165,13 @@ Las piezas se construyen en este orden:
 
 `Model.info.products` contiene los metadatos normalizados de esa entidad, con
 defaults y restricciones explícitos. Los generadores los consumen sin volver a
-interpretar el record. Esos metadatos pueden serializarse; no contienen tipos Zig
+interpretar la definición. Esos metadatos pueden serializarse; no contienen tipos Zig
 ni implementaciones de funciones.
 
 El default de `nullable` es `true`; por eso `notes` admite null. Los campos de PK
-siempre son obligatorios en la entidad, aun si su record admite null. Los dominios
-se declaran sin `?`: la opcionalidad pertenece a cada campo.
+siempre son obligatorios en la entidad: `sku` queda no-null aunque omita `nullable`
+en la definición. Los dominios se declaran sin `?`: la opcionalidad pertenece a
+cada campo.
 
 Una fila completa **no tiene defaults implícitos**. Un literal Zig debe proporcionar
 todos sus campos, incluyendo `.notes = null`. En HTTP, el parser de POST sí completa
@@ -340,7 +348,8 @@ sí mismo; los valores del backend deben estar exportados en el ambiente del pro
 
 ### Agregar o modificar un campo
 
-Por ejemplo, para incorporar un código de barras opcional, agregá al record `product`:
+Por ejemplo, para incorporar un código de barras opcional, agregá a `.fields` de
+`product_def`:
 
 ```zig
 .barcode = .{ .type = "text", .label = "Código de barras" },
@@ -360,7 +369,7 @@ la página. Recompilar por sí solo no modifica la base.
 | Nombre, tipo o nulabilidad de un campo | Cambiar el contrato, adaptar los consumidores que marque el compilador y verificar HTTP; revisar la migración PostgreSQL. |
 | Label o descripción | Cambiar los metadatos y reconstruir el frontend; no altera la estructura PostgreSQL. |
 | Regla de negocio | Modificar la función y sus tests; registrar el adaptador si todavía no existe. |
-| Nueva entidad | Definir su record, definición y tipo; agregarla a `entity_defs` y registrar su validador si corresponde. |
+| Nueva entidad | Declarar sus campos y claves con `entityDefinition`, derivar su tipo con `Entity`, agregarla a `entity_defs` y registrar su validador si corresponde. |
 | Nuevo dominio | Definir su tipo Zig, codec REST, mapping SQL y, si hace falta, widget. |
 
 ### Elegir el tipo adecuado
@@ -368,7 +377,7 @@ la página. Recompilar por sí solo no modifica la base.
 | Necesidad | Tipo |
 | --- | --- |
 | Lógica de negocio o colección de filas completas | `Product` o `Model.Row("products")`, que son idénticos. |
-| Instancia de un record sin restricciones de entidad | `zigma.RecordInstanceType(type_defs, product)`. |
+| Instancia de un record sin restricciones de entidad | `zigma.RecordInstanceType(type_defs, product_def.fields)`. |
 | Expresar una modificación parcial en código propio | `Model.Patch("products")`: excluye PK y distingue omisión de asignación. |
 | Expresar filtros de igualdad en código propio | `Model.Filters("products")`: null significa ausencia del filtro. |
 
@@ -391,7 +400,7 @@ interpretados por REST.
 ### Agregar relaciones
 
 Una FK se declara en la definición de la entidad que contiene el campo origen.
-Por ejemplo, después de agregar `category_id` al record y registrar una entidad
+Por ejemplo, después de agregar `category_id` a `product_def.fields` y registrar una entidad
 `categories` con PK `id`:
 
 ```zig

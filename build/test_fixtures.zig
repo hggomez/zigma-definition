@@ -11,7 +11,6 @@ pub const Aida = struct {
         postgres: *std.Build.Module,
     },
     schema_guard: *std.Build.Step.Compile,
-    schema_check: *std.Build.Step.Run,
     schema_validator: *std.Build.Step.Compile,
     migration_applier: *std.Build.Step.Compile,
     launcher: *std.Build.Step.Compile,
@@ -66,7 +65,6 @@ pub fn createAida(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std
     return .{
         .modules = .{ .contract = contract, .rest = rest, .postgres = postgres },
         .schema_guard = history.schema_guard,
-        .schema_check = history.schema_check,
         .schema_validator = history.schema_validator,
         .migration_applier = history.migration_applier,
         .launcher = launcher,

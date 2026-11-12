@@ -79,14 +79,26 @@ fn collection(comptime definition: anytype, comptime name: []const u8) @TypeOf(i
     return if (@hasField(@TypeOf(definition), name)) @field(definition, name) else .{};
 }
 
+/// Valida dominios, campos y restricciones locales en la declaración.
+/// Conserva el valor y su tipo literal exacto, sin completar defaults ni aplicar
+/// la nulabilidad de la PK. Los destinos de FK se comprueban en defineEntities.
+pub fn entityDefinition(comptime type_defs: anytype, comptime definition: anytype) @TypeOf(definition) {
+    comptime {
+        @setEvalBranchQuota(1_000_000);
+        records.checkTypeDefs(type_defs);
+        checkEntityDef(definition);
+        records.checkRecord(type_defs, definition.fields);
+    }
+    return definition;
+}
+
 /// Tipo concreto de fila, utilizable sin construir un Framework.
 /// Comprueba dominios y restricciones locales; los destinos de FK se validan
 /// al registrar las entidades. Solo contiene datos, sin defaults ni metadatos.
 pub fn Entity(comptime type_defs: anytype, comptime definition: anytype) type {
     @setEvalBranchQuota(1_000_000);
-    records.checkTypeDefs(type_defs);
+    _ = entityDefinition(type_defs, definition);
     const info = completeEntity(definition);
-    records.checkRecord(type_defs, definition.fields);
     return records.selectedType(type_defs, info.fields, @typeInfo(@TypeOf(info.fields)).@"struct".field_names);
 }
 

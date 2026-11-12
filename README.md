@@ -1,7 +1,7 @@
 # zigma-definition
 
 Framework en Zig que deriva tipos, CRUD REST y estructura PostgreSQL desde un contrato
-compartido. El repositorio incluye AIDA como aplicación de ejemplo independiente;
+compartido. El repositorio incluye AIDA y [Supermercado](examples/supermercado/README.md) como aplicaciones independientes;
 el paquete distribuido del framework no contiene `examples/`.
 
 Esta es la guía de uso. La explicación del contrato, los módulos y las APIs está en
@@ -244,7 +244,20 @@ PostgreSQL comprueban la API con persistencia real.
 
 Para trabajar sobre una parte, siguen disponibles `test` (solo suite Zig y schema),
 `test-model`, `test-json` y `test-aida-launcher`. Desde `examples/aida/` también podés
-ejecutar `test-frontend` por separado.
+ejecutar sus pruebas sin acceder a los tests privados del framework:
+
+```sh
+zig build test                 # dominio, REST, schema y rechazos; sin servicios
+zig build test-compile-errors  # los tres rechazos de Cargo
+zig build test-frontend        # frontend WASM; requiere Node
+zig build test-local           # dominio y frontend
+```
+
+Las suites propias y sus fixtures viven en `examples/aida/test/`, se registran en
+`examples/aida/build/tests.zig` y forman parte del paquete de la aplicación.
+El `test` raíz delega en AIDA conservando target y optimización; `test-local` añade
+las integraciones genéricas. `test-aida-classpath` delega al `test-classpath` de AIDA
+y requiere libpq.
 
 Compilar la aplicación sin ejecutarla, seleccionando su build desde la raíz:
 

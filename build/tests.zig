@@ -64,9 +64,7 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     for ([_][]const u8{
         "model_nullability_test.zig",
         "system_model_test.zig",
-        "aida_nullable_test.zig",
         "model_consumers_test.zig",
-        "aida_schema_reference_test.zig",
     }) |file| {
         const run_model_tests = addTestRun(b, target, optimize, b.fmt("test/{s}", .{file}), &.{
             .{ .name = "zigma", .module = modules.zigma },
@@ -137,8 +135,8 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
         .{ .name = "zigma_postgres_crud", .module = modules.postgres_crud },
     });
 
-    const run_aida_rest_tests = addTestRun(b, target, optimize, "test/aida_rest_test.zig", &.{
-        .{ .name = "aida_rest", .module = aida.modules.rest },
+    const run_context_tests = addTestRun(b, target, optimize, "test/validation_context_test.zig", &.{
+        .{ .name = "zigma", .module = modules.zigma },
         .{ .name = "zigma_rest", .module = modules.rest },
     });
 
@@ -168,18 +166,14 @@ fn addUnitTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.b
     test_step.dependOn(&run_rest_tests.step);
     test_step.dependOn(&run_typed_validation_tests.step);
     test_step.dependOn(&run_postgres_crud_tests.step);
-    test_step.dependOn(&run_aida_rest_tests.step);
-    for ([_][]const u8{ "fecha_test.zig", "fecha_codec_test.zig", "fecha_rest_test.zig", "docente_age_test.zig", "docente_age_rest_test.zig", "validation_context_test.zig" }) |file| {
-        const run_fecha_tests = addTestRun(b, target, optimize, b.fmt("test/{s}", .{file}), &.{
-            .{ .name = "zigma", .module = modules.zigma },
-            .{ .name = "aida", .module = aida.modules.contract },
-            .{ .name = "aida_rest", .module = aida.modules.rest },
-            .{ .name = "zigma_rest", .module = modules.rest },
-        });
-        test_step.dependOn(&run_fecha_tests.step);
-    }
-    test_step.dependOn(&aida.schema_guard.step);
-    test_step.dependOn(&aida.schema_check.step);
+    test_step.dependOn(&run_context_tests.step);
+    // El consumidor es dueño de sus suites y del snapshot aceptado.
+    const aida_tests = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test" });
+    aida_tests.setCwd(b.path("examples/aida"));
+    aida_tests.addArg(b.fmt("-Dtarget={s}", .{target.query.zigTriple(b.allocator) catch @panic("OOM")}));
+    aida_tests.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
+    aida_tests.has_side_effects = true;
+    test_step.dependOn(&aida_tests.step);
 
     return .{ .all = test_step, .model = model_test_step };
 }
@@ -372,16 +366,15 @@ fn addPostgresTests(b: *std.Build, target: std.Build.ResolvedTarget, optimize: s
     runtime_backend_step.dependOn(&runtime_backend.step);
     rest_postgres_test_step.dependOn(runtime_backend_step);
 
-    const aida_classpath = b.addSystemCommand(&.{"python3"});
-    aida_classpath.addFileArg(b.path("test/integration/run_aida_classpath_test.py"));
-    aida_classpath.addArg(b.graph.zig_exe);
+    const aida_classpath = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "test-classpath" });
+    aida_classpath.setCwd(b.path("examples/aida"));
     inline for (.{
         .{ "libpq-prefix", modules.libpq_prefix },
         .{ "libpq-include", modules.libpq_include },
         .{ "libpq-lib", modules.libpq_lib },
     }) |option| {
         if (option[1]) |value|
-            aida_classpath.addArg(b.fmt("--{s}={s}", .{ option[0], value }));
+            aida_classpath.addArg(b.fmt("-D{s}={s}", .{ option[0], value }));
     }
     aida_classpath.has_side_effects = true;
     const aida_classpath_step = b.step("test-aida-classpath", "Test AIDA JDBC discovery from different directories (requires libpq)");
@@ -480,6 +473,27 @@ const CompileErrorCase = struct { file: []const u8, expected: []const u8 };
 // Rechazos de la API de entidades concretas. Un error por API ausente no
 // satisface estos diagnósticos; el caso nativo exige la ubicación del literal.
 const entity_compile_error_cases = [_]CompileErrorCase{
+    // entityDefinition valida en la declaración; el registro resuelve los destinos de FK.
+    .{ .file = "entity_definition_not_struct.zig", .expected = "an entity definition must be a struct like .{ .pk = ..., .fields = ... }" },
+    .{ .file = "entity_definition_missing_fields.zig", .expected = "an entity definition needs 'fields'" },
+    .{ .file = "entity_definition_missing_pk.zig", .expected = "an entity definition needs 'pk'" },
+    .{ .file = "entity_definition_unknown_property.zig", .expected = "entity definition: unknown property 'extra'" },
+    .{ .file = "entity_definition_invalid_domain.zig", .expected = "type 'unused': must be a TypeDef (like zigma.TypeDef{ .Type = i64 })" },
+    .{ .file = "entity_definition_optional_domain.zig", .expected = "type 'optional_integer': domain types must be non-optional; use field 'nullable'" },
+    .{ .file = "entity_definition_unknown_domain.zig", .expected = "field 'id': unknown type 'missing'" },
+    .{ .file = "entity_definition_field_missing_type.zig", .expected = "field 'id': missing 'type'" },
+    .{ .file = "entity_definition_field_unknown_property.zig", .expected = "field 'id': unknown property 'colour'" },
+    .{ .file = "entity_definition_field_invalid_nullable.zig", .expected = "field 'id': 'nullable' must be a bool" },
+    .{ .file = "entity_definition_invalid_pk.zig", .expected = "pk field 'missing' is not a field of the entity" },
+    .{ .file = "entity_definition_invalid_uk.zig", .expected = "uk 'by_code': uk field 'missing' is not a field of the entity" },
+    .{ .file = "entity_definition_fk_source_list.zig", .expected = "fk 'parent': source field 'missing' is not a field of the entity" },
+    .{ .file = "entity_definition_fk_source_map.zig", .expected = "fk 'parent': source field 'missing' is not a field of the entity" },
+    .{ .file = "entity_definition_fk_invalid_target.zig", .expected = "fk 'parent': 'entity' must be the name of the target entity" },
+    .{ .file = "entity_definition_rule_unknown_field.zig", .expected = "rule 'display': field 'missing' is not a field of the entity" },
+    .{ .file = "entity_definition_rule_duplicate_field.zig", .expected = "rule 'display': duplicate field 'id'" },
+    .{ .file = "entity_definition_rule_invalid_fields.zig", .expected = "rule 'display': 'fields' must be a list of field names" },
+    .{ .file = "entity_definition_registry_unknown_target.zig", .expected = "entity 'items', fk 'parent': unknown target entity 'missing'" },
+    .{ .file = "entity_definition_registry_partial_key.zig", .expected = "entity 'items', fk 'parent': target fields do not match the complete pk nor any uk of entity 'parents'" },
     .{ .file = "entity_registry_not_struct.zig", .expected = "entity registrations must be a struct keyed by entity name" },
     .{ .file = "entity_registration_not_struct.zig", .expected = "entity 'items': registration must be a struct with 'Type' and 'definition'" },
     .{ .file = "entity_registration_missing_type.zig", .expected = "entity 'items': registration is missing 'Type'" },
@@ -521,9 +535,6 @@ const compile_error_cases = [_]CompileErrorCase{
     .{ .file = "system_fk_unknown_entity.zig", .expected = "unknown target entity 'inexistentes'" },
     .{ .file = "system_fk_partial_pk.zig", .expected = "target fields do not match the complete pk nor any uk of entity 'franjas'" },
     .{ .file = "info_fks_no_array_form.zig", .expected = at("info_fks_no_array_form.zig") },
-    .{ .file = "cargo_wrong_field_type.zig", .expected = "expected type '?i64', found '*const [1:0]u8'" },
-    .{ .file = "validar_cargo_missing_field.zig", .expected = at("validar_cargo_missing_field.zig") },
-    .{ .file = "cargo_unknown_field.zig", .expected = at("cargo_unknown_field.zig") },
     .{ .file = "postgres_ddl_mapping_missing.zig", .expected = "entity 'clases', field 'fecha': missing PostgreSQL type mapping for domain type 'fecha'" },
     .{ .file = "postgres_ddl_mapping_invalid.zig", .expected = "PostgreSQL type mapping 'text': 'sql_type' must be a non-empty string" },
     .{ .file = "postgres_ddl_unknown_table.zig", .expected = "PostgreSQL DDL: unknown entity 'inexistentes'" },

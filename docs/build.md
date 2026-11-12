@@ -18,7 +18,9 @@ Las implementaciones están separadas por responsabilidad:
 | [build/app.zig](../build/app.zig) | `addApp` / `addAppFromDep`: frontend WASM y archivos estáticos para consumidores. |
 | [build/migrations.zig](../build/migrations.zig) | `addMigrations` / `addMigrationsFromDep`: herramientas, guard y comandos de migración del consumidor. |
 | [build/runtime.zig](../build/runtime.zig) | `addRuntime` / `addRuntimeFromDep`: backend PostgreSQL y lanzador compartidos. |
-| [examples/aida/build/application.zig](../examples/aida/build/application.zig) | Módulos de AIDA y composición de sus comandos con los helpers de runtime y migraciones. |
+| [examples/aida/build/application.zig](../examples/aida/build/application.zig) | Composición de los comandos de AIDA con los helpers de runtime y migraciones. |
+| [examples/aida/build/modules.zig](../examples/aida/build/modules.zig) | Contrato, REST y PostgreSQL nativos compartidos por la aplicación y sus tests. |
+| [examples/aida/build/tests.zig](../examples/aida/build/tests.zig) | Dominio, codecs, referencias de schema, rechazos de Cargo, frontend y classpath de AIDA. |
 | [build/tests.zig](../build/tests.zig) | Suites, integración con servicios y lista de rechazos de compilación esperados. |
 | [build/test_fixtures.zig](../build/test_fixtures.zig) | Módulos privados de AIDA y herramientas que necesitan las pruebas; no registra comandos de aplicación. |
 
@@ -54,9 +56,9 @@ obliga a tenerlo instalado para ejecutar los tests locales.
 
 `build/modules.zig` publica únicamente módulos del framework. La composición del
 ejemplo crea sus módulos privados usando la dependencia `zigma_definition` y llama
-a `addAppFromDep`, `addMigrationsFromDep` y `addRuntimeFromDep`. Las suites crean
-sus fixtures por separado; `aida`, `aida_rest` y `aida_postgres` ya no son módulos
-publicados por la biblioteca.
+a `addAppFromDep`, `addMigrationsFromDep` y `addRuntimeFromDep`. Las suites del framework
+crean sus fixtures por separado; AIDA reutiliza sus módulos nativos en sus pruebas.
+`aida`, `aida_rest` y `aida_postgres` no son módulos publicados por la biblioteca.
 
 `Modules` y `Artifacts` agrupan referencias a nodos ya creados para reutilizarlos.
 Los archivos de `build/` son auxiliares del programa de build; no son nuevos módulos
@@ -90,6 +92,8 @@ zig build test-local # todas las suites locales; requiere Node y Python
 
 `test-local` ejecuta la suite Zig `test`, las pruebas del lanzador y de los comandos del
 build, consumidores independientes, transporte HTTP y `test-frontend` en AIDA.
+El `test` raíz delega las pruebas propias de AIDA a su comando `test`, con el mismo
+target y optimización. Las suites genéricas conservan sus fixtures en la raíz.
 Usa el mismo compilador; el frontend siempre usa WASM y optimización `.small`. No requiere libpq,
 Docker, PostgreSQL ni Liquibase, y propaga cualquier fallo.
 
@@ -106,7 +110,9 @@ de shell, timeout, interrupciones y limpieza. Las fuentes viven en
 lanzador y la inicialización de su historial sin libpq. `test-runtime-backend` requiere
 libpq, comprueba el guard y los fallos de migración y se incluye en `test-rest-postgres`.
 `test-aida-classpath` también requiere libpq y está incluido en `test-rest-postgres`:
-usa Liquibase simulado para comprobar la detección de JAR desde distintos directorios,
+delega al comando `test-classpath` del ejemplo, cuya suite vive en
+`examples/aida/test/integration/run_classpath_test.py`.
+Usa Liquibase simulado para comprobar la detección de JAR desde distintos directorios,
 las rutas con espacios, la prioridad del classpath explícito y cambios de drivers
 sin limpiar cachés. No necesita Java, Liquibase ni una base de datos.
 `test-migrations` también arranca el runtime genérico con Liquibase y PostgreSQL reales,
@@ -129,10 +135,19 @@ The aida demo is a **consumer** of this package (`examples/aida/build.zig.zon` u
 cd examples/aida
 zig build -Dlibpq-prefix=/opt/homebrew/opt/libpq # frontend/ y bin/; sin ejecutar
 zig build frontend     # WASM page only
+zig build test           # dominio, REST, schema y rechazos; sin servicios
+zig build test-local     # lo anterior más frontend; requiere Node
 zig build test-frontend   # catálogo, controles y WASM real (Node)
 ```
 
 How to run it in a browser: [run-example.md](run-example.md).
+
+`examples/aida/test/` contiene las pruebas propias del consumidor, incluidos los
+fixtures necesarios. Se publica junto con `build/`, `src/` y `db/`: sus tests pueden
+ejecutarse con el paquete distribuido del framework, sin sus tests unitarios privados.
+`test-compile-errors` permite ejecutar por separado los tres rechazos de Cargo.
+Las pruebas genéricas de records, entidades y contexto HTTP permanecen en la raíz;
+las reglas de Cargo y Docente y el día civil argentino se prueban dentro de AIDA.
 
 Para el backend real con PostgreSQL, desde `examples/aida/`:
 
@@ -159,6 +174,8 @@ Desde la raíz, `test-aida-launcher` usa Python para simular procesos y prueba e
 | `examples/aida` | `zig build` | instalar frontend, backend y lanzador; comprobar el schema |
 | `examples/aida` | `zig build run` | aplicación PostgreSQL y frontend |
 | `examples/aida` | `zig build check` | compilar aplicación y comprobar schema sin ejecutarla |
+| `examples/aida` | `zig build test` | dominio, REST, referencias de schema, snapshot y rechazos de Cargo |
+| `examples/aida` | `zig build test-local` | pruebas propias y frontend, sin servicios |
 | `examples/aida` | `zig build apply-migrations` | aplicar el historial aceptado y terminar, sin HTTP |
 
 `run-backend` y `check-backend` conservan las operaciones exclusivas del backend.

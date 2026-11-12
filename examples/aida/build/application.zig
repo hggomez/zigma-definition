@@ -1,6 +1,13 @@
 //! Build completo de AIDA mediante la API pública de su dependencia Zigma.
 const std = @import("std");
 const zigma = @import("zigma_definition");
+const application_modules = @import("modules.zig");
+
+pub const Artifacts = struct {
+    frontend: zigma.App,
+    modules: application_modules.Modules,
+    migrations: zigma.Migrations,
+};
 
 pub const Options = struct {
     target: std.Build.ResolvedTarget,
@@ -8,50 +15,24 @@ pub const Options = struct {
     liquibase_bin: []const u8,
 };
 
-pub fn addSteps(b: *std.Build, dep: *std.Build.Dependency, opts: Options) zigma.App {
+pub fn addSteps(b: *std.Build, dep: *std.Build.Dependency, opts: Options) Artifacts {
     const app = zigma.addAppFromDep(b, dep, .{
         .system_root = b.path("src/system.zig"),
         .contract_root = b.path("src/aida.zig"),
         .widgets_js = b.path("src/widgets.js"),
         .title = "aida",
     });
-    const contract = b.createModule(.{
-        .root_source_file = b.path("src/aida.zig"),
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .imports = &.{.{ .name = "zigma", .module = dep.module("zigma") }},
-    });
-    const rest = b.createModule(.{
-        .root_source_file = b.path("src/rest.zig"),
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = dep.module("zigma") },
-            .{ .name = "zigma_rest", .module = dep.module("zigma_rest") },
-            .{ .name = "contract", .module = contract },
-        },
-    });
-    const postgres = b.createModule(.{
-        .root_source_file = b.path("src/postgres.zig"),
-        .target = opts.target,
-        .optimize = opts.optimize,
-        .imports = &.{
-            .{ .name = "zigma", .module = dep.module("zigma") },
-            .{ .name = "aida", .module = contract },
-            .{ .name = "zigma_postgres_ddl", .module = dep.module("zigma_postgres_ddl") },
-            .{ .name = "zigma_postgres_migrations", .module = dep.module("zigma_postgres_migrations") },
-        },
-    });
+    const modules = application_modules.create(b, dep, opts.target, opts.optimize);
     const migrations = zigma.addMigrationsFromDep(b, dep, .{
-        .application_postgres = postgres,
+        .application_postgres = modules.postgres,
         .target = opts.target,
         .optimize = opts.optimize,
         .liquibase_bin = opts.liquibase_bin,
     });
     const runtime = zigma.addRuntimeFromDep(b, dep, .{
         .name = "aida",
-        .contract = contract,
-        .application_rest = rest,
+        .contract = modules.contract,
+        .application_rest = modules.rest,
         .schema_guard = migrations.schema_guard.root_module,
         .frontend_directory = app.frontend_directory,
         .frontend_step = app.frontend_step,
@@ -75,7 +56,7 @@ pub fn addSteps(b: *std.Build, dep: *std.Build.Dependency, opts: Options) zigma.
     check.dependOn(&runtime.launcher.step);
     check.dependOn(app.frontend_step);
     check.dependOn(&migrations.schema_check.step);
-    return app;
+    return .{ .frontend = app, .modules = modules, .migrations = migrations };
 }
 
 fn localLiquibaseClasspath(b: *std.Build, dep: *std.Build.Dependency) ?[]const u8 {

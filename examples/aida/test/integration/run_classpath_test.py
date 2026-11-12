@@ -10,13 +10,15 @@ import subprocess
 import tempfile
 import unittest
 
-ROOT = Path(__file__).resolve().parents[2]
+APPLICATION = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser()
 parser.add_argument("zig")
+parser.add_argument("--framework-root", type=Path, required=True)
 parser.add_argument("--libpq-prefix")
 parser.add_argument("--libpq-include")
 parser.add_argument("--libpq-lib")
 CONFIG, TEST_ARGS = parser.parse_known_args()
+ROOT = CONFIG.framework_root.resolve()
 
 
 def free_port():
@@ -40,11 +42,11 @@ class AidaClasspathTest(unittest.TestCase):
         # El historial original solo se lee; no se ejecuta Liquibase ni una conexión DB.
         for name in ("build.zig", "build.zig.zon"):
             shutil.copyfile(ROOT / name, cls.root / name)
-            shutil.copyfile(ROOT / "examples/aida" / name, cls.application / name)
+            shutil.copyfile(APPLICATION / name, cls.application / name)
         for name in ("build", "src", "test"):
             (cls.root / name).symlink_to(ROOT / name, target_is_directory=True)
         for name in ("build", "src", "db"):
-            (cls.application / name).symlink_to(ROOT / "examples/aida" / name,
+            (cls.application / name).symlink_to(APPLICATION / name,
                                               target_is_directory=True)
         cls.libs = cls.root / "liquibase_libs"
         cls.libs.mkdir()

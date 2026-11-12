@@ -1,7 +1,7 @@
 const std = @import("std");
 const aida_rest = @import("aida_rest");
 
-test "AIDA fecha wire maps valid domain objects to ISO storage" {
+test "El adaptador de Fecha de AIDA convierte objetos válidos al almacenamiento ISO" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
@@ -34,7 +34,7 @@ test "AIDA fecha wire maps valid domain objects to ISO storage" {
     try std.testing.expect(json.object.get("día").?.integer == 15);
 }
 
-test "AIDA email deliberately aliases the text codec" {
+test "El dominio email de AIDA reutiliza deliberadamente el codec de texto" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     try std.testing.expectEqualStrings(
@@ -43,7 +43,7 @@ test "AIDA email deliberately aliases the text codec" {
     );
 }
 
-test "AIDA REST docente adapter reports the domain business violation" {
+test "El adaptador REST del docente informa el incumplimiento de la regla de negocio" {
     const violation = aida_rest.business_validators.docentes.validate(.{
         .docente = "d1",
         .apellido = null,

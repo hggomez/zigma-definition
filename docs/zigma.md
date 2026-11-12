@@ -10,7 +10,7 @@ combinan. Va desde los elementos más pequeños hasta un sistema completo.
 | --- | --- |
 | `zigma.zig` | La lista de nombres públicos; reexporta las implementaciones. |
 | `records.zig` | Tipos de dominio, campos, validación y defaults de records, tipos de instancia y `merge`. |
-| `entities.zig` | `Entity`, PK, UK, FK y dependencias de reglas; valida definiciones y registros, normaliza metadatos y genera tipos concretos. |
+| `entities.zig` | `entityDefinition`, `Entity`, PK, UK, FK y dependencias de reglas; valida definiciones y registros, normaliza metadatos y genera tipos concretos. |
 | `model.zig` | `Framework`: valida la identidad del tipo registrado, reúne el contrato normalizado y ofrece `Row`, `Patch` y `Filters`. |
 | `names.zig` | Tres helpers internos para reconocer strings, comparar nombres y comprobar pertenencia a una lista. |
 
@@ -77,7 +77,7 @@ el reloj: puede probarse con una fecha fija o evaluarse en compilación.
 Los [tests](../test/aida_test.zig) conservan nueve
 casos con nulos, espacios, mayúsculas y el límite de cinco años. También comprueban
 que modificar datos ajenos a la regla no cambie el resultado. Los
-[casos de edad](../test/docente_age_test.zig) cubren cumpleaños, bisiestos y fechas
+[casos de edad](../examples/aida/test/docente_age_test.zig) cubren cumpleaños, bisiestos y fechas
 ausentes, inválidas o futuras. El registro y su
 relación con los metadatos `rules` se explican en [validators.md](validators.md).
 
@@ -112,7 +112,7 @@ TypeDef                          domain type (a Zig type with a name)
             └─ Record Def        a row shape (record)
                  ├─ instance     RecordInstanceType  → runtime Zig struct
                  ├─ Record Info  completeRecord      → FieldInfo per field
-                 └─ Entity Def   valor descriptivo   → fields + claves + reglas
+                 └─ Entity Def   entityDefinition    → fields + claves + reglas
                       ├─ pk / uks                    name lists into fields
                       ├─ Fk Def                      link to another entity
                       ├─ reuse                       extractPk / merge / mergePk
@@ -374,10 +374,10 @@ actually its primary key, needs the whole system — that is `defineEntities`.
 
 ---
 
-## 9. Definición de entidad y tipo concreto: `Entity`
+## 9. Definición y tipo concreto: `entityDefinition` y `Entity`
 
-Una entidad agrega las claves y relaciones a un record. Conviene distinguir las
-cuatro piezas sin repetir la descripción de sus campos:
+Una entidad agrega las claves y relaciones a sus campos. AIDA conserva `materia`
+como record separado porque también lo reutiliza en `asignacion`:
 
 ```zig
 // Record: los campos y su nulabilidad declarada.
@@ -387,11 +387,11 @@ pub const materia = zigma.record(type_defs, .{
 });
 
 // Definición de entidad: restricciones sobre ese record.
-pub const materia_def = .{
+pub const materia_def = zigma.entityDefinition(type_defs, .{
     .pk = .{"materia"},
     .uks = .{ .denominacion = .{"denominacion"} },
     .fields = materia,
-};
+});
 
 // Tipo de datos: ya puede usarse en funciones y arrays, sin Framework.
 pub const Materia = zigma.Entity(type_defs, materia_def);
@@ -405,10 +405,18 @@ pub const entity_defs = zigma.defineEntities(.{
 });
 ```
 
-`Entity` valida los dominios, los campos y las restricciones locales. La definición
+`entityDefinition` valida los dominios, los campos y las restricciones locales en
+la declaración, conservando el valor y su tipo literal exacto. `Entity` reutiliza
+esa validación al generar el tipo de fila. La definición
 requiere `fields` y `pk`; puede omitir `fks`, `uks` y `rules`. Todos los nombres de
 claves y dependencias deben existir; las reglas no admiten dependencias repetidas.
 La comprobación de destinos de FK se hace al reunir el registro completo.
+
+Cuando los campos solo se usan en una entidad, se escriben directamente en `.fields`.
+AIDA usa esa forma en `periodo_def`, `alumno_def` y las entidades que componen claves;
+Supermercado la usa en sus ocho entidades. `cargo` y `asignacion` siguen siendo
+records independientes de una entidad. El catálogo `record_defs` de AIDA reúne
+estos records y los campos de las entidades mediante `*_def.fields`.
 
 El resultado de `Entity` tiene solo los campos de datos y no lleva defaults ni
 metadatos ocultos. En el ejemplo, `Materia.materia` es `[]const u8`, porque es PK.
@@ -429,17 +437,17 @@ lists.
 ### `extractPk(definition)`
 
 Returns the pk fields of an entity **as a record Def** (the same field defs,
-only those names). That record can be `merge`d into another record:
+only those names). In AIDA, `curso_def` merges them directly in `.fields`:
 
 ```zig
-pub const curso = zigma.record(type_defs, zigma.merge(.{
+.fields = zigma.merge(.{
     zigma.extractPk(periodo_def),   // campo periodo
     zigma.extractPk(materia_def),   // campo materia
     zigma.extractPk(docente_def),   // campo docente (responsable)
-}));
+}),
 ```
 
-`curso` now has those three fields with the original defs. `merge` already
+`curso_def.fields` has those three fields with the original defs. `merge` already
 deduplicates names if two extracted pks share a field.
 
 ### `mergePk(.{ pk1, pk2, ... })`
@@ -534,9 +542,9 @@ los literales de fila completa deben proporcionarlo aunque admita null.
 ## Cómo leer una definición
 
 1. Nombrar los dominios con `TypeDef` y `defineTypes`.
-2. Describir los campos en un `record`.
-3. Agregar claves y relaciones en una definición `*_def`, heredando campos con
-   `extractPk` y `merge` cuando corresponde.
+2. Describir los campos inline o en un `record` separado si se reutilizan.
+3. Declarar campos, claves y relaciones con `entityDefinition(type_defs, .{ ... })`,
+   heredando campos con `extractPk` y `merge` cuando corresponde.
 4. Generar un tipo concreto con `Entity(type_defs, definition)`.
 5. Asociar el nombre plural con el tipo y la definición en `defineEntities`.
 6. Construir `Framework` para que los generadores compartan `Model.info` y los

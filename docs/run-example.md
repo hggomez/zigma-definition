@@ -87,6 +87,11 @@ curl -i -X DELETE 'http://localhost:8080/api/materias?materia=REDES'
 
 ## Verificaciones
 
+Desde `examples/aida/`, `zig build test` verifica dominio, codecs, REST, referencias
+de schema, snapshot y rechazos de Cargo sin servicios externos. `zig build test-local`
+agrega el frontend y requiere Node. Las suites y sus fixtures viven en `test/` del
+ejemplo y se registran en `build/tests.zig`.
+
 Desde la raíz, `zig build test-local` prueba Zig, frontend, consumidores, transporte
 HTTP y lanzador sin servicios externos. Para probar CRUD, CORS, valores nullable,
 fechas y reglas con una base PostgreSQL descartable:
@@ -112,7 +117,9 @@ tras reiniciar el backend.
 | `examples/aida/db/` | Historial de migraciones y snapshot aceptado de AIDA. |
 | `src/runtime/launcher.zig` | Lanzador compartido; AIDA lo compone con `addRuntimeFromDep` y lo ejecuta con `zig build run`. |
 | `src/server.zig` | Backend compartido con Liquibase, libpq y la API del consumidor. |
-| `examples/aida/build.zig` | Build completo de AIDA: frontend, backend, lanzador, migraciones y pruebas del frontend. |
+| `examples/aida/build.zig` | Build completo de AIDA: aplicación, migraciones y pruebas propias. |
+| `examples/aida/build/modules.zig` | Módulos nativos compartidos por aplicación y tests. |
+| `examples/aida/build/tests.zig` | Pruebas de dominio, REST, schema, frontend y classpath. |
 | `src/rest/std_http.zig` | Transporte HTTP compartido y CORS. |
 | `src/frontend/` | Cliente WASM y recursos de la página. |
 

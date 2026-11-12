@@ -95,151 +95,139 @@ pub const asignacion = zigma.record(type_defs, .{
     .cargo = cargo.cargo,
 });
 
-pub const periodo = zigma.record(type_defs, .{
-    .periodo = .{ .type = "text", .description = "bimestre, cuatrimestre, etc..." },
-});
-
-// Definiciones de entidad: agregan claves y relaciones a los records.
+// Definiciones validadas: campos inline o records compartidos, claves y relaciones.
 // Los tipos concretos y su registro se componen al final del contrato.
 
-pub const docente_def = .{
+pub const docente_def = zigma.entityDefinition(type_defs, .{
     .pk = .{"docente"},
     // FK reflexiva: dentro de su definición, la entidad se referencia por nombre
     // y el campo origen (jefe) se asocia al campo destino (docente).
     .fks = .{ .jefe = .{ .entity = "docentes", .fields = .{ .jefe = "docente" } } },
     .fields = docente,
-};
-pub const materia_def = .{
+});
+pub const materia_def = zigma.entityDefinition(type_defs, .{
     .pk = .{"materia"},
     .uks = .{ .denominacion = .{"denominacion"} },
     .fields = materia,
-};
-pub const periodo_def = .{ .pk = .{"periodo"}, .fields = periodo };
+});
+pub const periodo_def = zigma.entityDefinition(type_defs, .{
+    .pk = .{"periodo"},
+    .fields = .{
+        .periodo = .{ .type = "text", .description = "bimestre, cuatrimestre, etc..." },
+    },
+});
 
-pub const curso = zigma.record(type_defs, zigma.merge(.{
-    zigma.extractPk(periodo_def),
-    zigma.extractPk(materia_def),
-    zigma.extractPk(docente_def), // docente responsable del curso
-}));
-
-pub const curso_def = .{
+pub const curso_def = zigma.entityDefinition(type_defs, .{
     .pk = .{ "periodo", "materia" },
     .fks = .{
         .periodos = .{ .entity = "periodos", .fields = periodo_def.pk },
         .materias = .{ .entity = "materias", .fields = materia_def.pk },
         .responsable = .{ .entity = "docentes", .fields = docente_def.pk },
     },
-    .fields = curso,
-};
-
-pub const clase = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(curso_def), .{
-    .orden = .{ .type = "integer" },
-    .fecha = .{ .type = "fecha" },
-    .tema = .{ .type = "text" },
-} }));
-
-pub const clase_def = .{
-    .pk = zigma.mergePk(.{ curso_def.pk, .{"orden"} }),
-    .fks = .{ .cursos = .{ .entity = "cursos", .fields = curso_def.pk } },
-    .fields = clase,
-};
-
-pub const alumno = zigma.record(type_defs, .{
-    .alumno = .{ .type = "text" },
-    .apellido = .{ .type = "text", .nullable = false },
-    .nombres = .{ .type = "text", .nullable = false },
-    .email = .{ .type = "email" },
+    .fields = zigma.merge(.{
+        zigma.extractPk(periodo_def),
+        zigma.extractPk(materia_def),
+        zigma.extractPk(docente_def), // docente responsable del curso
+    }),
 });
 
-pub const alumno_def = .{ .pk = .{"alumno"}, .fields = alumno };
+pub const clase_def = zigma.entityDefinition(type_defs, .{
+    .pk = zigma.mergePk(.{ curso_def.pk, .{"orden"} }),
+    .fks = .{ .cursos = .{ .entity = "cursos", .fields = curso_def.pk } },
+    .fields = zigma.merge(.{ zigma.extractPk(curso_def), .{
+        .orden = .{ .type = "integer" },
+        .fecha = .{ .type = "fecha" },
+        .tema = .{ .type = "text" },
+    } }),
+});
 
-pub const pregunta = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(clase_def), .{
-    .pregunta = .{ .type = "integer" },
-    .formulacion = .{ .type = "text", .nullable = false, .label = "formulación", .description = "texto principal de la pregunta" },
-    .aclaraciones = .{ .type = "text", .description = "texto que no necesita repetirse cuando se quiera referir a una pregunta por su formulación, pero que es necesario para aclarar el contexto o posibles ambigüedades de la pregunta" },
-    .tipo_respuesta = .{ .type = "text", .nullable = false, .label = "tipo" },
-} }));
+pub const alumno_def = zigma.entityDefinition(type_defs, .{
+    .pk = .{"alumno"},
+    .fields = .{
+        .alumno = .{ .type = "text" },
+        .apellido = .{ .type = "text", .nullable = false },
+        .nombres = .{ .type = "text", .nullable = false },
+        .email = .{ .type = "email" },
+    },
+});
 
-pub const pregunta_def = .{
+pub const pregunta_def = zigma.entityDefinition(type_defs, .{
     .pk = zigma.mergePk(.{ clase_def.pk, .{"pregunta"} }),
     .fks = .{ .clases = .{ .entity = "clases", .fields = clase_def.pk } },
-    .fields = pregunta,
-};
+    .fields = zigma.merge(.{ zigma.extractPk(clase_def), .{
+        .pregunta = .{ .type = "integer" },
+        .formulacion = .{ .type = "text", .nullable = false, .label = "formulación", .description = "texto principal de la pregunta" },
+        .aclaraciones = .{ .type = "text", .description = "texto que no necesita repetirse cuando se quiera referir a una pregunta por su formulación, pero que es necesario para aclarar el contexto o posibles ambigüedades de la pregunta" },
+        .tipo_respuesta = .{ .type = "text", .nullable = false, .label = "tipo" },
+    } }),
+});
 
-pub const opcion = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(pregunta_def), .{
-    .opcion = .{ .type = "text" },
-    .detalle = .{ .type = "text" },
-} }));
-
-pub const opcion_def = .{
+pub const opcion_def = zigma.entityDefinition(type_defs, .{
     .pk = zigma.mergePk(.{ pregunta_def.pk, .{"opcion"} }),
     .fks = .{ .preguntas = .{ .entity = "preguntas", .fields = pregunta_def.pk } },
-    .fields = opcion,
-};
+    .fields = zigma.merge(.{ zigma.extractPk(pregunta_def), .{
+        .opcion = .{ .type = "text" },
+        .detalle = .{ .type = "text" },
+    } }),
+});
 
-pub const inscripcion = zigma.record(type_defs, zigma.merge(.{
-    zigma.extractPk(curso_def),
-    zigma.extractPk(alumno_def),
-}));
-
-pub const inscripcion_def = .{
+pub const inscripcion_def = zigma.entityDefinition(type_defs, .{
     .pk = zigma.mergePk(.{ curso_def.pk, .{"alumno"} }),
     .fks = .{
         .cursos = .{ .entity = "cursos", .fields = curso_def.pk },
         .alumnos = .{ .entity = "alumnos", .fields = alumno_def.pk },
     },
-    .fields = inscripcion,
-};
+    .fields = zigma.merge(.{
+        zigma.extractPk(curso_def),
+        zigma.extractPk(alumno_def),
+    }),
+});
 
 // PK combinada: inscripciones y clases comparten periodo y materia, sin
 // repeticiones; periodo y materia pertenecen a ambas FKs.
 
-pub const presencia = zigma.record(type_defs, zigma.merge(.{
-    zigma.extractPk(inscripcion_def),
-    zigma.extractPk(clase_def),
-}));
-
-pub const presencia_def = .{
+pub const presencia_def = zigma.entityDefinition(type_defs, .{
     .pk = zigma.mergePk(.{ inscripcion_def.pk, clase_def.pk }),
     .fks = .{
         .inscripciones = .{ .entity = "inscripciones", .fields = inscripcion_def.pk },
         .clases = .{ .entity = "clases", .fields = clase_def.pk },
     },
-    .fields = presencia,
-};
+    .fields = zigma.merge(.{
+        zigma.extractPk(inscripcion_def),
+        zigma.extractPk(clase_def),
+    }),
+});
 
 // Dos FKs a la misma entidad, con campos renombrados.
 
-pub const mesa = zigma.record(type_defs, zigma.merge(.{ zigma.extractPk(curso_def), .{
-    .fecha = .{ .type = "fecha" },
-    .presidente = .{ .type = "text" },
-    .vocal = .{ .type = "text" },
-} }));
-
-pub const mesa_def = .{
+pub const mesa_def = zigma.entityDefinition(type_defs, .{
     .pk = zigma.mergePk(.{ curso_def.pk, .{"fecha"} }),
     .fks = .{
         .cursos = .{ .entity = "cursos", .fields = curso_def.pk },
         .presidente = .{ .entity = "docentes", .fields = .{ .presidente = "docente" } },
         .vocal = .{ .entity = "docentes", .fields = .{ .vocal = "docente" } },
     },
-    .fields = mesa,
-};
+    .fields = zigma.merge(.{ zigma.extractPk(curso_def), .{
+        .fecha = .{ .type = "fecha" },
+        .presidente = .{ .type = "text" },
+        .vocal = .{ .type = "text" },
+    } }),
+});
 
 pub const record_defs = .{
     .cargo = cargo,
     .docente = docente,
     .materia = materia,
     .asignacion = asignacion,
-    .periodo = periodo,
-    .curso = curso,
-    .clase = clase,
-    .alumno = alumno,
-    .pregunta = pregunta,
-    .opcion = opcion,
-    .inscripcion = inscripcion,
-    .presencia = presencia,
-    .mesa = mesa,
+    .periodo = periodo_def.fields,
+    .curso = curso_def.fields,
+    .clase = clase_def.fields,
+    .alumno = alumno_def.fields,
+    .pregunta = pregunta_def.fields,
+    .opcion = opcion_def.fields,
+    .inscripcion = inscripcion_def.fields,
+    .presencia = presencia_def.fields,
+    .mesa = mesa_def.fields,
 };
 
 /// Función de negocio con tipado estricto: el parámetro tiene el tipo concreto

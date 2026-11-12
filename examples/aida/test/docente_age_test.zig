@@ -25,7 +25,7 @@ fn docente(birth: ?aida.Fecha) aida.Docente {
     };
 }
 
-test "ageOn counts completed birthdays rather than elapsed calendar years" {
+test "ageOn cuenta cumpleaños cumplidos y no la diferencia entre años calendario" {
     try expect(try date(1996, 10, 28).ageOn(date(2026, 10, 27)) == 29);
     try expect(try date(1996, 10, 28).ageOn(today) == 30);
     try expect(try date(1996, 10, 28).ageOn(date(2026, 10, 29)) == 30);
@@ -34,7 +34,7 @@ test "ageOn counts completed birthdays rather than elapsed calendar years" {
     try expect(try date(1, 1, 1).ageOn(date(9999, 12, 31)) == 9998);
 }
 
-test "February 29 birthdays fall on March 1 in non leap years" {
+test "El cumpleaños del 29 de febrero se cumple el 1 de marzo en años no bisiestos" {
     const birth = date(2000, 2, 29);
     try expect(try birth.ageOn(date(2030, 2, 28)) == 29);
     try expect(try birth.ageOn(date(2030, 3, 1)) == 30);
@@ -44,31 +44,31 @@ test "February 29 birthdays fall on March 1 in non leap years" {
     try expect(try birth.ageOn(date(2100, 3, 1)) == 100);
 }
 
-test "ageOn rejects future dates before unsigned subtraction" {
+test "ageOn rechaza fechas futuras antes de restar valores sin signo" {
     for ([_]aida.Fecha{ date(2027, 1, 1), date(2026, 11, 1), date(2026, 10, 29) }) |birth|
         try std.testing.expectError(error.FutureDate, birth.ageOn(today));
 }
 
-test "ageOn validates both dates and can run at comptime" {
+test "ageOn valida ambas fechas y puede ejecutarse en compilación" {
     try std.testing.expectError(error.InvalidDate, date(2025, 2, 30).ageOn(today));
     try std.testing.expectError(error.InvalidDate, date(1996, 1, 1).ageOn(date(2026, 13, 1)));
     const age = comptime try date(2000, 2, 29).ageOn(date(2030, 3, 1));
     try expect(age == 30);
 }
 
-test "teorico needs a birth date and thirty completed years" {
+test "Un docente teórico necesita fecha de nacimiento y treinta años cumplidos" {
     try std.testing.expectError(error.TeoricoRequiereFechaNacimiento, aida.validarDocente(docente(null), today));
     try std.testing.expectError(error.TeoricoRequiereTreintaAnios, aida.validarDocente(docente(date(1996, 10, 29)), today));
     try aida.validarDocente(docente(date(1996, 10, 28)), today);
     try aida.validarDocente(docente(date(1970, 1, 1)), today);
 }
 
-test "teorico rejects future births and malformed civil dates" {
+test "Un docente teórico rechaza nacimientos futuros y fechas civiles inválidas" {
     try std.testing.expectError(error.FutureDate, aida.validarDocente(docente(date(2027, 1, 1)), today));
     try std.testing.expectError(error.InvalidDate, aida.validarDocente(docente(date(1996, 2, 30)), today));
 }
 
-test "docente retains experience threshold and its precedence" {
+test "La validación del docente conserva el mínimo de experiencia y su precedencia" {
     var row = docente(null);
     for ([_]?i64{ null, -1, 0, 4 }) |experience| {
         row.experiencia = experience;
@@ -81,7 +81,7 @@ test "docente retains experience threshold and its precedence" {
     }
 }
 
-test "docente age rule retains cargo normalization and ignores unrelated fields" {
+test "La regla de edad normaliza el cargo e ignora los campos ajenos a la regla" {
     var row = docente(date(1996, 10, 29));
     row.cargo = " \tTEORICO\r\n";
     try std.testing.expectError(error.TeoricoRequiereTreintaAnios, aida.validarDocente(row, today));
